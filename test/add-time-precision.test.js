@@ -146,6 +146,101 @@ test('overnight conflict end uses its own local date and ignores disabled fields
   } finally { ui.restore(); }
 });
 
+test('ordinary Edit time shifts End with Start, preserving duration and overnight date', async () => {
+  const ui = setup();
+  try {
+    const overnight = { ...entry, _overlapBoundary: undefined,
+      startedAt: new Date(2026, 9, 18, 23, 0, 22, 123).toISOString(),
+      endedAt: new Date(2026, 9, 19, 0, 30, 33, 456).toISOString() };
+    let payload;
+    ui.dialog.openEdit(overnight, value => { payload = value; });
+    ui.start.value = '23:16'; ui.start.fire('input');
+    assert.equal(ui.end.value, '00:46');
+    await ui.save.listeners.click[0]();
+    assert.equal(new Date(payload.endedAt) - new Date(payload.startedAt),
+      new Date(overnight.endedAt) - new Date(overnight.startedAt));
+    assert.equal(payload.startedAt, new Date(2026, 9, 18, 23, 16).toISOString());
+    assert.equal(payload.endedAt, new Date(2026, 9, 19, 0, 46, 11, 333).toISOString());
+    ui.dialog.openEdit(overnight, value => { payload = value; });
+    ui.end.value = '00:45'; ui.end.fire('input');
+    await ui.save.listeners.click[0]();
+    assert.equal(payload.startedAt, overnight.startedAt);
+    assert.equal(payload.endedAt, new Date(2026, 9, 19, 0, 45).toISOString());
+  } finally { ui.restore(); }
+});
+
+test('Edit time shifts repeatedly from the latest draft and respects a manually changed End', async () => {
+  const ui = setup();
+  try {
+    let payload;
+    const completed = { ...entry, _overlapBoundary: undefined };
+    ui.dialog.openEdit(completed, value => { payload = value; });
+    ui.start.value = '10:16'; ui.start.fire('input');
+    assert.equal(ui.end.value, '11:21');
+    ui.start.value = '10:17'; ui.start.fire('input');
+    assert.equal(ui.end.value, '11:22');
+    ui.end.value = '11:30'; ui.end.fire('input');
+    ui.start.value = '10:20'; ui.start.fire('input');
+    assert.equal(ui.end.value, '11:33');
+    await ui.save.listeners.click[0]();
+    assert.equal(new Date(payload.endedAt) - new Date(payload.startedAt),
+      new Date(2026, 9, 18, 11, 30) - new Date(2026, 9, 18, 10, 17));
+    ui.dialog.openEdit(completed, value => { payload = value; });
+    ui.date.value = '2026-10-17'; ui.date.fire('input');
+    assert.equal(ui.end.value, '11:20');
+    await ui.save.listeners.click[0]();
+    assert.equal(new Date(payload.endedAt) - new Date(payload.startedAt),
+      new Date(completed.endedAt) - new Date(completed.startedAt));
+  } finally { ui.restore(); }
+});
+
+test('re-entering the same Start minute still shifts both exact instants', async () => {
+  const ui = setup();
+  try {
+    let payload;
+    const completed = { ...entry, _overlapBoundary: undefined };
+    ui.dialog.openEdit(completed, value => { payload = value; });
+    ui.start.value = '10:15'; ui.start.fire('input');
+    assert.equal(ui.end.value, '11:20');
+    await ui.save.listeners.click[0]();
+    assert.equal(payload.startedAt, new Date(2026, 9, 18, 10, 15).toISOString());
+    assert.equal(new Date(payload.endedAt) - new Date(payload.startedAt),
+      new Date(completed.endedAt) - new Date(completed.startedAt));
+  } finally { ui.restore(); }
+});
+
+test('manual End survives invalid intermediate Start and still shifts on correction', async () => {
+  const ui = setup();
+  try {
+    let payload;
+    const completed = { ...entry, _overlapBoundary: undefined };
+    ui.dialog.openEdit(completed, value => { payload = value; });
+    ui.start.value = '25:00'; ui.start.fire('input');
+    ui.end.value = '12:00'; ui.end.fire('input');
+    ui.start.value = '10:30'; ui.start.fire('input');
+    assert.equal(ui.end.value, '12:14');
+    await ui.save.listeners.click[0]();
+    assert.equal(new Date(payload.endedAt) - new Date(payload.startedAt),
+      new Date(2026, 9, 18, 12) - new Date(completed.startedAt));
+  } finally { ui.restore(); }
+});
+
+test('manual End survives an empty intermediate Date before shifting the interval', async () => {
+  const ui = setup();
+  try {
+    let payload;
+    const completed = { ...entry, _overlapBoundary: undefined };
+    ui.dialog.openEdit(completed, value => { payload = value; });
+    ui.date.value = ''; ui.date.fire('input');
+    ui.end.value = '12:00'; ui.end.fire('input');
+    ui.date.value = '2026-10-17'; ui.date.fire('input');
+    assert.equal(ui.end.value, '11:59');
+    await ui.save.listeners.click[0]();
+    assert.equal(new Date(payload.endedAt) - new Date(payload.startedAt),
+      new Date(2026, 9, 18, 12) - new Date(completed.startedAt));
+  } finally { ui.restore(); }
+});
+
 test('conflict-only range validates exact ordering and 24-hour limit', async () => {
   const ui = setup();
   try {

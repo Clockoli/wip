@@ -83,8 +83,28 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   let tasks = [], selected = null, generation = 0, busy = false, searching = false, searchTimer = null;
   let lastSearch = '', searchIncomplete = false, catalogLoaded = false, editing = null, showRepository = false;
   let defaultStart = '', defaultDate = '', startEdited = false, dateEdited = false;
-  start.addEventListener('input', () => { startEdited = true; });
-  date.addEventListener('input', () => { dateEdited = true; });
+  let editStartInstant = null, editEndInstant = null, endShifted = false;
+  const moveEditedRange = () => {
+    if (!editing || editing.running || editing.boundary) return;
+    const nextStart = localTimestamp(date.value, parseTime(start.value));
+    if (!nextStart || !editStartInstant || !editEndInstant) return;
+    if (!parseTime(end.value)) { editStartInstant = nextStart; return; }
+    editEndInstant = new Date(editEndInstant.getTime() + nextStart.getTime() - editStartInstant.getTime());
+    editStartInstant = nextStart;
+    end.value = timeValue(editEndInstant);
+    endShifted = true;
+  };
+  start.addEventListener('input', () => { startEdited = true; moveEditedRange(); });
+  date.addEventListener('input', () => { dateEdited = true; moveEditedRange(); });
+  end.addEventListener('input', () => {
+    endShifted = false;
+    if (!editing || editing.running || editing.boundary) return;
+    const startTime = parseTime(start.value), endTime = parseTime(end.value);
+    if (!endTime) return;
+    const day = localTimestamp(date.value, '12:00') && new Date(`${date.value}T12:00:00`);
+    if (day && startTime && endTime < startTime) day.setDate(day.getDate() + 1);
+    editEndInstant = localTimestamp(day && startTime ? dateValue(day) : dateValue(editEndInstant), endTime) || editEndInstant;
+  });
   const setError = text => { error.textContent = text; error.hidden = !text; };
   const setSearchBusy = value => { searchStatus.hidden = !value; search.setAttribute('aria-busy', String(value)); };
   const taskIdentity = () => {
@@ -219,6 +239,9 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     defaultDate = date.value; defaultStart = start.value;
     startEdited = false; dateEdited = false;
     end.value = entry && !runningEdit ? timeValue(new Date(entry.endedAt)) : '';
+    editStartInstant = entry && !runningEdit ? new Date(entry.startedAt) : null;
+    editEndInstant = entry && !runningEdit ? new Date(entry.endedAt) : null;
+    endShifted = false;
     description.value = entry?.description || '';
     if (entry) {
       selected = { taskUrl: entry.taskUrl, title: entry.taskTitle || '', destinationId: entry.destinationId };
@@ -282,11 +305,12 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     }
     const initialStart = editing && new Date(editing.entry.startedAt);
     const initialEnd = editing && !runningEdit && new Date(editing.entry.endedAt);
-    const unchangedTimes = editing && date.value === dateValue(initialStart)
-      && startTime === timeValue(initialStart) && (runningEdit || endTime === timeValue(initialEnd));
+    const unchangedStart = editing && date.value === dateValue(initialStart) && startTime === timeValue(initialStart)
+      && (runningEdit || (!startEdited && !dateEdited));
+    const unchangedTimes = unchangedStart && (runningEdit || endTime === timeValue(initialEnd));
     const defaultRunningStart = !editing && !end.value && !startEdited && !dateEdited
       && date.value === defaultDate && start.value === defaultStart;
-    const startedAt = unchangedTimes ? editing.entry.startedAt
+    const startedAt = unchangedStart ? editing.entry.startedAt
       : defaultRunningStart ? now.toISOString() : startDate ? startDate.toISOString() : now.toISOString();
     let endDate = null;
     if (endTime && startDate) {
@@ -296,7 +320,8 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     }
     const keepOriginalEnd = editing && !runningEdit && startDate && date.value === dateValue(initialStart)
       && endTime === timeValue(initialEnd) && initialEnd >= startDate;
-    const endedAt = unchangedTimes || keepOriginalEnd ? editing.entry.endedAt : endDate?.toISOString() ?? null;
+    const endedAt = unchangedTimes || keepOriginalEnd && !endShifted ? editing.entry.endedAt
+      : endShifted ? editEndInstant?.toISOString() : endDate?.toISOString() ?? null;
     if (end.value && !endedAt) { setError('Enter a valid date and start/end time (HH:MM or 1000).'); return; }
     if (new Date(startedAt) > now || (endedAt && new Date(endedAt) > now)) {
       setError(runningEdit ? 'Start cannot be in the future.' : 'Start and End cannot be in the future.'); return;

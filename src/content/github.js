@@ -1435,7 +1435,7 @@
     return result;
   }
 
-  function timePicker(label, original, draft = null, { compact = false, timezone = '', onChange = () => {}, onFocus = () => {} } = {}) {
+  function timePicker(label, original, draft = null, { compact = false, timezone = '', onChange = () => {}, onFocus = () => {}, onSet = () => {} } = {}) {
     let template = validTimestamp(draft?.timestamp) ? draft.timestamp : original;
     const initial = timestampParts(template, timezone), group = el('fieldset', undefined, `time-picker${compact ? ' compact-time-picker' : ''}`), controls = [];
     group.append(el('legend', label));
@@ -1454,6 +1454,7 @@
     const changed = () => { refreshValidity(); onChange(currentDraft()); };
     const applyTimestamp = (timestamp, notify = false) => {
       const parts = timestampParts(timestamp, timezone); template = timestamp; dateField.value = parts.date; hourField.value = parts.hour; minuteField.value = parts.minute; refreshValidity();
+      onSet(timestamp);
       if (notify) changed();
     };
     dateField.addEventListener('input', changed); hourField.addEventListener('input', changed); minuteField.addEventListener('input', changed);
@@ -1823,11 +1824,12 @@
     const day = el('div', relativeDayLabel((draft?.start?.date || timestampParts(entry.startedAt, entry.timezone).date)), 'entry-day');
     const duration = el('span', formatDuration(entry.durationSeconds), 'inline-duration'); duration.title = duration.textContent;
     const unsaved = el('span', 'Unsaved', 'inline-unsaved'); unsaved.hidden = !draft;
-    let startPicker, stopPicker, save, cancel;
+    let startPicker, stopPicker, save, cancel, lastValidStart;
     const updateDraft = group => {
       if (!startPicker || !stopPicker) return;
       const previous = inlineDrafts.get(key) || {};
-      const value = { ...previous, entry, start: startPicker.draft(), stop: stopPicker.draft(), group: group || previous.group || key };
+      const value = { ...previous, entry, start: { ...startPicker.draft(), lastValidInstant: lastValidStart },
+        stop: stopPicker.draft(), group: group || previous.group || key };
       inlineDrafts.set(key, value); activeInlineKey ||= key;
       unsaved.hidden = false;
       if (save && cancel) { save.hidden = false; cancel.hidden = false; save.parentElement?.classList.add('dirty'); }
@@ -1842,12 +1844,29 @@
       const group = inlineDrafts.get(key)?.group || key;
       updateDraft(group); linkCrossedTimeBoundaries(entry, boundary, group); refreshOverlapWarnings();
     };
+    const moveStart = () => {
+      try {
+        const nextStart = new Date(startPicker.value()).getTime();
+        const previousStart = lastValidStart ?? new Date(entry.startedAt).getTime();
+        try {
+          const previousEnd = new Date(stopPicker.value()).getTime();
+          stopPicker.setValue(timestampAtOriginalOffset(entry.endedAt, previousEnd + nextStart - previousStart, entry.timezone));
+        } catch { /* An incomplete Stop remains a draft, not a boundary to move. */ }
+        lastValidStart = nextStart;
+      } catch { /* Keep the draft intact until the date and time are valid. */ }
+      remember('start');
+      linkCrossedTimeBoundaries(entry, 'stop', inlineDrafts.get(key)?.group || key);
+      refreshOverlapWarnings();
+    };
     startPicker = timePicker('Start', entry.startedAt, draft?.start, {
-      compact: true, timezone: entry.timezone, onChange: () => remember('start'), onFocus: () => activateTimeInput(key),
+      compact: true, timezone: entry.timezone, onChange: moveStart, onFocus: () => activateTimeInput(key),
+      onSet: timestamp => { lastValidStart = new Date(timestamp).getTime(); },
     });
     stopPicker = timePicker('Stop', entry.endedAt, draft?.stop, {
       compact: true, timezone: entry.timezone, onChange: () => remember('stop'), onFocus: () => activateTimeInput(key),
     });
+    if (Number.isFinite(draft?.start?.lastValidInstant)) lastValidStart = draft.start.lastValidInstant;
+    else try { lastValidStart = new Date(startPicker.value()).getTime(); } catch { /* Incomplete drafts stay editable. */ }
     const saveGroupOnce = async group => {
       try {
         const submittedDrafts = new Map([...inlineDrafts.entries()].filter(([, value]) => value.group === group)

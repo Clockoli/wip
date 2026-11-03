@@ -2717,6 +2717,12 @@ test('List, Timeline and Calendar Edit open the shared time form', async () => {
     await expect(dialog.getByLabel('Date', { exact: true })).toHaveValue(visibleRange[0].slice(0, 10));
     await expect(dialog.getByLabel('Start', { exact: true })).toHaveValue(visibleRange[0].slice(11));
     await expect(dialog.getByLabel('End (optional)')).toHaveValue(visibleRange[1].slice(11));
+    const movedRange = await page.evaluate(range => range.map(value => {
+      const date = new Date(new Date(value).getTime() + 16 * 60_000);
+      return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+    }), originalRange);
+    await dialog.getByLabel('Start', { exact: true }).fill(movedRange[0]);
+    await expect(dialog.getByLabel('End (optional)')).toHaveValue(movedRange[1]);
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     expect(await worker.evaluate(() => globalThis.editPayloads.length)).toBe(0);
     await row.locator('.entry-edit').click();
@@ -2826,17 +2832,17 @@ test('List, Timeline and Calendar Edit open the shared time form', async () => {
     await dateInput.fill(nextDay);
     await expect(endInput).toHaveValue('12:00');
     await startInput.fill('11:00');
-    await expect(endInput).toHaveValue('12:00');
+    await expect(endInput).toHaveValue('11:00');
     await startInput.fill('13:00');
-    await expect(endInput).toHaveValue('12:00', 'changing only Start time must not overwrite End');
+    await expect(endInput).toHaveValue('13:00', 'changing Start moves End by the same amount');
     await dateInput.fill(followingDay);
-    await expect(endInput).toHaveValue('12:00');
+    await expect(endInput).toHaveValue('13:00');
     await endInput.fill('15:00');
     await startInput.fill('14:00');
-    await expect(endInput).toHaveValue('15:00', 'manual End remains editable');
+    await expect(endInput).toHaveValue('16:00', 'moving Start preserves the manually adjusted duration');
     await dialog.getByRole('button', { name: 'Save' }).click();
     await expect(dialog).toBeHidden();
-    expect(await page.evaluate(() => window.__editValues[3].endedAt)).toBe(new Date(`${followingDay}T15:00`).toISOString());
+    expect(await page.evaluate(() => window.__editValues[3].endedAt)).toBe(new Date(`${followingDay}T16:00`).toISOString());
     await page.evaluate(() => window.__openFixtureEdit({ taskUrl: 'https://example.com/overnight', taskTitle: 'Overnight',
       startedAt: new Date(2024, 1, 28, 23, 30).toISOString(),
       endedAt: new Date(2024, 1, 29, 0, 15).toISOString(), description: '' }));
