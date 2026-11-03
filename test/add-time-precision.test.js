@@ -169,6 +169,29 @@ test('ordinary Edit time shifts End with Start, preserving duration and overnigh
   } finally { ui.restore(); }
 });
 
+for (const { endTime, day, hour, minute } of [
+  { endTime: '02:00', day: 19, hour: 2, minute: 0 },
+  { endTime: '23:55', day: 18, hour: 23, minute: 55 },
+]) {
+  test(`Edit time changes an overnight 23:00–07:00 entry to ${endTime} on the inferred day`, async () => {
+    const ui = setup();
+    try {
+      const overnight = { ...entry, _overlapBoundary: undefined,
+        startedAt: new Date(2026, 9, 18, 23, 0, 45, 123).toISOString(),
+        endedAt: new Date(2026, 9, 19, 7, 0, 30, 456).toISOString() };
+      let payload;
+      ui.dialog.openEdit(overnight, value => { payload = value; });
+      assert.equal(ui.date.value, '2026-10-18');
+      assert.equal(ui.end.value, '07:00');
+      ui.end.value = endTime;
+      ui.end.fire('input');
+      await ui.save.listeners.click[0]();
+      assert.equal(payload.startedAt, overnight.startedAt);
+      assert.equal(payload.endedAt, new Date(2026, 9, day, hour, minute).toISOString());
+    } finally { ui.restore(); }
+  });
+}
+
 test('Edit time shifts repeatedly from the latest draft and respects a manually changed End', async () => {
   const ui = setup();
   try {
