@@ -77,6 +77,18 @@ test('billable rates and complete local settings backup are explicit extension-l
   assert.match(reportsJs, /No rate for/);
 });
 
+test('Activity state and loading UI are independent of client billing settings', async () => {
+  const worker = await readFile(new URL('src/background/service-worker.js', root), 'utf8');
+  const chromeStore = await readFile(new URL('src/storage/chrome-store.js', root), 'utf8');
+  const activity = await readFile(new URL('src/content/github.js', root), 'utf8');
+  const times = await readFile(new URL('src/times/times.html', root), 'utf8');
+  assert.match(worker, /const preferences = await store\.getActivityDisplayPreferences\(\)/);
+  assert.match(chromeStore, /async getActivityDisplayPreferences\(\)/);
+  assert.match(activity, /times-loading-placeholder/);
+  assert.match(activity, /Could not update Activity/);
+  assert.match(times, /activity-initial-loading/);
+});
+
 test('popup and GitHub use one tracker renderer with task terminology and one scroll owner', () => {
   assert.match(popupHtml, /src="\.\.\/content\/github\.js"/);
   assert.doesNotMatch(popupHtml, /popup\.js/);

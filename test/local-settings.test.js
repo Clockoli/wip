@@ -3,7 +3,7 @@ import test from 'node:test';
 import {
   billableMinorForRecord, billableMinorTotal, normalizeBillingSettings, parseSettingsImport,
   normalizeProjects, projectNameForUrl, rateMajorToMinor, rateMinorToMajor, settingsExportText,
-  clientForProject, normalizeInvoicingSettings, invoicingSettings,
+  clientForProject, normalizeInvoicingSettings, invoicingSettings, normalizeStoredBillingSettings,
 } from '../src/domain/local-settings.js';
 
 test('projects normalize ordered names and URL substrings with a safe Other fallback', () => {
@@ -42,6 +42,21 @@ test('billable settings normalize client rate cards and stable GitHub logins', (
   assert.throws(() => normalizeBillingSettings({ invoicing: { clients: [{ id: 'acme' }] }, clientRates: { acme: { Alice: 10, alice: 20 } } }), /Duplicate/);
 });
 
+
+test('stored billing ignores only known unscoped rate fields without creating clients', () => {
+  const source = {
+    rates: { alice: 15000 }, currency: 'USD', invoicing: { clients: [{ id: 'acme', name: 'Acme' }] },
+    clientRates: { acme: { bob: 8000 } },
+  };
+  assert.throws(() => normalizeBillingSettings(source), /unexpected fields/i);
+  const normalized = normalizeStoredBillingSettings(source);
+  assert.deepEqual(normalized.invoicing.clients.map(client => client.id), ['acme']);
+  assert.equal(normalized.clientRates.acme.bob[0].amountMinorPerHour, 8000);
+  assert.equal(normalized.clientRates.acme.alice, undefined);
+  assert.deepEqual(Object.keys(normalized), ['clientRates', 'invoicing']);
+  assert.deepEqual(normalizeStoredBillingSettings({ currency: 'USD', rates: { alice: 15000 } }).invoicing.clients, []);
+  assert.throws(() => normalizeStoredBillingSettings({ nonsense: true }), { code: 'invalid_local_billing_settings' });
+});
 
 test('billable totals multiply each user rate by tracked time without rounding records early', () => {
   const records = [

@@ -469,6 +469,53 @@ test('billable rates and settings export stay local, version changes, and import
   assert.equal((await store.getLocalPreferences()).exportRecommended, false);
 });
 
+test('Activity preferences are readable without opening damaged billing settings', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  await backend.setMany({
+    interfaceWidth: 'full', localRecentDays: 14,
+    projects: [{ name: 'Work', substrings: ['example.com/work/'], client: 'acme' }],
+    otherProjectName: 'General', showQueueDiagnostics: true,
+    billingSettings: { unknownBillingField: true },
+  });
+  const reads = [], originalRead = backend.getMany.bind(backend);
+  backend.getMany = keys => { reads.push(keys); return originalRead(keys); };
+  const display = await store.getActivityDisplayPreferences();
+  assert.equal(display.interfaceWidth, 'full');
+  assert.equal(display.projects[0].name, 'Work');
+  assert.equal(display.projects[0].client, 'acme');
+  assert.equal(display.otherProjectName, 'General');
+  assert.ok(reads.every(keys => !keys.includes('billingSettings')), 'Activity must not read the billing key');
+  await assert.rejects(store.getLocalPreferences(), { code: 'invalid_local_billing_settings' });
+  assert.deepEqual(backend.values.get('billingSettings'), { unknownBillingField: true }, 'Activity does not modify damaged billing settings');
+});
+
+test('stored unscoped rates do not block Activity, invoice numbering or settings backup', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  const saved = {
+    currency: 'USD', rates: { alice: 12500 },
+    clientRates: { acme: { bob: 8000 } },
+    invoicing: { seller: { name: 'Seller' }, clients: [{ id: 'acme', name: 'Acme' }], nextNumber: 7 },
+  };
+  await backend.setMany({ billingSettings: saved });
+  assert.equal((await store.getActivityDisplayPreferences()).interfaceWidth, 'contained');
+  const preferences = await store.getLocalPreferences();
+  assert.deepEqual(preferences.invoicing.clients.map(client => client.id), ['acme']);
+  assert.equal(preferences.clientRates.acme.bob[0].amountMinorPerHour, 8000);
+  assert.equal(preferences.clientRates.acme.alice, undefined, 'old rate is not assigned to the client');
+  assert.deepEqual(backend.values.get('billingSettings'), saved, 'reading never rewrites local settings');
+  const backup = JSON.parse((await store.exportSettings()).text);
+  assert.deepEqual(Object.keys(backup.billing).sort(), ['clientRates', 'invoicing']);
+  assert.deepEqual(backup.billing.invoicing.clients.map(client => client.id), ['acme']);
+  assert.equal(backup.billing.clientRates.acme.bob[0].amountMinorPerHour, 8000);
+  assert.equal((await store.reserveInvoiceNumber()).sequence, 7);
+  assert.deepEqual(Object.keys(backend.values.get('billingSettings')).sort(), ['clientRates', 'invoicing']);
+  await backend.setMany({ billingSettings: saved });
+  const result = await store.saveBillingSettings({ invoicing: { ...preferences.invoicing, notes: 'Ready', nextNumber: 8 } });
+  assert.equal(result.invoicing.notes, 'Ready');
+  assert.deepEqual(result.invoicing.clients.map(client => client.id), ['acme']);
+  assert.deepEqual(Object.keys(backend.values.get('billingSettings')).sort(), ['clientRates', 'invoicing']);
+});
+
 test('invoicing save, export and import preserve project-to-client links without changing routes', async () => {
   const backend = new MemoryBackend(), store = new ChromeStore(backend), destinationId = 'github:42';
   const destination = { id: destinationId, repoId: 42, owner: 'acme', repo: 'time', branch: 'clockoli/users/1', recentDays: 7 };
