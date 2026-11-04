@@ -1,7 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildInvoice } from '../src/domain/invoicing.js';
+import { buildInvoice as buildClientInvoice } from '../src/domain/invoicing.js';
 import { billableTotalsByCurrency, formatInvoiceNumber, invoicingSettings } from '../src/domain/local-settings.js';
+
+// Legacy single-client scenarios run through the client-scoped production API.
+function buildInvoice(records, options) {
+  const clientId = options.clientId || 'c';
+  const invoicing = { ...options.invoicing, clients: options.invoicing?.clients ?? [{ id: 'c', name: 'Client' }] };
+  return buildClientInvoice(records, { ...options, clientId, invoicing, clientRates: options.clientRates ?? { [clientId]: options.rates || {} } });
+}
 
 const record = { user: 'alice', taskUrl: 'https://example.com/task', taskTitle: 'Task', description: 'Work description', entryDate: '2026-08-14', durationSeconds: 3600 };
 const options = { rates: { alice: 12345 }, startDate: '2026-08-01', endDate: '2026-08-31', issueDate: '2026-09-01' };
@@ -30,7 +37,7 @@ test('uncovered records remain visible but only billed people determine descript
   assert.equal(invoice.totalMinor, 12345);
   assert.equal(invoice.number, '');
   assert.equal(invoice.sequence, null);
-  assert.equal(invoice.client, null);
+  assert.equal(invoice.client.id, 'c');
   assert.deepEqual(buildInvoice(records, { ...options, rates: {}, currency: '$' }).unbilled, [{ person: 'alice', seconds: 3600 }, { person: 'bob', seconds: 300 }, { person: 'zoe', seconds: 720 }]);
   const multiple = buildInvoice(records, { ...options, rates: { ...options.rates, bob: 10000 } });
   assert.deepEqual(multiple.lines.map(line => line.description), ['Work description', 'Work description']);
