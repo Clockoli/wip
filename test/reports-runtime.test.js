@@ -705,7 +705,7 @@ test('invoice composition projects billing inputs without serializing record met
     assert.notEqual(page.context.invoiceCompositionKey([{ ...entry, ...patch }]), original);
   }
   assert.notEqual(page.context.invoiceCompositionKey([{ ...entry, id: null }]), page.context.invoiceCompositionKey([{ ...entry, id: null, taskUrl: 'https://other.com/task' }]));
-  for (const update of ["state.range.endDate = '2026-08-24'", "state.people.clear()", 'state.billing.clientRates['client-1'].alice = 13000', "state.billing.invoicing.notes = 'Changed'"]) {
+  for (const update of ["state.range.endDate = '2026-08-24'", "state.people.clear()", "state.billing.clientRates['client-1'].alice = 13000", "state.billing.invoicing.notes = 'Changed'"]) {
     const before = page.context.invoiceCompositionKey([entry]); vm.runInContext(update, page.context);
     assert.notEqual(page.context.invoiceCompositionKey([entry]), before);
   }
