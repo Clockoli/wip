@@ -2063,7 +2063,7 @@ for (const form of ['billing', 'invoicing']) test(`${form} handles a typed clien
     assert.equal(save.payload.invoicing.clients.at(-1).email, 'typed@example.com');
     assert.equal(Object.hasOwn(save.payload.invoicing.clients.at(-1), 'projects'), false);
   } else {
-    assert.deepEqual(Object.keys(save.payload), ['rates']);
+    assert.deepEqual(Object.keys(save.payload), ['clientRates']);
     assert.equal(client.querySelector('.client-name').value, 'Typed client');
     assert.equal(client.querySelector('.client-email').value, 'typed@example.com');
   }
