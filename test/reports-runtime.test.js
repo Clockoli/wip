@@ -742,6 +742,34 @@ test('Save as PDF uses the seller first-last and invoice number filename', async
   assert.equal(page.nodes.get('invoice-dialog').open, true);
 });
 
+test('invoice Print and Save as PDF can be used repeatedly after one number reservation', async () => {
+  const page = await loaded(result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }));
+  await page.fire('create-invoice'); await page.settle();
+  assert.equal(page.nodes.get('invoice-print').disabled, false);
+  assert.equal(page.nodes.get('invoice-save-pdf').disabled, false);
+
+  const firstPdf = page.fire('invoice-save-pdf'); await page.settle();
+  assert.equal(page.nodes.get('invoice-print').disabled, true, 'both actions stay disabled during PDF export');
+  await page.reply({ sequence: 7 }); await firstPdf;
+  assert.equal(page.pdfExports.length, 1);
+  assert.equal(page.nodes.get('invoice-print').disabled, false);
+  assert.equal(page.nodes.get('invoice-save-pdf').disabled, false);
+
+  await page.fire('invoice-print'); await page.settle();
+  assert.equal(page.prints.length, 1);
+  assert.equal(page.nodes.get('invoice-print').disabled, false, 'successful Print restores the buttons');
+  assert.equal(page.nodes.get('invoice-save-pdf').disabled, false);
+
+  await page.fire('invoice-save-pdf'); await page.settle();
+  assert.equal(page.pdfExports.length, 2);
+  assert.equal(page.nodes.get('invoice-print').disabled, false);
+  await page.fire('invoice-print'); await page.settle();
+  assert.equal(page.prints.length, 2);
+  assert.equal(page.nodes.get('invoice-save-pdf').disabled, false);
+  assert.equal(page.requests.filter(request => request.message.type === 'RESERVE_INVOICE_NUMBER').length, 1,
+    'repeated output must keep the same reserved invoice number');
+});
+
 test('PDF seller raster wraps long names at 3x without changing layout and restores the preview DOM', async () => {
   const page = await loaded(result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }));
   await page.fire('create-invoice'); await page.settle();
