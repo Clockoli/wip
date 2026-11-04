@@ -387,6 +387,20 @@ export function normalizeBillingSettings(value = {}) {
   return { clientRates, invoicing };
 }
 
+// Read-only normalization for settings already stored on this device.
+// Ignore only the known obsolete unscoped fields; do not transfer their
+// rates to a client and do not weaken validation of new saves or imports.
+export function normalizeStoredBillingSettings(value = {}) {
+  if (!plainObject(value)) return normalizeBillingSettings(value);
+  const { rates: _rates, currency: _currency, ...scoped } = value;
+  try { return normalizeBillingSettings(scoped); }
+  catch {
+    throw Object.assign(new Error('Your saved billing settings could not be read. Open Settings to review them or restore a settings backup.'), {
+      code: 'invalid_local_billing_settings',
+    });
+  }
+}
+
 export function rateForClient(clientId, billing, user, date = '') {
   if (!clientId || !(billing?.invoicing?.clients ?? []).some(client => client.id === clientId)) return null;
   return rateForUser(user, billing?.clientRates?.[clientId] ?? {}, date);

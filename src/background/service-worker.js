@@ -1383,11 +1383,11 @@ async function handle(message, sender) {
     const pageState = message.type === 'GET_PAGE_STATE';
     const state = await globalTrackerState({ refresh: Boolean(message.refresh), includeSummary: pageState,
       includePendingDetails: !pageState || sender?.url === chrome.runtime.getURL('src/times/times.html') });
-    if (!state.configured) return pageState
-      ? { configured: false, active: null, pendingCount: 0, recent: [], interfaceWidth: (await store.getLocalPreferences()).interfaceWidth }
-      : state;
     if (!pageState) return state;
-    const preferences = await store.getLocalPreferences();
+    const preferences = await store.getActivityDisplayPreferences();
+    if (!state.configured) return {
+      ...state, pendingCount: 0, interfaceWidth: preferences.interfaceWidth,
+    };
     return {
       ...state,
       projects: preferences.projects,
