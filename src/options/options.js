@@ -1580,16 +1580,26 @@ function refreshRateClients() {
     const option = document.createElement('option'); option.value = client.id; option.textContent = client.name || client.id; select.append(option);
   }
   select.value = clients.some(client => client.id === previous) ? previous : (clients.length === 1 ? clients[0].id : '');
-  for (const row of $('rates-list').querySelectorAll('.rate-row')) row.hidden = row.dataset.clientId !== select.value;
-  $('add-rate').disabled = !select.value;
-  $('save-billing').disabled = !select.value;
+  const savedClients = new Set((localPreferences?.invoicing?.clients || []).map(client => client.id));
+  for (const row of $('rates-list').querySelectorAll('.rate-row')) {
+    row.hidden = row.dataset.clientId !== select.value;
+    // Hidden required inputs must not prevent a different client's rate card
+    // from passing the browser's native form validation.
+    for (const input of row.querySelectorAll('input')) input.disabled = row.hidden;
+  }
+  const editable = Boolean(select.value) && savedClients.has(select.value);
+  $('add-rate').disabled = !editable;
+  $('save-billing').disabled = !editable;
 }
 
-function renderBillingPreferences(preferences) {
-  $('rates-list').replaceChildren();
-  // Render all clients' rows once. Switching clients never discards unsaved edits.
-  const selected = $('rates-client').value;
+function renderBillingPreferences(preferences, { preserveOtherDrafts = false } = {}) {
+  // Saving one client's rate card must not destroy drafts for other clients.
+  const selected = $('rates-client').value, list = $('rates-list');
+  const otherRows = preserveOtherDrafts
+    ? [...list.querySelectorAll('.rate-row')].filter(row => row.dataset.clientId !== selected) : [];
+  list.replaceChildren(...otherRows);
   for (const [clientId, card] of Object.entries(preferences.clientRates || {})) {
+    if (preserveOtherDrafts && clientId !== selected) continue;
     for (const [login, periods] of Object.entries(card)) {
       for (const period of periods) addRateRow(login, period, clientId);
     }
@@ -1815,11 +1825,14 @@ async function refreshMergeTasks() {
 }
 
 function ratesPayload() {
-  const clientRates = {};
-  const clients = new Set([...$('clients-list').querySelectorAll('.client-row')].map(row => row.dataset.clientId));
+  const selected = $('rates-client').value;
+  const clients = new Set((localPreferences?.invoicing?.clients || []).map(client => client.id));
+  if (!clients.has(selected)) throw new Error('Save this client before assigning billable rates.');
+  const clientRates = Object.fromEntries(Object.entries(localPreferences?.clientRates || {})
+    .filter(([id]) => clients.has(id) && id !== selected));
   for (const row of $('rates-list').querySelectorAll('.rate-row')) {
     const clientId = row.dataset.clientId;
-    if (!clients.has(clientId)) continue;
+    if (clientId !== selected) continue;
     const login = row.querySelector('.rate-login').value.trim();
     const value = row.querySelector('.rate-value').value.trim();
     const currency = row.querySelector('.rate-currency').value.trim();
@@ -2465,7 +2478,7 @@ $('billing-form').addEventListener('submit', async event => {
   try {
     const result = await send({ type: 'SAVE_BILLING_SETTINGS', payload: { clientRates: ratesPayload() }, expectedRevision: localPreferences.revision });
     localPreferences = { ...localPreferences, clientRates: result.clientRates, revision: result.revision, exportRecommended: true };
-    renderBillingPreferences(localPreferences);
+    renderBillingPreferences(localPreferences, { preserveOtherDrafts: true });
     formFeedback('billing-feedback', ''); saveButtonFeedback(button, 'saved', operation);
   } catch (error) { formFeedback('billing-feedback', error.message || 'Could not save billable rates.', 'error'); saveButtonFeedback(button, 'error', operation); }
 });
