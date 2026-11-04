@@ -109,11 +109,11 @@ Routine work-record writes occur only on the personal branch. Completed-record c
 
 Do not manually create a branch under `clockoli/users/`. Existing branches must have ownership metadata matching the branch's stable user ID; unknown ownership fails closed.
 
-Personal branches keep each user's routine timer commits off the default branch and reduce write conflicts between team members. An existing configuration can temporarily retain its prior storage branch while active or pending work prevents a safe transition to the personal branch.
+Personal branches keep each user's routine timer commits off the default branch and reduce write conflicts between team members.
 
 ## Data format v1
 
-Clockoli has one supported persistent work-record format: schema `1`. There is no older supported data format, compatibility reader, dual-write mode, or migration path.
+Clockoli stores work records using schema `1`.
 
 - An active file is one formatted JSON object with `activity.state: "running"`.
 - A monthly file is JSON Lines: one compact completed work-record object per non-empty line.
@@ -206,11 +206,11 @@ Reports lists valid personal branches in each selected time repository, reads re
 
 On GitHub issue and pull-request pages, participant all-time totals read one `.clockoli/tasks.json` file from each relevant personal branch. The sidebar does not scan monthly history. Top tasks aggregate the same canonical HTTP(S) URL across selected destinations and preserve destination provenance; imported non-URL identities remain destination-specific.
 
-Task search on Top tasks and in Add time combines the task indexes of every marked personal branch in configured time repositories; unfiltered Top tasks and Activity records remain personal. Each index now stores a bounded title snapshot with its source record ID and timestamp when available. Search checks a branch ETag and the index blob SHA, reusing the IndexedDB report cache across service-worker restarts. For older index entries without a title snapshot, the first search reconstructs names from validated monthly records and caches them locally under the branch snapshot; unchanged branches do not download the history again. A changed branch rechecks its index and, when necessary, changed monthly blobs. Search does not rewrite teammates' branches. Overlapping record IDs across indexes trigger an exact monthly-record comparison before suggesting tasks. Accepted work still waiting to sync is projected locally alongside indexed candidates and marks the results incomplete until reconciliation. Reads are bounded per person and across configured repositories. Repository failures leave a visible incomplete-results warning; if all reads exceed the safe limit, search returns an error rather than silently omitting people. For imported non-URL identities, the source repository is retained and Add time verifies that a person's task index there still contains the identity before synchronizing.
+Task search on Top tasks and in Add time combines the task indexes of every marked personal branch in configured time repositories; unfiltered Top tasks and Activity records remain personal. Each index stores a bounded title snapshot with its source record ID and timestamp when available. Search checks a branch ETag and the index blob SHA, reusing the IndexedDB report cache across service-worker restarts. If an index entry has no title snapshot, search reconstructs names from validated monthly records and caches them locally under the branch snapshot; unchanged branches do not download the history again. A changed branch rechecks its index and, when necessary, changed monthly blobs. Search does not rewrite teammates' branches. Overlapping record IDs across indexes trigger an exact monthly-record comparison before suggesting tasks. Accepted work still waiting to sync is projected locally alongside indexed candidates and marks the results incomplete until reconciliation. Reads are bounded per person and across configured repositories. Repository failures leave a visible incomplete-results warning; if all reads exceed the safe limit, search returns an error rather than silently omitting people. For imported non-URL identities, the source repository is retained and Add time verifies that a person's task index there still contains the identity before synchronizing.
 
 Only tasks with a nonempty title appear in the cross-user search catalog. Untitled task identities remain in their per-user Git indexes and completed records; they are not lost or treated as a successful title backfill. Unfiltered personal Top tasks and Activity remain unaffected.
 
-Maintainers can inspect older titleless indexes without writing to GitHub:
+Maintainers can inspect task indexes without title snapshots without writing to GitHub:
 
 ```sh
 node scripts/preview-task-index-backfill.mjs --repo owner/time-repository

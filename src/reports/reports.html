@@ -111,6 +111,7 @@
         <p class="muted">Amounts use the invoice currency. Enter a negative amount for a discount.</p>
         <div id="invoice-extra-lines"></div>
         <button id="invoice-add-line" class="button secondary" type="button">Add line</button>
+        <p id="invoice-extra-hint" class="invoice-extra-hint muted" role="status" hidden>Complete or remove unfinished additional lines before printing or saving.</p>
       </div>
       <p id="invoice-feedback" class="invoice-feedback" role="alert"></p>
       <section class="invoice-preview-region" aria-labelledby="invoice-preview-title">
@@ -160,6 +161,17 @@
 
       <div id="reports-layout" class="reports-layout">
         <aside class="filters card" aria-label="Report filters">
+          <section>
+            <div class="section-heading"><h2>Client</h2></div>
+            <label class="muted" for="report-client-filter">Show work for</label>
+            <select id="report-client-filter" aria-label="Filter by client"><option value="">All clients</option></select>
+          </section>
+          <section>
+            <div class="section-heading"><h2>Billable rates</h2></div>
+            <label class="muted" for="rate-client">Calculate amounts using</label>
+            <select id="rate-client" aria-label="Client rate card"><option value="__project__">Each project's client</option></select>
+            <p class="muted">Rates stay in this browser. Select a client to evaluate all visible work using that client's rates.</p>
+          </section>
           <section>
             <div class="section-heading"><h2>People</h2><button id="people-all" class="text-button" type="button">Select all</button></div>
             <input id="people-search" class="facet-search" type="search" placeholder="Search people" aria-label="Search people">

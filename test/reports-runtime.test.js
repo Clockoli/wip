@@ -24,7 +24,7 @@ const invoiceSettings = {
 };
 const result = (records = [record('alice'), record('bob', 'other.com')], rates = {}, invoicingSettings = invoiceSettings) => ({
   configured: true, currentUser: 'alice', records,
-  billing: { rates, invoicing: invoicingSettings, otherProjectName: 'General', projects: [{ name: 'Main', substrings: ['https://example.com/'], client: 'client-1' }, { name: 'Other', substrings: ['https://other.com/'], client: 'client-1' }] },
+  billing: { clientRates: { 'client-1': rates }, invoicing: invoicingSettings, otherProjectName: 'General', projects: [{ name: 'Main', substrings: ['https://example.com/'], client: 'client-1' }, { name: 'Other', substrings: ['https://other.com/'], client: 'client-1' }] },
 });
 
 function harness(preferences = {}, { delayInitialPreferences = false } = {}) {
@@ -181,6 +181,38 @@ test('first load defaults to current user, shows one time figure and hides uncon
   assert.ok(page.nodes.get('print-detail-table').children[1].children.length);
 });
 
+test('partial reports allow invoice previews but never reserve, print, or save them', async () => {
+  const rated = result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } });
+  const partial = { ...rated, partial: true, readStatus: [
+    { destinationId: 'github:1', timeRepository: 'alice/time', status: 'ok' },
+    { destinationId: 'github:2', timeRepository: 'missing/time', status: 'error' },
+  ] };
+  const page = await loaded(partial);
+  assert.equal(page.nodes.get('create-invoice').attributes['aria-disabled'], 'false');
+  await page.fire('create-invoice'); await page.settle();
+  assert.equal(page.nodes.get('invoice-dialog').open, true);
+  assert.match(page.textOf(page.nodes.get('invoice-preview')), /Review/);
+  assert.match(page.nodes.get('invoice-feedback').textContent, /preview only/i);
+  assert.equal(page.nodes.get('invoice-print').disabled, true);
+  assert.equal(page.nodes.get('invoice-save-pdf').disabled, true);
+  await page.fire('invoice-print'); await page.fire('invoice-save-pdf');
+  assert.equal(page.requests.some(request => request.message.type === 'RESERVE_INVOICE_NUMBER'), false);
+
+  const reopened = await loaded(rated);
+  await reopened.fire('create-invoice'); await reopened.settle();
+  assert.equal(reopened.nodes.get('invoice-print').disabled, false);
+  const loading = reopened.load(newRange);
+  await reopened.reply(partial); await loading; await reopened.settle();
+  assert.equal(reopened.nodes.get('invoice-dialog').open, true);
+  assert.match(reopened.nodes.get('invoice-feedback').textContent, /preview only/i);
+  assert.equal(reopened.nodes.get('invoice-print').disabled, true);
+  assert.equal(reopened.nodes.get('invoice-save-pdf').disabled, true);
+  await reopened.fire('invoice-print'); await reopened.fire('invoice-save-pdf');
+  assert.equal(reopened.requests.some(request => request.message.type === 'RESERVE_INVOICE_NUMBER'), false);
+  assert.equal(reopened.pdfExports.length, 0);
+  assert.equal(reopened.prints.length, 0);
+});
+
 test('partial multi-repository reports stay visible with exports disabled', async () => {
   const page = await loaded({
     ...result(), partial: true,
@@ -328,7 +360,7 @@ test('pending writes block a rated invoice, including an already open preview an
   assert.equal(page.nodes.get('invoice-print').disabled, false);
 });
 
-test('remote partial status remains separate from local queue warning and permits invoice without local pending', async () => {
+test('remote partial status remains separate from local queue warning and permits only invoice preview', async () => {
   const rate = { alice: { amountMinorPerHour: 12000, currency: 'EUR' } };
   const partial = { ...result([record('alice')], rate), partial: true,
     readStatus: [{ status: 'error', timeRepository: 'team/time' }],
@@ -344,7 +376,10 @@ test('remote partial status remains separate from local queue warning and permit
   assert.equal(page.nodes.get('download-csv').attributes['aria-disabled'], 'true');
   assert.equal(page.nodes.get('create-invoice').attributes['aria-disabled'], 'false');
   await page.fire('create-invoice'); await page.settle();
-  assert.equal(page.nodes.get('invoice-print').disabled, false);
+  assert.match(page.textOf(page.nodes.get('invoice-preview')), /Review/);
+  assert.match(page.nodes.get('invoice-feedback').textContent, /preview only/i);
+  assert.equal(page.nodes.get('invoice-print').disabled, true);
+  assert.equal(page.nodes.get('invoice-save-pdf').disabled, true);
 });
 
 test('billing stays visible when a configured rate belongs to someone outside the selection', async () => {
@@ -504,7 +539,7 @@ test('invoice entry point explains empty and unrated filtered sets', async () =>
   assert.equal(empty.nodes.get('create-invoice').attributes['data-clockoli-tooltip'], 'No entries in this period to invoice');
   const unrated = await loaded(result([record('alice')]));
   assert.equal(unrated.nodes.get('create-invoice').attributes['aria-disabled'], 'true');
-  assert.equal(unrated.nodes.get('create-invoice').attributes['data-clockoli-tooltip'], 'No hourly rate covers these entries. Add rates in Settings.');
+  assert.equal(unrated.nodes.get('create-invoice').attributes['data-clockoli-tooltip'], 'No client rate covers these entries. Add rates in Settings.');
 });
 
 test('invoice dialog renders the filtered records and reserves one number across repeated prints', async () => {
@@ -705,7 +740,7 @@ test('invoice composition projects billing inputs without serializing record met
     assert.notEqual(page.context.invoiceCompositionKey([{ ...entry, ...patch }]), original);
   }
   assert.notEqual(page.context.invoiceCompositionKey([{ ...entry, id: null }]), page.context.invoiceCompositionKey([{ ...entry, id: null, taskUrl: 'https://other.com/task' }]));
-  for (const update of ["state.range.endDate = '2026-08-24'", "state.people.clear()", 'state.billing.rates.alice = 13000', "state.billing.invoicing.notes = 'Changed'"]) {
+  for (const update of ["state.range.endDate = '2026-08-24'", "state.people.clear()", "state.billing.clientRates['client-1'].alice = 13000", "state.billing.invoicing.notes = 'Changed'"]) {
     const before = page.context.invoiceCompositionKey([entry]); vm.runInContext(update, page.context);
     assert.notEqual(page.context.invoiceCompositionKey([entry]), before);
   }
@@ -740,6 +775,55 @@ test('Save as PDF uses the seller first-last and invoice number filename', async
   assert.equal(job.options.jsPDF.format, 'a4');
   assert.equal(job.options.pagebreak.avoid.includes('tr'), true);
   assert.equal(page.nodes.get('invoice-dialog').open, true);
+});
+
+test('rapid Print and Save as PDF requests reserve one invoice number only', async () => {
+  const page = await loaded(result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }));
+  await page.fire('create-invoice'); await page.settle();
+  const printing = page.fire('invoice-print');
+  const saving = page.fire('invoice-save-pdf');
+  assert.equal(page.nodes.get('invoice-print').disabled, true);
+  assert.equal(page.nodes.get('invoice-save-pdf').disabled, true);
+  await page.settle();
+  const reservations = page.requests.filter(request => request.message.type === 'RESERVE_INVOICE_NUMBER');
+  assert.equal(reservations.length, 1, 'concurrent clicks must not issue multiple invoice numbers');
+  await page.reply({ sequence: 7 }, reservations[0]);
+  await Promise.all([printing, saving]);
+  assert.deepEqual(page.prints, ['invoice-INV-2026-0007']);
+  assert.equal(page.pdfExports.length, 0, 'the second click is ignored while the first is running');
+  assert.equal(page.nodes.get('invoice-print').disabled, false);
+  assert.equal(page.nodes.get('invoice-save-pdf').disabled, false);
+  await page.fire('invoice-save-pdf'); await page.settle();
+  assert.equal(page.pdfExports.length, 1, 'PDF output is available after the print completes');
+  assert.equal(page.requests.filter(request => request.message.type === 'RESERVE_INVOICE_NUMBER').length, 1);
+});
+
+test('invoice Print and Save as PDF can be used repeatedly after one number reservation', async () => {
+  const page = await loaded(result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }));
+  await page.fire('create-invoice'); await page.settle();
+  assert.equal(page.nodes.get('invoice-print').disabled, false);
+  assert.equal(page.nodes.get('invoice-save-pdf').disabled, false);
+
+  const firstPdf = page.fire('invoice-save-pdf'); await page.settle();
+  assert.equal(page.nodes.get('invoice-print').disabled, true, 'both actions stay disabled during PDF export');
+  await page.reply({ sequence: 7 }); await firstPdf;
+  assert.equal(page.pdfExports.length, 1);
+  assert.equal(page.nodes.get('invoice-print').disabled, false);
+  assert.equal(page.nodes.get('invoice-save-pdf').disabled, false);
+
+  await page.fire('invoice-print'); await page.settle();
+  assert.equal(page.prints.length, 1);
+  assert.equal(page.nodes.get('invoice-print').disabled, false, 'successful Print restores the buttons');
+  assert.equal(page.nodes.get('invoice-save-pdf').disabled, false);
+
+  await page.fire('invoice-save-pdf'); await page.settle();
+  assert.equal(page.pdfExports.length, 2);
+  assert.equal(page.nodes.get('invoice-print').disabled, false);
+  await page.fire('invoice-print'); await page.settle();
+  assert.equal(page.prints.length, 2);
+  assert.equal(page.nodes.get('invoice-save-pdf').disabled, false);
+  assert.equal(page.requests.filter(request => request.message.type === 'RESERVE_INVOICE_NUMBER').length, 1,
+    'repeated output must keep the same reserved invoice number');
 });
 
 test('PDF seller raster wraps long names at 3x without changing layout and restores the preview DOM', async () => {
@@ -812,7 +896,18 @@ test('additional line controls rebuild totals, reject invalid amounts, remove ro
   const rows = page.nodes.get('invoice-extra-lines');
   const [descriptionLabel, amountLabel, remove] = rows.children[0].children, description = descriptionLabel.children[0], amount = amountLabel.children[0];
   assert.equal(page.nodes.get('invoice-print').disabled, true);
-  description.value = ' Materials '; await description.listeners.change(); amount.value = '25.50'; await amount.listeners.change(); await page.settle();
+  assert.equal(page.nodes.get('invoice-save-pdf').disabled, true);
+  assert.equal(page.nodes.get('invoice-feedback').textContent, '', 'Adding an empty line must not report an hourly-rate error');
+  assert.equal(page.nodes.get('invoice-extra-hint').hidden, false);
+  assert.match(page.textOf(page.nodes.get('invoice-preview')), /Subtotal120.00 EUR/, 'A draft must not remove the valid preview');
+  description.value = ' Materials '; await description.listeners.change(); await page.settle();
+  assert.equal(page.nodes.get('invoice-feedback').textContent, '', 'An unfinished row is not a validation error');
+  assert.equal(page.nodes.get('invoice-extra-hint').hidden, false);
+  assert.equal(page.nodes.get('invoice-print').disabled, true);
+  amount.value = '25.50'; await amount.listeners.change(); await page.settle();
+  assert.equal(page.nodes.get('invoice-extra-hint').hidden, true);
+  assert.equal(page.nodes.get('invoice-print').disabled, false);
+  assert.equal(page.nodes.get('invoice-save-pdf').disabled, false);
   const document = page.nodes.get('invoice-preview').children[0], table = document.children.find(node => node.tagName === 'table');
   assert.equal(page.textOf(table.children[1].children[1]), 'Materials25.50 EUR');
   const extraRow = table.children[1].children[1];
@@ -823,10 +918,14 @@ test('additional line controls rebuild totals, reject invalid amounts, remove ro
   amount.value = '-5.25'; await amount.listeners.change(); await page.settle();
   assert.match(page.textOf(page.nodes.get('invoice-preview')), /Subtotal114.75 EURVAT 20%22.95 EURTotal137.70 EUR/);
   amount.value = '1.001'; await amount.listeners.change(); await page.settle();
+  assert.match(page.nodes.get('invoice-feedback').textContent, /additional line amount/i);
+  assert.doesNotMatch(page.nodes.get('invoice-feedback').textContent, /hourly rate/i);
   assert.equal(page.nodes.get('invoice-print').disabled, true);
   assert.equal(page.textOf(page.nodes.get('invoice-preview')), 'Choose a client and currency to preview the invoice.');
   await remove.listeners.click(); await page.settle();
   assert.equal(rows.children.length, 0); assert.equal(page.nodes.get('invoice-print').disabled, false);
+  assert.equal(page.nodes.get('invoice-extra-hint').hidden, true);
+  assert.equal(page.nodes.get('invoice-feedback').textContent, '');
   for (let index = 0; index < 21; index++) await page.fire('invoice-add-line');
   assert.equal(rows.children.length, 20); assert.equal(page.nodes.get('invoice-add-line').disabled, true);
 });
@@ -862,8 +961,9 @@ test('invoice extra description uses Enter to apply multiline text while Shift+E
   description.listeners.input();
   description.listeners.keydown({ key: 'Enter', shiftKey: false, preventDefault() {} });
   await page.settle();
-  assert.equal(applied.hidden, true, 'a rejected invoice description must not show Applied');
-  assert.match(page.nodes.get('invoice-feedback').textContent, /extra line description/i);
+  assert.equal(applied.hidden, true, 'an unfinished invoice description must not show Applied');
+  assert.equal(page.nodes.get('invoice-feedback').textContent, '', 'An unfinished line should not display a technical error');
+  assert.equal(page.nodes.get('invoice-extra-hint').hidden, false);
   assert.equal(page.nodes.get('invoice-print').disabled, true);
 
   description.value = 'Recovered work';
@@ -871,6 +971,7 @@ test('invoice extra description uses Enter to apply multiline text while Shift+E
   description.listeners.keydown({ key: 'Enter', shiftKey: false, preventDefault() {} });
   await page.settle();
   assert.equal(applied.hidden, false, 'Applied appears only after preview recovery');
+  assert.equal(page.nodes.get('invoice-extra-hint').hidden, true);
   assert.equal(page.nodes.get('invoice-print').disabled, false);
 });
 

@@ -541,7 +541,7 @@ test('destination removal blocks active and pending owners without changing stor
   assert.deepEqual(pendingBackend.snapshot(), pendingBefore);
 });
 
-test('v6 settings import routes only to configured destinations and never verifies or replaces references', async () => {
+test('settings import routes only to configured destinations and never verifies or replaces references', async () => {
   const initial = v5State({ repositoryVerification: { 'github:1': { status: 'write_verified' } } });
   initial.destinationRegistry.destinations = {
     'github:1': { id: 'github:1', repoId: 1, owner: 'current-one', repo: 'time', branch: 'users/a' },
@@ -549,10 +549,10 @@ test('v6 settings import routes only to configured destinations and never verifi
   };
   const backend = new MemoryBackend(initial), store = new ChromeStore(backend);
   const text = JSON.stringify({
-    format: 'clockoli-settings', version: 6, exportedAt: '2026-09-09T00:00:00.000Z',
-    display: { recentDays: 12, otherProjectName: 'General', showQueueDiagnostics: false },
+    format: 'clockoli-settings', version: 8, exportedAt: '2026-09-09T00:00:00.000Z',
+    display: { recentDays: 12, otherProjectClient: '', otherProjectName: 'General', reportingUtc: false, showQueueDiagnostics: false },
     projects: [{ id: 'team', name: 'Team', substrings: ['github.com/team/'], destinationId: 'github:2' }],
-    billing: { rates: {} },
+    billing: { clientRates: {}, invoicing: { clients: [] } },
     destinations: {
       'github:1': { repoId: 1, owner: 'exported-one', repo: 'time', branch: 'old' },
       'github:2': { repoId: 2, owner: 'exported-two', repo: 'time', branch: 'old' },
@@ -565,7 +565,7 @@ test('v6 settings import routes only to configured destinations and never verifi
   assert.equal((await store.getDestinationConfiguration('github:1')).owner, 'current-one');
   assert.deepEqual(backend.values.get('repositoryVerification'), { 'github:1': { status: 'write_verified' } });
   const exported = JSON.parse((await store.exportSettings()).text);
-  assert.equal(exported.version, 6);
+  assert.equal(exported.version, 8);
   assert.equal(exported.security.credentialsIncluded, false);
   assert.equal(exported.destinations['github:1'].owner, 'current-one');
   assert.equal(JSON.stringify(exported).includes('accessToken'), false);
@@ -576,7 +576,8 @@ test('v6 settings import routes only to configured destinations and never verifi
   delete invalidValue.destinations['github:2'];
   invalidValue.defaultDestinationId = 'github:99';
   invalidValue.projects.push({ id: 'local', name: 'Local', substrings: ['github.com/local/'], destinationId: 'github:1' });
-  invalidValue.billing.rates = { alice: [{ amountMinorPerHour: 15000, currency: 'USD', currencyPosition: 'prefix', startDate: '', endDate: '' }] };
+  invalidValue.billing.invoicing.clients = [{ id: 'client-1', name: 'Client One' }];
+  invalidValue.billing.clientRates = { 'client-1': { alice: [{ amountMinorPerHour: 15000, currency: 'USD', currencyPosition: 'prefix', startDate: '', endDate: '' }] } };
   const partial = await store.importSettings(JSON.stringify(invalidValue));
   assert.equal(partial.recentDays, 12);
   assert.deepEqual(partial.projects.map(project => project.name), ['Local']);
@@ -586,7 +587,7 @@ test('v6 settings import routes only to configured destinations and never verifi
   ]);
   assert.equal((await store.getDestinationRegistry()).defaultDestinationId, 'github:1');
   assert.equal((await store.getDestinationConfiguration('github:1')).owner, 'current-one');
-  assert.equal((await store.getLocalPreferences()).rates.alice[0].amountMinorPerHour, 15000);
+  assert.equal((await store.getLocalPreferences()).clientRates['client-1'].alice[0].amountMinorPerHour, 15000);
   assert.equal(backend.values.get('repositoryVerification')['github:1'].status, 'write_verified');
 });
 
@@ -595,10 +596,10 @@ test('partial routed import with no connected repositories does not create a nul
   initial.destinationRegistry = { version: 1, defaultDestinationId: null, destinations: {} };
   const backend = new MemoryBackend(initial), store = new ChromeStore(backend);
   const text = JSON.stringify({
-    format: 'clockoli-settings', version: 6, exportedAt: '2026-09-09T00:00:00.000Z',
-    display: { recentDays: 12, otherProjectName: 'General', showQueueDiagnostics: false },
+    format: 'clockoli-settings', version: 8, exportedAt: '2026-09-09T00:00:00.000Z',
+    display: { recentDays: 12, otherProjectClient: '', otherProjectName: 'General', reportingUtc: false, showQueueDiagnostics: false },
     projects: [{ id: 'team', name: 'Team', substrings: ['github.com/team/'], destinationId: 'github:99' }],
-    billing: { rates: {} },
+    billing: { clientRates: {}, invoicing: { clients: [] } },
     destinations: { 'github:99': { repoId: 99, owner: 'unknown', repo: 'time', branch: 'old' } },
     defaultDestinationId: 'github:99', security: { credentialsIncluded: false },
   });

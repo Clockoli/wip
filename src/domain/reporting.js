@@ -1,5 +1,5 @@
 import { parseGitHubTaskUrl, taskUrlOf } from './values.js';
-import { billableMinorForRecord, exchangeCurrencyCode, projectNameForUrl, rateForUser } from './local-settings.js';
+import { clientIdForRecord, exchangeCurrencyCode, projectNameForUrl, rateForRecord } from './local-settings.js';
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const AXES = new Set(['day', 'week', 'month', 'person', 'repository', 'time-repository', 'task']);
 const METRICS = new Set(['total-time', 'avg-time', 'task-count', 'billable-amount']);
@@ -97,14 +97,24 @@ function repository(record) { return taskSource(record); }
 function project(record, definitions, otherProjectName) { return projectNameForUrl(taskUrlOf(record), definitions, otherProjectName); }
 function selected(values) { return values instanceof Set ? values : new Set(values ?? []); }
 
+function rateForReportRecord(record, options, date = recordDate(record, options.reportingUtc)) {
+  return rateForRecord(record, { clientRates: options.clientRates ?? {}, invoicing: options.invoicing ?? {} }, {
+    clientId: options.rateClientId ?? '__project__', projects: options.projectDefinitions ?? [],
+    otherProjectName: options.otherProjectName ?? 'Other', otherProjectClient: options.otherProjectClient ?? '', date,
+  });
+}
+
+function recordBillableMinor(record, rate) { return rate ? rate.amountMinorPerHour * Math.max(0, Number(record.durationSeconds) || 0) / 3600 : 0; }
+
 export function filterReportRecords(records, filters = {}) {
   const people = selected(filters.people), projects = selected(filters.projects), repositories = selected(filters.repositories), timeRepositories = selected(filters.timeRepositories);
+  const clientMatch = record => !filters.clientIdFilter || (clientIdForRecord(record, { projects: filters.projectDefinitions, otherProjectName: filters.otherProjectName, otherProjectClient: filters.otherProjectClient }) || '__unassigned__') === filters.clientIdFilter;
   const peopleMatch = record => people.size ? people.has(record.user) : !filters.emptyMeansNone;
   const projectMatch = record => projects.size ? projects.has(project(record, filters.projectDefinitions, filters.otherProjectName)) : !filters.emptyMeansNone;
   const repositoryMatch = record => repositories.size ? repositories.has(repository(record)) : !filters.emptyMeansNone;
   const timeRepositoryMatch = record => timeRepositories.size ? timeRepositories.has(timeRepository(record))
     : !Object.hasOwn(filters, 'timeRepositories') || !filters.emptyMeansNone;
-  return (records ?? []).filter(record => peopleMatch(record) && projectMatch(record) && repositoryMatch(record) && timeRepositoryMatch(record));
+  return (records ?? []).filter(record => clientMatch(record) && peopleMatch(record) && projectMatch(record) && repositoryMatch(record) && timeRepositoryMatch(record));
 }
 
 function facet(records, key) {
@@ -181,7 +191,7 @@ export function buildAnalytics(records, options = {}) {
   let billableCurrency = options.currency || '', billableCurrencyCode = billableCurrency ? exchangeCurrencyCode(billableCurrency) : '';
   for (const record of records ?? []) {
     const date = recordDate(record, options.reportingUtc);
-    const recordRate = rateForUser(record.user, options.rates || {}, date);
+    const recordRate = rateForReportRecord(record, options, date);
     let convertedBillableMinor = 0;
     if (metric === 'billable-amount') {
       if (!recordRate) continue;
@@ -189,14 +199,14 @@ export function buildAnalytics(records, options = {}) {
       const sourceCode = exchangeCurrencyCode(recordRate.currency);
       const factor = sourceCode === billableCurrencyCode ? 1 : Number(options.exchangeRates?.[date]?.[sourceCode]);
       if (!(factor > 0)) throw new Error(`Load ${sourceCode} to ${billableCurrencyCode} exchange rates before building billable analytics`);
-      convertedBillableMinor = billableMinorForRecord(record, options.rates || {}, date) * factor;
+      convertedBillableMinor = recordBillableMinor(record, recordRate) * factor;
     }
     const bucketPart = axisPart(record, horizontalAxis, options.reportingUtc), seriesPart = axisPart(record, stackBy, options.reportingUtc);
     series.set(seriesPart.key, seriesPart);
     const bucket = buckets.get(bucketPart.key) ?? { ...bucketPart, values: new Map() };
     const cell = bucket.values.get(seriesPart.key) ?? { seconds: 0, count: 0, billableMinor: 0, tasks: new Set() };
     cell.seconds += Math.max(0, Number(record.durationSeconds) || 0); cell.count += 1;
-    cell.billableMinor += metric === 'billable-amount' ? convertedBillableMinor : billableMinorForRecord(record, options.rates || {}, date); cell.tasks.add(taskUrlOf(record));
+    cell.billableMinor += metric === 'billable-amount' ? convertedBillableMinor : recordBillableMinor(record, recordRate); cell.tasks.add(taskUrlOf(record));
     bucket.values.set(seriesPart.key, cell); buckets.set(bucketPart.key, bucket);
   }
   const seriesList = [...series.values()].sort((a, b) => a.label.localeCompare(b.label));
@@ -254,11 +264,12 @@ export function buildPrintableTimesheet(records, { reportingUtc = false } = {}) 
   return { byDate, byTask, totalSeconds: byDate.reduce((sum, row) => sum + row.seconds, 0) };
 }
 
-export function exportTimesheet(records, { format, startDate, endDate, rates = null, reportingUtc = false }) {
+export function exportTimesheet(records, { format, startDate, endDate, clientRates = {}, invoicing = {}, rateClientId = '__project__', projectDefinitions = [], otherProjectName = 'Other', otherProjectClient = '', reportingUtc = false }) {
   validateDateRange(startDate, endDate);
   const ordered = sortedRecords(records), totalSeconds = ordered.reduce((sum, record) => sum + (Number(record.durationSeconds) || 0), 0);
+  const includeRates = Object.values(clientRates).some(card => Object.keys(card).length);
   const entries = ordered.map(record => {
-    const date = recordDate(record, reportingUtc), rate = rates ? rateForUser(record.user, rates, date) : null;
+    const date = recordDate(record, reportingUtc), rate = rateForReportRecord(record, { clientRates, invoicing, rateClientId, projectDefinitions, otherProjectName, otherProjectClient, reportingUtc }, date);
     return {
       person: record.user,
       taskUrl: taskUrlOf(record),
@@ -267,16 +278,16 @@ export function exportTimesheet(records, { format, startDate, endDate, rates = n
       end: record.endedAt,
       duration: hms(record.durationSeconds),
       durationSeconds: record.durationSeconds,
-      ...(rates ? {
+      ...(includeRates ? {
         hourlyRate: rate ? (rate.amountMinorPerHour / 100).toFixed(2) : '',
-        billableAmount: rate ? (billableMinorForRecord(record, rates, date) / 100).toFixed(2) : '',
+        billableAmount: rate ? (recordBillableMinor(record, rate) / 100).toFixed(2) : '',
         currency: rate?.currency || '',
       } : {}),
       description: record.description || '',
     };
   });
   if (format === 'csv') {
-    const rows = [rates
+    const rows = [includeRates
       ? ['Person', 'Task URL', 'Task title', 'Start', 'End', 'Duration', 'Duration seconds', 'Hourly rate', 'Billable amount', 'Currency', 'Description']
       : ['Person', 'Task URL', 'Task title', 'Start', 'End', 'Duration', 'Duration seconds', 'Description']];
     for (const entry of entries) rows.push(Object.values(entry));

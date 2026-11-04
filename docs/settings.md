@@ -53,15 +53,19 @@ Enable packaged integrations, such as Clockify migration, after reviewing their 
 
 ## More settings
 
-Open **More settings** for billing, invoicing, backups, and advanced options.
+Open **More settings** for clients, client-specific rates, invoicing, backups, and advanced options.
+
+### Clients
+
+Create and save a client before adding rates. Clients can be used for reporting without filling in invoice details.
 
 ### Billable rates
 
-Hourly rates per GitHub login, with effective dates. See [Billable rates](billable-rates.md).
+Select a client to manage its private GitHub-user rates and effective dates. There are no global rates. See [Billable rates](billable-rates.md).
 
 ### Invoicing
 
-Seller and client details, numbering, payment terms, tax, and notes. See [Invoicing](invoicing.md).
+Seller details, numbering, payment terms, tax, and notes. Client details are managed in Clients above. See [Invoicing](invoicing.md).
 
 ### Backup & restore
 
@@ -69,11 +73,11 @@ Seller and client details, numbering, payment terms, tax, and notes. See [Invoic
 
 - recent-entry and reporting preferences;
 - project rules and client assignments;
-- hourly rates with their currency signs or descriptions;
+- each client's hourly rates and currencies;
 - invoicing details such as seller, clients, and payment terms;
 - credential-free repository references and, for routed installations, the default destination.
 
-For configured multi-repository routing, the export uses settings format version 6; the single-repository/PAT path can use version 7. Neither contains credentials, device codes, active timers, pending writes, or tracked time. The Activity view and interface width preferences stay on this browser and are not included. See [Settings backup exclusions](data-and-privacy.md#settings-backup-exclusions).
+Backups contain client-specific rate cards but exclude credentials, device codes, active timers, pending writes, and tracked time. The Activity view and interface width preferences stay on this browser and are not included. See [Settings backup exclusions](data-and-privacy.md#settings-backup-exclusions).
 
 Import validates the entire file and restores routes to destinations already configured in this browser. It reports missing repositories and their routes as not restored; other eligible routes can still be restored. A reference in the backup does not verify current access, and the imported default does not replace this browser's current default. Import does not test access, add a repository, or reconnect GitHub, so add any missing repository first. Before connecting, **Import settings** is reachable through **More settings** → **Backup & restore**.
 
@@ -85,7 +89,7 @@ Import validates the entire file and restores routes to destinations already con
 
 #### Use a personal access token
 
-A single-repository compatibility option for existing PAT setups or environments where the GitHub App cannot be installed. See [Advanced PAT setup](getting-started.md#use-a-personal-access-token-instead).
+A single-repository alternative when the GitHub App cannot be installed. See [Advanced PAT setup](getting-started.md#use-a-personal-access-token-instead).
 
 #### Recovery and access
 

@@ -208,13 +208,14 @@ test('timesheet exports correctly escaped CSV and structured JSON', () => {
 
 test('billable analytics and exports use local per-person rates', () => {
   const rates = { alice: 10000, bob: 5000 };
-  const analytics = buildAnalytics(records, { metric: 'billable-amount', horizontalAxis: 'day', stackBy: 'person', rates });
+  const clientOptions = { clientRates: { acme: rates }, invoicing: { clients: [{ id: 'acme' }] }, rateClientId: 'acme' };
+  const analytics = buildAnalytics(records, { metric: 'billable-amount', horizontalAxis: 'day', stackBy: 'person', ...clientOptions });
   assert.equal(analytics.metric, 'billable-amount');
   assert.equal(analytics.buckets.reduce((sum, bucket) => sum + bucket.totalValue, 0), 50000);
-  const csv = exportTimesheet(records, { format: 'csv', startDate: '2026-08-17', endDate: '2026-08-18', rates });
+  const csv = exportTimesheet(records, { format: 'csv', startDate: '2026-08-17', endDate: '2026-08-18', ...clientOptions });
   assert.match(csv, /Hourly rate,Billable amount,Currency/);
   assert.match(csv, /100\.00/);
-  const json = JSON.parse(exportTimesheet(records, { format: 'json', startDate: '2026-08-17', endDate: '2026-08-18', rates }));
+  const json = JSON.parse(exportTimesheet(records, { format: 'json', startDate: '2026-08-17', endDate: '2026-08-18', ...clientOptions }));
   assert.equal(json.entries[0].currency, 'USD');
   assert.ok(Object.hasOwn(json.entries[0], 'billableAmount'));
 });
@@ -244,13 +245,14 @@ test('UTC grouping, printing and export pricing use the same effective date', ()
     { startDate: '', endDate: '2026-08-31', amountMinorPerHour: 1000, currency: 'EUR' },
     { startDate: '2026-09-01', endDate: '', amountMinorPerHour: 2000, currency: 'EUR' },
   ] };
+  const clientOptions = { clientRates: { acme: rates }, invoicing: { clients: [{ id: 'acme' }] }, rateClientId: 'acme' };
   for (const reportingUtc of [false, true]) {
     const date = reportingUtc ? '2026-08-31' : '2026-09-01', amount = reportingUtc ? 1000 : 2000;
-    const analytics = buildAnalytics(records, { horizontalAxis: 'day', stackBy: 'month', metric: 'billable-amount', rates, reportingUtc });
+    const analytics = buildAnalytics(records, { horizontalAxis: 'day', stackBy: 'month', metric: 'billable-amount', ...clientOptions, reportingUtc });
     assert.equal(analytics.buckets[0].key, date); assert.equal(analytics.buckets[0].segments[0].key, date.slice(0, 7));
     assert.equal(analytics.buckets[0].totalValue, amount);
     assert.equal(buildPrintableTimesheet(records, { reportingUtc }).byDate[0].date, date);
-    const exported = JSON.parse(exportTimesheet(records, { format: 'json', startDate: date, endDate: date, rates, reportingUtc }));
+    const exported = JSON.parse(exportTimesheet(records, { format: 'json', startDate: date, endDate: date, ...clientOptions, reportingUtc }));
     assert.equal(exported.entries[0].hourlyRate, (amount / 100).toFixed(2));
     assert.equal(exported.entries[0].billableAmount, (amount / 100).toFixed(2));
   }

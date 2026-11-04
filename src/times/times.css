@@ -11,6 +11,14 @@ body .page-tab-actions .page-add-time,body .page-theme-toggle{min-height:42px}
 html[data-clockoli-width="full"] .activity-overview-layout{width:calc(100% - 80px)}
 #activity-summary{box-sizing:border-box;min-width:0;padding:12px 14px;border:1px solid var(--borderColor-muted);border-radius:12px;background:var(--bgColor-muted);font:400 14px/1.5 var(--fontStack-sansSerif)}
 #activity-summary:empty{display:none}
+#activity-summary{min-height:166px}
+.activity-initial-summary{display:grid;gap:20px;color:var(--fgColor-muted);font-size:13px}
+.activity-initial-summary strong{color:var(--fgColor-default);font-weight:700}
+#activity-running-status.running-status.is-loading{box-sizing:border-box;min-height:166px;padding:12px 24px;border:1px solid var(--borderColor-muted);border-radius:12px;background:var(--bgColor-muted)}
+#activity-running-status.running-status.is-loading .running-status-row{display:flex;align-items:center;min-height:138px}
+#activity-running-status.running-status.is-loading .running-status-idle-hint{display:none}
+.activity-initial-loading{box-sizing:border-box;width:min(1800px,calc(100% - 80px));min-height:240px;margin:24px auto;padding:88px 16px 28px;border:1px solid var(--borderColor-muted);border-radius:12px;background:var(--bgColor-muted);color:var(--fgColor-muted);text-align:center}
+@media(max-width:700px){.activity-initial-loading{width:calc(100% - 24px)}}
 #activity-summary:empty + #activity-running-status{grid-column:1/-1}
 #activity-sync-status:not(:empty){width:min(1800px,calc(100% - 80px));margin:14px auto 0;font:400 14px/1.5 var(--fontStack-sansSerif)}
 html[data-clockoli-width="full"] #activity-sync-status:not(:empty){width:calc(100% - 80px)}

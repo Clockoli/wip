@@ -60,7 +60,7 @@ test('repository controls offer autocomplete and explicit Check, default and Fin
 test('billable rates and complete local settings backup are explicit extension-local features', async () => {
   const reportsHtml = await readFile(new URL('src/reports/reports.html', root), 'utf8');
   const reportsJs = await readFile(new URL('src/reports/reports.js', root), 'utf8');
-  assert.match(optionsHtml, /id="billing-settings"[\s\S]*Rates are private to this browser/i);
+  assert.match(optionsHtml, /id="billing-settings"[\s\S]*Every rate belongs to exactly one client/i);
   assert.match(optionsHtml, /never written to your GitHub repository/i);
   assert.ok(optionsHtml.indexOf('id="billing-settings"') < optionsHtml.indexOf('id="advanced-settings"'));
   assert.match(optionsHtml, /id="export-settings"[^>]*>Export settings/);
@@ -72,9 +72,21 @@ test('billable rates and complete local settings backup are explicit extension-l
   assert.match(optionsHtml, /id="settings-export-reminder"/);
   assert.match(reportsHtml, /value="billable-amount">Billable amount/);
   assert.match(reportsHtml, /id="summary-money"/);
-  assert.match(reportsJs, /billableTotalsByCurrency/);
+  assert.match(reportsJs, /clientRates/);
   assert.match(optionsJs, /currencyLabel\.textContent = 'Currency'/);
   assert.match(reportsJs, /No rate for/);
+});
+
+test('Activity state and loading UI are independent of client billing settings', async () => {
+  const worker = await readFile(new URL('src/background/service-worker.js', root), 'utf8');
+  const chromeStore = await readFile(new URL('src/storage/chrome-store.js', root), 'utf8');
+  const activity = await readFile(new URL('src/content/github.js', root), 'utf8');
+  const times = await readFile(new URL('src/times/times.html', root), 'utf8');
+  assert.match(worker, /const preferences = await store\.getActivityDisplayPreferences\(\)/);
+  assert.match(chromeStore, /async getActivityDisplayPreferences\(\)/);
+  assert.match(activity, /times-loading-placeholder/);
+  assert.match(activity, /Could not update Activity/);
+  assert.match(times, /activity-initial-loading/);
 });
 
 test('popup and GitHub use one tracker renderer with task terminology and one scroll owner', () => {

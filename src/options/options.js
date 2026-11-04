@@ -1393,9 +1393,12 @@ $('clockify-addon-enabled').addEventListener('click', async () => {
   finally { $('clockify-addon-enabled').disabled = false; }
 });
 
-function addRateRow(login = '', period = null) {
+function addRateRow(login = '', period = null, clientId = $('rates-client').value) {
+  if (!clientId) return;
+
   const rate = period || { amountMinorPerHour: 0, currency: '$', currencyPosition: 'prefix', startDate: '', endDate: '' };
-  const row = document.createElement('div'); row.className = 'rate-row';
+  const row = document.createElement('div'); row.className = 'rate-row'; row.dataset.clientId = clientId;
+  row.hidden = clientId !== $('rates-client').value;
   const loginLabel = document.createElement('label'); loginLabel.textContent = 'GitHub user';
   const loginInput = document.createElement('input'); loginInput.className = 'rate-login'; loginInput.required = true; loginInput.maxLength = 39; loginInput.autocomplete = 'off'; loginInput.placeholder = 'octocat'; loginInput.value = login;
   loginLabel.append(loginInput);
@@ -1417,7 +1420,8 @@ function addRateRow(login = '', period = null) {
 }
 
 function nextClientId() {
-  const used = new Set([...$('clients-list').querySelectorAll('.client-row')].map(row => row.dataset.clientId));
+  const used = new Set([...(localPreferences?.invoicing?.clients || []).map(client => client.id),
+    ...[...$('clients-list').querySelectorAll('.client-row')].map(row => row.dataset.clientId)]);
   // Missing links must not silently attach to a newly created client.
   for (const select of [$('other-project-client'), ...$('projects-list').querySelectorAll('.project-client')]) used.add(select.value);
   let index = 1;
@@ -1455,8 +1459,8 @@ function addClientRow(client = null) {
     label.append(input); row.append(label);
   }
   const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-client'; remove.textContent = '✕'; remove.setAttribute('aria-label', value.name ? `Remove client ${value.name}` : 'Remove this client');
-  const save = document.createElement('button'); save.type = 'submit'; save.className = 'primary save-client'; save.textContent = 'Save';
-  remove.addEventListener('click', () => { row.remove(); refreshProjectClients(); }); row.append(remove, save); $('clients-list').append(row); refreshProjectClients();
+  const save = document.createElement('button'); save.type = 'submit'; save.formNoValidate = true; save.className = 'primary save-client'; save.textContent = 'Save';
+  remove.addEventListener('click', () => { row.remove(); for (const rateRow of $('rates-list').querySelectorAll('.rate-row')) if (rateRow.dataset.clientId === value.id) rateRow.remove(); refreshProjectClients(); refreshRateClients(); }); row.append(remove, save); $('clients-list').append(row); refreshProjectClients(); refreshRateClients();
 }
 
 function addProjectRow(project = { name: '', substrings: [], client: '' }) {
@@ -1568,24 +1572,59 @@ function renderDisplayPreferences(preferences) {
   renderDestinationControls(preferences);
 }
 
-function renderBillingPreferences(preferences) {
+function refreshRateClients() {
+  const select = $('rates-client'), previous = select.value;
+  const clients = [...$('clients-list').querySelectorAll('.client-row')].map(row => ({ id: row.dataset.clientId, name: row.querySelector('.client-name').value.trim() }));
+  select.replaceChildren();
+  const empty = document.createElement('option'); empty.value = ''; empty.textContent = '— Choose a client —'; select.append(empty);
+  for (const client of clients) {
+    const option = document.createElement('option'); option.value = client.id; option.textContent = client.name || client.id; select.append(option);
+  }
+  select.value = clients.some(client => client.id === previous) ? previous : (clients.length === 1 ? clients[0].id : '');
+  const savedClients = new Set((localPreferences?.invoicing?.clients || []).map(client => client.id));
+  for (const row of $('rates-list').querySelectorAll('.rate-row')) {
+    row.hidden = row.dataset.clientId !== select.value;
+    // Hidden required inputs must not prevent a different client's rate card
+    // from passing the browser's native form validation.
+    for (const input of row.querySelectorAll('input')) input.disabled = row.hidden;
+  }
+  const editable = Boolean(select.value) && savedClients.has(select.value);
+  $('add-rate').disabled = !editable;
+  $('save-billing').disabled = !editable;
+}
 
-  $('rates-list').replaceChildren();
-  for (const [login, periods] of Object.entries(preferences.rates || {})) {
-    for (const period of (Array.isArray(periods) ? periods : [{ amountMinorPerHour: periods, startDate: '', endDate: '' }])) {
-      addRateRow(login, typeof period === 'object' ? period : { amountMinorPerHour: period, currency: 'USD', currencyPosition: 'suffix', startDate: '', endDate: '' });
+function renderBillingPreferences(preferences, { preserveOtherDrafts = false } = {}) {
+  // Saving one client's rate card must not destroy drafts for other clients.
+  const selected = $('rates-client').value, list = $('rates-list');
+  const otherRows = preserveOtherDrafts
+    ? [...list.querySelectorAll('.rate-row')].filter(row => row.dataset.clientId !== selected) : [];
+  list.replaceChildren(...otherRows);
+  for (const [clientId, card] of Object.entries(preferences.clientRates || {})) {
+    if (preserveOtherDrafts && clientId !== selected) continue;
+    for (const [login, periods] of Object.entries(card)) {
+      for (const period of periods) addRateRow(login, period, clientId);
     }
   }
-  if (!Object.keys(preferences.rates || {}).length) addRateRow(state?.auth?.githubLogin || '', 0);
+  $('rates-client').value = selected;
+  refreshRateClients();
+}
+
+function renderClientPreferences(preferences) {
+  const clients = invoicingSettings(preferences).clients;
+  $('clients-list').replaceChildren();
+  for (const client of clients) addClientRow(client);
+  refreshProjectClients();
 }
 
 function renderInvoicingPreferences(preferences) {
+  renderClientPreferences(preferences);
+  renderInvoiceDefaults(preferences);
+}
+
+function renderInvoiceDefaults(preferences) {
   const invoicing = invoicingSettings(preferences);
   $('seller-name').value = invoicing.seller.name; $('seller-address').value = invoicing.seller.address;
   $('seller-email').value = invoicing.seller.email; $('seller-tax-id').value = invoicing.seller.taxId;
-  $('clients-list').replaceChildren();
-  for (const client of invoicing.clients) addClientRow(client);
-  refreshProjectClients();
   $('invoice-next-number').value = String(invoicing.nextNumber); $('invoice-number-format').value = invoicing.numberFormat;
   $('invoice-payment-terms').value = String(invoicing.paymentTermsDays); $('invoice-tax-percent').value = String(invoicing.taxPercent); $('invoice-notes').value = invoicing.notes;
   autoGrowTextarea($('seller-address')); autoGrowTextarea($('invoice-notes'));
@@ -1594,8 +1633,8 @@ function renderInvoicingPreferences(preferences) {
 function renderLocalPreferences(preferences) {
   localPreferences = preferences;
   renderDisplayPreferences(preferences);
-  renderBillingPreferences(preferences);
   renderInvoicingPreferences(preferences);
+  renderBillingPreferences(preferences);
   if (!preferences.exportRecommended) $('settings-export-reminder').hidden = true;
   else if (!backupReminderShown) {
     $('settings-export-reminder').hidden = false;
@@ -1791,8 +1830,14 @@ async function refreshMergeTasks() {
 }
 
 function ratesPayload() {
-  const rates = {};
+  const selected = $('rates-client').value;
+  const clients = new Set((localPreferences?.invoicing?.clients || []).map(client => client.id));
+  if (!clients.has(selected)) throw new Error('Save this client before assigning billable rates.');
+  const clientRates = Object.fromEntries(Object.entries(localPreferences?.clientRates || {})
+    .filter(([id]) => clients.has(id) && id !== selected));
   for (const row of $('rates-list').querySelectorAll('.rate-row')) {
+    const clientId = row.dataset.clientId;
+    if (clientId !== selected) continue;
     const login = row.querySelector('.rate-login').value.trim();
     const value = row.querySelector('.rate-value').value.trim();
     const currency = row.querySelector('.rate-currency').value.trim();
@@ -1801,29 +1846,45 @@ function ratesPayload() {
     const parsed = parseRateFields(value, currency);
     const currencyPosition = currency === row.querySelector('.rate-currency').dataset.initialValue
       ? row.dataset.currencyPosition : parsed.currencyPosition;
-    rates[login] ||= [];
-    rates[login].push({ ...parsed, currencyPosition, startDate: row.querySelector('.rate-start').value, endDate: row.querySelector('.rate-end').value });
+    clientRates[clientId] ||= {};
+    clientRates[clientId][login] ||= [];
+    clientRates[clientId][login].push({ ...parsed, currencyPosition, startDate: row.querySelector('.rate-start').value, endDate: row.querySelector('.rate-end').value });
   }
-  return rates;
+  return clientRates;
+}
+
+function clientsPayload(onlyClientId = '') {
+  const rows = [...$('clients-list').querySelectorAll('.client-row')];
+  const clientFromRow = row => ({
+    id: row.dataset.clientId, name: row.querySelector('.client-name').value,
+    address: row.querySelector('.client-address').value, email: row.querySelector('.client-email').value,
+    taxId: row.querySelector('.client-tax-id').value, defaultCurrency: row.querySelector('.client-currency').value,
+  });
+  if (onlyClientId) {
+    const edited = rows.find(row => row.dataset.clientId === onlyClientId);
+    if (!edited) throw new Error('Client to save was not found.');
+    const saved = invoicingSettings(localPreferences).clients, client = clientFromRow(edited);
+    return saved.some(item => item.id === onlyClientId)
+      ? saved.map(item => item.id === onlyClientId ? client : item)
+      : [...saved, client];
+  }
+  const selectedClients = new Set([$('other-project-client'), ...$('projects-list').querySelectorAll('.project-client')].map(select => select.value));
+  return rows.filter(row => row.dataset.persisted === 'true' || row.dataset.touched === 'true' || selectedClients.has(row.dataset.clientId)
+    || ['.client-name', '.client-email', '.client-address', '.client-tax-id', '.client-currency'].some(selector => row.querySelector(selector).value.trim())).map(clientFromRow);
 }
 
 function invoicingPayload() {
-  const selectedClients = new Set([$('other-project-client'), ...$('projects-list').querySelectorAll('.project-client')].map(select => select.value));
-  const invoicing = normalizeInvoicingSettings({
+  return normalizeInvoicingSettings({
     seller: {
       name: $('seller-name').value, address: $('seller-address').value,
       email: $('seller-email').value, taxId: $('seller-tax-id').value,
     },
-    clients: [...$('clients-list').querySelectorAll('.client-row')].filter(row => row.dataset.persisted === 'true' || row.dataset.touched === 'true' || selectedClients.has(row.dataset.clientId)
-      || ['.client-name', '.client-email', '.client-address', '.client-tax-id', '.client-currency'].some(selector => row.querySelector(selector).value.trim())).map(row => ({
-      id: row.dataset.clientId, name: row.querySelector('.client-name').value,
-      address: row.querySelector('.client-address').value, email: row.querySelector('.client-email').value,
-      taxId: row.querySelector('.client-tax-id').value, defaultCurrency: row.querySelector('.client-currency').value,
-    })),
+    // Clients have their own Save action. Never commit that form's unsaved rows
+    // when the user only saves seller details or invoice defaults.
+    clients: invoicingSettings(localPreferences).clients,
     nextNumber: Number($('invoice-next-number').value), numberFormat: $('invoice-number-format').value,
     paymentTermsDays: $('invoice-payment-terms').value.trim() ? Number($('invoice-payment-terms').value) : NaN, taxPercent: Number($('invoice-tax-percent').value), notes: $('invoice-notes').value,
   });
-  return invoicing;
 }
 
 function downloadText(text, filename) {
@@ -2427,43 +2488,67 @@ $('display-form').addEventListener('submit', async event => {
 
 $('add-project').addEventListener('click', () => addProjectRow());
 $('add-rate').addEventListener('click', () => addRateRow());
+$('rates-client').addEventListener('change', () => refreshRateClients());
 $('add-client').addEventListener('click', () => addClientRow());
 $('billing-form').addEventListener('submit', async event => {
   event.preventDefault(); const button = $('save-billing'), operation = saveButtonFeedback(button); formFeedback('billing-feedback', 'Saving billable rates…');
   try {
-    const result = await send({ type: 'SAVE_BILLING_SETTINGS', payload: { rates: ratesPayload() }, expectedRevision: localPreferences.revision });
-    localPreferences = { ...localPreferences, rates: result.rates, revision: result.revision, exportRecommended: true };
-    renderBillingPreferences(localPreferences);
+    const result = await send({ type: 'SAVE_BILLING_SETTINGS', payload: { clientRates: ratesPayload() }, expectedRevision: localPreferences.revision });
+    localPreferences = { ...localPreferences, clientRates: result.clientRates, revision: result.revision, exportRecommended: true };
+    renderBillingPreferences(localPreferences, { preserveOtherDrafts: true });
     formFeedback('billing-feedback', ''); saveButtonFeedback(button, 'saved', operation);
   } catch (error) { formFeedback('billing-feedback', error.message || 'Could not save billable rates.', 'error'); saveButtonFeedback(button, 'error', operation); }
 });
-$('invoicing-form').addEventListener('submit', async event => {
+for (const formId of ['clients-form', 'invoicing-form']) $(formId).addEventListener('submit', async event => {
   event.preventDefault();
   if (invoicingSaveInFlight) return;
-  const clicked = event.submitter?.className.split(' ').includes('save-client') ? event.submitter : $('save-invoicing');
+  const clicked = event.submitter?.className.split(' ').includes('save-client') ? event.submitter : (formId === 'clients-form' ? $('save-clients') : $('save-invoicing'));
   const clientId = clicked.className.split(' ').includes('save-client') ? clicked.parentNode.dataset.clientId : '';
+  if (clientId) {
+    // formNoValidate lets one client save despite an invalid draft for
+    // another client, but the selected client's own fields still need
+    // native validation.
+    for (const selector of ['.client-name', '.client-email', '.client-address', '.client-tax-id', '.client-currency']) {
+      const input = clicked.parentNode.querySelector(selector);
+      if (input?.checkValidity && !input.checkValidity()) { input.reportValidity(); return; }
+    }
+  }
   const operation = saveButtonFeedback(clicked); invoicingSaveInFlight = true;
-  for (const button of [$('save-invoicing'), ...$('clients-list').querySelectorAll('.save-client')]) button.disabled = true;
-  let confirmationButton = null; formFeedback('invoicing-feedback', 'Saving invoicing settings…');
+  for (const button of [$('save-clients'), $('save-invoicing'), ...$('clients-list').querySelectorAll('.save-client')]) button.disabled = true;
+  const feedbackId = formId === 'clients-form' ? 'clients-feedback' : 'invoicing-feedback';
+  let confirmationButton = null; formFeedback(feedbackId, 'Saving settings…');
   try {
+    const clientSave = formId === 'clients-form';
+    const invoicing = clientSave
+      ? normalizeInvoicingSettings({ ...invoicingSettings(localPreferences), clients: clientsPayload(clientId) })
+      : invoicingPayload();
     const result = await send({
-      type: 'SAVE_BILLING_SETTINGS', payload: { invoicing: invoicingPayload() },
-      projectLinks: projectClientLinksPayload(), expectedRevision: localPreferences.revision,
+      type: 'SAVE_BILLING_SETTINGS', payload: { invoicing },
+      // Project assignments are saved in Projects & routing, not Invoicing.
+      projectLinks: null, expectedRevision: localPreferences.revision,
     });
     localPreferences = {
-      ...localPreferences, invoicing: result.invoicing, projects: result.projects,
+      ...localPreferences, invoicing: result.invoicing, clientRates: result.clientRates, projects: result.projects,
       otherProjectClient: result.otherProjectClient, revision: result.revision, exportRecommended: true,
     };
-    renderInvoicingPreferences(localPreferences);
+    if (formId === 'clients-form') {
+      if (clientId) {
+        // Saving one client must leave other draft edits and pending removals untouched.
+        const row = [...$('clients-list').querySelectorAll('.client-row')].find(item => item.dataset.clientId === clientId);
+        if (row) row.dataset.persisted = 'true';
+        refreshProjectClients();
+      } else renderClientPreferences(localPreferences);
+    } else { renderInvoiceDefaults(localPreferences); refreshProjectClients(); }
     confirmationButton = clientId ? [...$('clients-list').querySelectorAll('.client-row')].find(row => row.dataset.clientId === clientId)?.querySelector('.save-client') || clicked : clicked;
-    formFeedback('invoicing-feedback', ''); saveButtonFeedback(confirmationButton, 'saved', operation);
-  } catch (error) { formFeedback('invoicing-feedback', error.message || 'Could not save invoicing settings.', 'error'); saveButtonFeedback(clicked, 'error', operation); }
+    refreshRateClients();
+    formFeedback(feedbackId, ''); saveButtonFeedback(confirmationButton, 'saved', operation);
+  } catch (error) { formFeedback(feedbackId, error.message || 'Could not save settings.', 'error'); saveButtonFeedback(clicked, 'error', operation); }
   finally {
     invoicingSaveInFlight = false;
-    for (const button of [$('save-invoicing'), ...$('clients-list').querySelectorAll('.save-client')]) if (button !== confirmationButton && !saveButtonStates.has(button)) button.disabled = false;
+    for (const button of [$('save-clients'), $('save-invoicing'), ...$('clients-list').querySelectorAll('.save-client')]) if (button !== confirmationButton && !saveButtonStates.has(button)) button.disabled = false;
   }
 });
-for (const [form, feedback] of [['display-form', 'display-feedback'], ['billing-form', 'billing-feedback'], ['invoicing-form', 'invoicing-feedback']]) {
+for (const [form, feedback] of [['display-form', 'display-feedback'], ['billing-form', 'billing-feedback'], ['clients-form', 'clients-feedback'], ['invoicing-form', 'invoicing-feedback']]) {
   $(form).addEventListener('input', () => formFeedback(feedback, ''));
 }
 for (const id of ['seller-address', 'invoice-notes']) wireAutoGrow($(id));

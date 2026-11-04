@@ -2936,7 +2936,22 @@
       feedback.append(el('span', bulkFeedback.message), dismiss);
       body.append(feedback);
     }
-    if (errorText) body.prepend(el('div', errorText, errorCode ? 'error' : 'notice'));
+    if (errorText) {
+      const notice = el('section', undefined, 'times-load-error');
+      notice.setAttribute('role', 'alert');
+      notice.append(el('strong', 'Could not update Activity'),
+        el('p', 'Your recorded time has not been deleted. Try loading it again.'));
+      const actions = el('div', undefined, 'times-load-error-actions');
+      actions.append(button('Retry', 'secondary', async () => {
+        errorText = ''; errorCode = ''; connectionError = null; renderUi();
+        try { await refreshActivityState(true); await loadSelectedTimes(); }
+        catch (cause) { setError(cause); }
+      }));
+      const details = el('details', undefined, 'times-error-details');
+      details.append(el('summary', 'Technical details'), el('pre', errorText));
+      notice.append(actions, details);
+      body.prepend(notice);
+    }
     page.append(body); return page;
   }
 
@@ -3533,8 +3548,13 @@
       || (timesMode ? activityViewMode !== 'calendar' : timelineViewMode !== 'calendar');
     timelineShell.append(loading);
     if (!recentLoaded && !timelineAcceptedActive) {
-      if (!loading.hidden) section.append(timelineShell, timelineQueueIndicator);
-      else section.append(timelineQueueIndicator, el('div', 'Loading timeline…', 'muted'));
+      if (loading.hidden) {
+        const placeholder = el('div', undefined, 'times-loading-placeholder');
+        placeholder.setAttribute('role', 'status');
+        placeholder.append(el('span', undefined, 'times-loading-spinner'), el('span', 'Loading activity…'));
+        timelineShell.append(placeholder);
+      }
+      section.append(timelineShell, timelineQueueIndicator);
       return section;
     }
     const now = Math.min(timelineNow(), weekWindow().end - 1), periodStart = weekWindow().start;
@@ -4745,6 +4765,17 @@
       :host(.times-surface) .activity-list .entry-record:last-child {border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted));border-radius:10px}
       :host(.times-surface) .times-toolbar.times-visual {min-height:0;margin:0;padding:0}
       :host(.times-surface) .popup-timeline-section {padding-top:24px;margin-bottom:16px}
+      :host(.times-surface) .times-loading-placeholder {display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;min-height:240px;padding:88px 16px 28px;border:1px solid var(--borderColor-muted,var(--ck-border-muted));border-radius:12px;background:var(--bgColor-muted,var(--ck-bg-muted));color:var(--fgColor-muted,var(--ck-fg-muted))}
+      :host(.times-surface) .times-loading-spinner {width:23px;height:23px;border:2px solid var(--borderColor-muted,var(--ck-border-muted));border-top-color:var(--fgColor-accent,var(--ck-accent));border-radius:50%;animation:activity-loading-spin .9s linear infinite}
+      @keyframes activity-loading-spin {to{transform:rotate(360deg)}}
+      :host(.times-surface) .times-load-error {display:grid;gap:9px;margin:0 0 16px;padding:16px 18px;border:1px solid var(--borderColor-danger-muted,var(--ck-border-danger));border-radius:10px;background:var(--bgColor-danger-muted,var(--ck-bg-danger))}
+      :host(.times-surface) .times-load-error strong {font-size:15px}
+      :host(.times-surface) .times-load-error p {margin:0;color:var(--fgColor-default,var(--ck-fg))}
+      :host(.times-surface) .times-load-error-actions {display:flex;gap:8px}
+      :host(.times-surface) .times-error-details {font-size:12px;color:var(--fgColor-muted,var(--ck-fg-muted))}
+      :host(.times-surface) .times-error-details summary {cursor:pointer}
+      :host(.times-surface) .times-error-details pre {white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0 0}
+      @media(prefers-reduced-motion:reduce){:host(.times-surface) .times-loading-spinner{animation:none}}
       :host(.times-surface) .week-navigation {min-height:50px;margin:0 0 4px;border-bottom:0}
       :host(.times-surface) .week-navigation {grid-template-columns:1fr 1fr}
       :host(.times-surface) .week-navigation-label,:host(.times-surface) .times-list-total {display:none}

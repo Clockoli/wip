@@ -69,7 +69,7 @@ export function mountRunningStatus(container, { send, onChange, onReconnect, onA
   const stats = make('div', 'running-status-stats'); stats.append(startField, metrics);
   row.replaceChildren(idleGroup, quickStart, live, task, descriptionField, stats, stop);
   for (const node of [live, task, descriptionField, stats, stop]) node.hidden = true;
-  container.classList.add('running-status'); container.setAttribute('aria-label', 'Running status');
+  container.classList.add('running-status', 'is-loading'); container.setAttribute('aria-label', 'Running status');
   container.replaceChildren(row, error);
   let state = null, readAt = 0, reportDate = '', requestId = 0, busy = false, destroyed = false, recentKey = '';
   let refreshFailure = null;
@@ -355,7 +355,7 @@ export function mountRunningStatus(container, { send, onChange, onReconnect, onA
       // Read durable local state first, even when GitHub cannot be reached.
       const local = await send({ type: 'GET_PAGE_STATE' });
       if (destroyed || id !== requestId) return;
-      state = local; readAt = Date.now(); reportDate = localDate(); render();
+      state = local; readAt = Date.now(); reportDate = localDate(); container.classList.toggle('is-loading', false); render();
       if (local.summaryError?.code === 'auth_expired') refreshFailure = local.summaryError;
       showError(local.summaryError || refreshFailure);
       if (focusDescriptionOnLoad && state.active) {
@@ -375,7 +375,9 @@ export function mountRunningStatus(container, { send, onChange, onReconnect, onA
     } catch (cause) {
       if (!destroyed && id === requestId) {
         refreshFailure = cause?.code === 'auth_expired' ? cause : null;
-        showError(cause);
+        container.classList.toggle('is-loading', false);
+        showError(cause?.code === 'auth_expired' ? cause
+          : new Error('Could not load tracking status. Reload Activity to try again.'));
       }
     }
   }

@@ -18,7 +18,7 @@ test('Settings stays in a centered column regardless of the shared width prefere
   assert.match(widthCss, /html\[data-clockoli-width="full"\] main:not\(\.settings-main\)\s*\{\s*max-width:none;\s*\}/);
 });
 const preferences = {
-  rates: { octocat: [{ amountMinorPerHour: 12500, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] },
+  clientRates: { 'client-1': { octocat: [{ amountMinorPerHour: 12500, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] } },
   invoicing: {
     seller: { name: 'Seller', address: 'Street', email: 'seller@example.com', taxId: 'TAX-1' },
     clients: [{ id: 'client-1', name: 'Client', address: 'Road', email: 'client@example.com', taxId: 'TAX-2', defaultCurrency: 'EUR' }],
@@ -41,7 +41,7 @@ function element(tagName = 'div') {
     replaceChildren(...children) { this.children = []; this.textContent = ''; this.append(...children); },
     setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name) { delete this.attributes[name]; }, focus() { this.focused = true; }, scrollIntoView() { this.scrolled = true; },
     showModal() { this.open = true; }, close() { this.open = false; this.listeners.close?.(); },
-    querySelectorAll(selector) { const className = selector.startsWith('.') ? selector.slice(1) : ''; const matches = child => className && child.className.split(' ').includes(className); return this.children.flatMap(child => [...(matches(child) ? [child] : []), ...child.querySelectorAll(selector)]); },
+    querySelectorAll(selector) { const className = selector.startsWith('.') ? selector.slice(1) : ''; const matches = child => className ? child.className.split(' ').includes(className) : child.tagName.toLowerCase() === selector.toLowerCase(); return this.children.flatMap(child => [...(matches(child) ? [child] : []), ...child.querySelectorAll(selector)]); },
     querySelector(selector) { return this.querySelectorAll(selector)[0] || null; },
     contains(child) { return this === child || this.children.some(node => node.contains(child)); },
     remove() { if (this.parentNode) this.parentNode.children = this.parentNode.children.filter(child => child !== this); },
@@ -91,7 +91,7 @@ function harness({ reply = () => ({}), confirm = () => false, savedChoices = new
 
 function billingSaveResult(request, current = preferences) {
   return {
-    rates: request.payload.rates ?? current.rates,
+    clientRates: request.payload.clientRates ?? current.clientRates,
     invoicing: request.payload.invoicing ?? current.invoicing,
     projects: current.projects,
     otherProjectClient: current.otherProjectClient ?? '',
@@ -1730,6 +1730,7 @@ test('secondary settings collapse only on disconnect and remain reachable across
 for (const [form, requestType, originalLabel] of [
   ['display', 'UPDATE_DISPLAY_PREFERENCES', 'Save projects and routing'],
   ['billing', 'SAVE_BILLING_SETTINGS', 'Save billable rates'],
+  ['clients', 'SAVE_BILLING_SETTINGS', 'Save clients'],
   ['invoicing', 'SAVE_BILLING_SETTINGS', 'Save invoicing settings'],
 ]) {
   test(`${form} save confirms on its button for two seconds and keeps errors beside it`, async () => {
@@ -1768,17 +1769,17 @@ for (const [form, requestType, originalLabel] of [
   });
 }
 
-test('client-card save confirms on the clicked replacement button and stale timers cannot restore a newer save', async () => {
+test('client-card save keeps its button and ignores stale save confirmations', async () => {
   const page = harness({ reply: request => billingSaveResult(request) });
   page.context.renderLocalPreferences(preferences);
   const first = page.nodes.get('clients-list').querySelector('.save-client');
-  await page.submit('invoicing-form', first);
+  await page.submit('clients-form', first);
   const replacement = page.nodes.get('clients-list').querySelector('.save-client');
-  assert.notEqual(replacement, first);
+  assert.equal(replacement, first, 'saving one client keeps the existing row and other drafts');
   assert.equal(replacement.textContent, 'Saved'); assert.equal(replacement.disabled, true);
   const stale = page.timers.at(-1);
   replacement.disabled = false;
-  await page.submit('invoicing-form', replacement);
+  await page.submit('clients-form', replacement);
   const newest = page.nodes.get('clients-list').querySelector('.save-client'), current = page.timers.at(-1);
   stale.callback();
   assert.equal(newest.textContent, 'Saved'); assert.equal(newest.disabled, true);
@@ -1786,7 +1787,63 @@ test('client-card save confirms on the clicked replacement button and stale time
   assert.equal(newest.textContent, 'Save'); assert.equal(newest.disabled, false);
 });
 
-test('invoicing save blocks every section save button and ignores concurrent submits until completion', async () => {
+test('individual client Save ignores native validation errors in other drafts', async () => {
+  const saved = { ...preferences, invoicing: { ...preferences.invoicing, clients: [
+    preferences.invoicing.clients[0],
+    { ...preferences.invoicing.clients[0], id: 'client-2', name: 'Second client' },
+  ] } };
+  const page = harness({ reply: request => billingSaveResult(request, saved) });
+  page.context.renderLocalPreferences(saved);
+  const [first, second] = page.nodes.get('clients-list').querySelectorAll('.client-row');
+  const ownSave = first.querySelector('.save-client'), secondSave = second.querySelector('.save-client');
+  const otherEmail = second.querySelector('.client-email');
+  let reported = 0;
+  otherEmail.checkValidity = () => false;
+  otherEmail.reportValidity = () => { reported += 1; };
+  assert.equal(ownSave.formNoValidate, true, 'native form validation must not block unrelated client saves');
+  assert.equal(secondSave.formNoValidate, true);
+  assert.notEqual(page.nodes.get('save-clients').formNoValidate, true,
+    'bulk Save clients still validates the whole form');
+  await page.submit('clients-form', ownSave);
+  assert.equal(page.requests.length, 1, 'first client saves despite another invalid draft');
+  assert.equal(reported, 0);
+  await page.submit('clients-form', secondSave);
+  assert.equal(page.requests.length, 1, 'invalid selected client must not be saved');
+  assert.equal(reported, 1, 'the invalid field is shown to the user');
+});
+
+test('saving one client leaves other client drafts and pending deletions untouched', async () => {
+  const initial = { ...preferences, invoicing: { ...preferences.invoicing, clients: [
+    preferences.invoicing.clients[0], { ...preferences.invoicing.clients[0], id: 'client-2', name: 'Client Two' },
+  ] } };
+  const page = harness({ reply: request => billingSaveResult(request, initial) });
+  page.context.renderLocalPreferences(initial);
+  const [first, second] = page.nodes.get('clients-list').querySelectorAll('.client-row');
+  first.querySelector('.remove-client').listeners.click();
+  page.context.addClientRow();
+  const draft = page.nodes.get('clients-list').querySelectorAll('.client-row').at(-1);
+  assert.equal(draft.dataset.clientId, 'client-3', 'pending removal must not allow reuse of a saved ID');
+  draft.querySelector('.client-name').value = 'Unsaved third client';
+  second.querySelector('.client-name').value = 'Edited second client';
+  const button = second.querySelector('.save-client');
+
+  await page.submit('clients-form', button);
+  const saved = page.requests.find(request => request.type === 'SAVE_BILLING_SETTINGS');
+  assert.deepEqual(Array.from(saved.payload.invoicing.clients, client => client.id), ['client-1', 'client-2']);
+  assert.equal(saved.payload.invoicing.clients[0].name, initial.invoicing.clients[0].name,
+    "another client's pending removal is not saved");
+  assert.equal(saved.payload.invoicing.clients[1].name, 'Edited second client');
+  assert.equal(page.nodes.get('clients-list').querySelectorAll('.client-row').length, 2,
+    'the removed client remains removed from the unsaved form');
+  assert.equal(draft.querySelector('.client-name').value, 'Unsaved third client',
+    'an unsaved new client must survive the other client save');
+  assert.equal(draft.dataset.persisted, undefined);
+  assert.equal(second.querySelector('.save-client'), button);
+  assert.equal(second.dataset.persisted, 'true');
+  assert.equal(button.textContent, 'Saved');
+});
+
+test('client save blocks every section save button and ignores concurrent submits until completion', async () => {
   const clients = [preferences.invoicing.clients[0], { ...preferences.invoicing.clients[0], id: 'client-2', name: 'Second client' }];
   const saved = { ...preferences, invoicing: { ...preferences.invoicing, clients } };
   let finishSave;
@@ -1794,10 +1851,10 @@ test('invoicing save blocks every section save button and ignores concurrent sub
   const page = harness({ reply: request => request.type === 'SAVE_BILLING_SETTINGS' ? pendingSave : saved });
   page.context.renderLocalPreferences(saved);
   const buttons = page.nodes.get('clients-list').querySelectorAll('.save-client'), clicked = buttons[0];
-  const first = page.submit('invoicing-form', clicked);
+  const first = page.submit('clients-form', clicked);
   assert.equal(page.nodes.get('save-invoicing').disabled, true);
   for (const button of buttons) assert.equal(button.disabled, true);
-  await page.submit('invoicing-form', buttons[1]);
+  await page.submit('clients-form', buttons[1]);
   assert.equal(page.requests.filter(request => request.type === 'SAVE_BILLING_SETTINGS').length, 1);
   finishSave(billingSaveResult(page.requests[0], saved)); await first;
   const replacements = page.nodes.get('clients-list').querySelectorAll('.save-client');
@@ -1812,7 +1869,7 @@ test('restoring invoicing siblings does not clobber another active Saved confirm
   await page.submit('invoicing-form');
   const sectionButton = page.nodes.get('save-invoicing'), sectionTimer = page.timers.at(-1);
   assert.equal(sectionButton.textContent, 'Saved'); assert.equal(sectionButton.disabled, true);
-  await page.submit('invoicing-form', page.nodes.get('clients-list').querySelector('.save-client'));
+  await page.submit('clients-form', page.nodes.get('clients-list').querySelector('.save-client'));
   const clientButton = page.nodes.get('clients-list').querySelector('.save-client');
   assert.equal(sectionButton.textContent, 'Saved'); assert.equal(sectionButton.disabled, true);
   assert.equal(clientButton.textContent, 'Saved'); assert.equal(clientButton.disabled, true);
@@ -1870,9 +1927,108 @@ for (const form of ['billing', 'invoicing']) test(`${form} surfaces stale invoic
   assert.equal(page.nodes.get(`save-${form}`).textContent, 'Saved');
 });
 
+test('saving a client does not validate or overwrite unsaved invoice number and seller drafts', async () => {
+  const page = harness({ reply(request) {
+    if (request.type === 'SAVE_BILLING_SETTINGS') return billingSaveResult(request);
+    throw new Error(`Unexpected message: ${request.type}`);
+  } });
+  page.context.renderLocalPreferences(preferences);
+  page.context.addClientRow();
+  const client = page.nodes.get('clients-list').querySelectorAll('.client-row').at(-1);
+  client.querySelector('.client-name').value = 'New client';
+  client.querySelector('.client-email').value = 'new@example.com';
+  page.nodes.get('invoice-next-number').value = '';
+  page.nodes.get('invoice-number-format').value = '';
+  page.nodes.get('invoice-payment-terms').value = '';
+  page.nodes.get('invoice-tax-percent').value = 'not-a-number';
+  page.nodes.get('seller-name').value = 'Unsaved seller';
+  page.nodes.get('invoice-notes').value = 'Unsaved notes';
+
+  await page.submit('clients-form');
+
+  assert.equal(page.nodes.get('clients-feedback').textContent, '');
+  assert.equal(page.requests.length, 1);
+  const request = page.requests[0];
+  assert.equal(request.type, 'SAVE_BILLING_SETTINGS');
+  assert.equal(request.projectLinks, null, 'client saves must not commit draft project links');
+  assert.equal(request.payload.invoicing.nextNumber, preferences.invoicing.nextNumber);
+  assert.equal(request.payload.invoicing.numberFormat, preferences.invoicing.numberFormat);
+  assert.equal(request.payload.invoicing.seller.name, preferences.invoicing.seller.name);
+  assert.equal(request.payload.invoicing.clients.at(-1).name, 'New client');
+  assert.equal(request.payload.invoicing.clients.at(-1).email, 'new@example.com');
+  assert.equal(page.nodes.get('invoice-next-number').value, '');
+  assert.equal(page.nodes.get('invoice-number-format').value, '');
+  assert.equal(page.nodes.get('invoice-payment-terms').value, '');
+  assert.equal(page.nodes.get('invoice-tax-percent').value, 'not-a-number');
+  assert.equal(page.nodes.get('seller-name').value, 'Unsaved seller');
+  assert.equal(page.nodes.get('invoice-notes').value, 'Unsaved notes');
+  assert.equal(page.nodes.get('clients-list').querySelectorAll('.client-row').at(-1).querySelector('.client-name').value, 'New client');
+});
+
+test('individual client Save works even if invoice defaults are invalid', async () => {
+  const page = harness({ reply: request => billingSaveResult(request) });
+  page.context.renderLocalPreferences(preferences);
+  page.nodes.get('invoice-next-number').value = '0';
+  page.nodes.get('invoice-tax-percent').value = '101';
+  const button = page.nodes.get('clients-list').querySelector('.save-client');
+
+  await page.submit('clients-form', button);
+
+  assert.equal(page.requests.length, 1);
+  assert.equal(page.requests[0].payload.invoicing.nextNumber, 7);
+  assert.equal(page.nodes.get('clients-feedback').textContent, '');
+  assert.equal(page.nodes.get('clients-list').querySelector('.save-client').textContent, 'Saved');
+  assert.equal(page.nodes.get('invoice-next-number').value, '0');
+  assert.equal(page.nodes.get('invoice-tax-percent').value, '101');
+});
+
+test('saving rates for one client ignores unfinished drafts for another client', async () => {
+  const clients = [...preferences.invoicing.clients, { id: 'client-2', name: 'Client Two' }];
+  const local = { ...preferences, invoicing: { ...preferences.invoicing, clients } };
+  const page = harness({ reply(request) {
+    if (request.type === 'SAVE_BILLING_SETTINGS') return billingSaveResult(request, local);
+    throw new Error(`Unexpected message: ${request.type}`);
+  } });
+  page.context.renderLocalPreferences(local);
+  const selector = page.nodes.get('rates-client');
+  assert.equal(selector.value, 'client-1');
+  page.context.addRateRow(); // Unfinished draft for client-1.
+  const draft = page.nodes.get('rates-list').querySelectorAll('.rate-row').at(-1);
+  assert.equal(draft.querySelector('.rate-login').value, '');
+  selector.value = 'client-2'; selector.listeners.change();
+  assert.equal(draft.hidden, true);
+  assert.equal(draft.querySelector('.rate-login').disabled, true, 'hidden required inputs cannot block save');
+
+  page.context.addRateRow('bob', { amountMinorPerHour: 5000, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' });
+  await page.submit('billing-form');
+  assert.equal(page.nodes.get('billing-feedback').textContent, '');
+  const save = page.requests.find(request => request.type === 'SAVE_BILLING_SETTINGS');
+  assert.equal(save.payload.clientRates['client-1'].octocat[0].amountMinorPerHour, 12500,
+    'saved first client rate remains unchanged');
+  assert.equal(save.payload.clientRates['client-2'].bob[0].amountMinorPerHour, 5000);
+  assert.equal(draft.querySelector('.rate-login').value, '', 'first client draft stays untouched');
+
+  selector.value = 'client-1'; selector.listeners.change();
+  assert.equal(draft.hidden, false);
+  assert.equal(draft.querySelector('.rate-login').disabled, false);
+  await page.submit('billing-form');
+  assert.match(page.nodes.get('billing-feedback').textContent, /GitHub user, hourly rate, and currency/i);
+  assert.equal(page.requests.length, 1, 'incomplete visible draft is still rejected');
+});
+
+test('rates cannot be added until their client is saved', () => {
+  const page = harness();
+  page.context.renderLocalPreferences({ ...preferences, invoicing: { ...preferences.invoicing, clients: [] }, clientRates: {} });
+  page.context.addClientRow();
+  assert.equal(page.nodes.get('rates-client').value.startsWith('client-'), true);
+  assert.equal(page.nodes.get('add-rate').disabled, true);
+  assert.equal(page.nodes.get('save-billing').disabled, true);
+});
+
 test('invalid billable input reports inline without sending a mutation', async () => {
   const page = harness();
-  page.nodes.get('rates-list').querySelectorAll = () => [{ querySelector: () => ({ value: 'invalid' }) }];
+  page.context.renderLocalPreferences(preferences);
+  page.nodes.get('rates-list').querySelector('.rate-row').querySelector('.rate-value').value = 'invalid';
   await page.submit('billing-form');
   assert.match(page.nodes.get('billing-feedback')?.textContent || '', /rate|amount|currency/i);
   assert.equal(page.requests.length, 0);
@@ -1889,8 +2045,8 @@ test('rates and invoicing saves send only their owned section and use the atomic
   await page.submit('invoicing-form');
   const saves = page.requests.filter(request => request.type === 'SAVE_BILLING_SETTINGS');
   assert.equal(saves.length, 2);
-  assert.deepEqual(Object.keys(saves[0].payload), ['rates']);
-  assert.equal(saves[0].payload.rates.octocat[0].amountMinorPerHour, 12500);
+  assert.deepEqual(Object.keys(saves[0].payload), ['clientRates']);
+  assert.equal(saves[0].payload.clientRates['client-1'].octocat[0].amountMinorPerHour, 12500);
   assert.equal(saves[0].expectedRevision, preferences.revision);
   assert.deepEqual(Object.keys(saves[1].payload), ['invoicing']);
   assert.equal(saves[1].payload.invoicing.seller.name, 'Seller');
@@ -1899,7 +2055,7 @@ test('rates and invoicing saves send only their owned section and use the atomic
   assert.equal(page.requests.some(request => request.type === 'GET_LOCAL_PREFERENCES'), false);
 });
 
-test('saving invoicing also persists current client links for stored projects', async () => {
+test('saving invoicing never commits draft project-client links', async () => {
   const saved = {
     ...preferences,
     projects: [{ id: 'project-1', name: 'Work', substrings: ['work/'], destinationId: 'github:77', client: '' }],
@@ -1914,14 +2070,13 @@ test('saving invoicing also persists current client links for stored projects', 
   await page.submit('invoicing-form');
   const request = page.requests.find(request => request.type === 'SAVE_BILLING_SETTINGS');
   assert.equal(request.expectedRevision, saved.revision);
-  assert.deepEqual(JSON.parse(JSON.stringify(request.projectLinks)), {
-    projectClients: { 'project-1': 'client-1' },
-    otherProjectClient: 'client-1',
-  });
+  assert.equal(request.projectLinks, null);
+  assert.equal(page.nodes.get('projects-list').querySelector('.project-client').value, 'client-1');
+  assert.equal(page.nodes.get('other-project-client').value, 'client-1');
   assert.equal(request.payload.invoicing.clients[0].id, 'client-1');
 });
 
-test('a newly saved project is immediately included in the next invoicing link save', async () => {
+test('invoicing save does not commit unsaved links from a newly saved project', async () => {
   let latest = { ...preferences, projects: [], revision: 0 };
   const routedState = { ...connectedState, destinations: [{ id: 'github:77', repoId: 77, owner: 'acme', repo: 'time', branch: 'main' }], destinationRegistry: { defaultDestinationId: 'github:77' } };
   const page = harness({ reply(request) {
@@ -1942,10 +2097,8 @@ test('a newly saved project is immediately included in the next invoicing link s
   await page.submit('invoicing-form');
   const request = page.requests.filter(request => request.type === 'SAVE_BILLING_SETTINGS').at(-1);
   assert.equal(request.expectedRevision, 1);
-  assert.deepEqual(JSON.parse(JSON.stringify(request.projectLinks)), {
-    projectClients: { [project.dataset.projectId]: 'client-1' },
-    otherProjectClient: '',
-  });
+  assert.equal(request.projectLinks, null);
+  assert.equal(project.querySelector('.project-client').value, 'client-1');
 });
 
 test('changing the default destination remains selected and a following display save keeps it', async () => {
@@ -2057,11 +2210,12 @@ for (const form of ['billing', 'invoicing']) test(`${form} handles a typed clien
   assert.equal(page.nodes.get(`save-${form}`).textContent, 'Saved');
   const save = page.requests.find(request => request.type === 'SAVE_BILLING_SETTINGS');
   if (form === 'invoicing') {
-    assert.equal(save.payload.invoicing.clients.at(-1).name, 'Typed client');
-    assert.equal(save.payload.invoicing.clients.at(-1).email, 'typed@example.com');
-    assert.equal(Object.hasOwn(save.payload.invoicing.clients.at(-1), 'projects'), false);
+    assert.deepEqual(Array.from(save.payload.invoicing.clients, item => item.id), ['client-1']);
+    assert.equal(page.nodes.get('clients-list').querySelectorAll('.client-row').at(-1), client);
+    assert.equal(client.querySelector('.client-name').value, 'Typed client');
+    assert.equal(client.querySelector('.client-email').value, 'typed@example.com');
   } else {
-    assert.deepEqual(Object.keys(save.payload), ['rates']);
+    assert.deepEqual(Object.keys(save.payload), ['clientRates']);
     assert.equal(client.querySelector('.client-name').value, 'Typed client');
     assert.equal(client.querySelector('.client-email').value, 'typed@example.com');
   }
@@ -2105,7 +2259,7 @@ for (const form of ['billing', 'invoicing']) test(`${form} save retains stored c
   page.context.renderLocalPreferences(stored);
   assert.equal(page.nodes.get('projects-list').querySelector('.project-client').value, 'empty');
   assert.equal(page.nodes.get('other-project-client').value, 'empty');
-  assert.equal(page.context.invoicingPayload().clients.length, 2);
+  assert.equal(page.context.clientsPayload().length, 2);
 });
 
 for (const target of ['project', 'main']) test(`empty new client selected by ${target} survives serialization`, () => {
@@ -2114,7 +2268,8 @@ for (const target of ['project', 'main']) test(`empty new client selected by ${t
   const id = page.nodes.get('clients-list').querySelector('.client-row').dataset.clientId;
   if (target === 'project') page.context.addProjectRow({ name: 'Work', substrings: ['work/'], client: id });
   else page.nodes.get('other-project-client').value = id;
-  assert.deepEqual(Array.from(page.context.invoicingPayload().clients, client => client.id), [id]);
+  assert.deepEqual(Array.from(page.context.clientsPayload(), client => client.id), [id]);
+  assert.deepEqual(page.context.invoicingPayload().clients, []);
 });
 
 test('new client edited and then cleared is no longer untouched', () => {
@@ -2123,16 +2278,16 @@ test('new client edited and then cleared is no longer untouched', () => {
   const input = page.nodes.get('clients-list').querySelector('.client-email');
   input.value = 'client@example.com'; input.listeners.input?.();
   input.value = ''; input.listeners.input?.();
-  assert.equal(page.context.invoicingPayload().clients.length, 1);
+  assert.equal(page.context.clientsPayload().length, 1);
 });
 
 test('fresh preferences create no client and completely empty client cards are omitted', () => {
   const page = harness(); page.context.renderLocalPreferences({ ...preferences, invoicing: { ...preferences.invoicing, clients: [] } });
   assert.equal(page.nodes.get('clients-list').children.length, 0);
   page.context.addClientRow();
-  assert.equal(page.context.invoicingPayload().clients.length, 0);
+  assert.equal(page.context.clientsPayload().length, 0);
   page.nodes.get('clients-list').querySelector('.client-email').value = 'only@example.com';
-  assert.equal(page.context.invoicingPayload().clients.length, 1);
+  assert.equal(page.context.clientsPayload().length, 1);
   assert.equal(page.nodes.get('clients-list').querySelector('.client-projects'), null);
   assert.equal(page.nodes.get('clients-list').querySelector('.save-client').textContent, 'Save');
   assert.equal(page.nodes.get('clients-list').querySelector('.remove-client').textContent, '✕');

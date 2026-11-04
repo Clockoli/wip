@@ -38,7 +38,7 @@ The summary shows:
 - people count;
 - source count.
 
-Filter by People, Projects, Task sources, and Time repositories. For a GitHub issue or pull request, the **Task source** is `owner/repository`; for another URL it is the hostname. The **Time repository** is the destination that stores the record.
+Filter by Client, People, Projects, Task sources, and Time repositories. Client filters use project-client assignments from this browser's local settings. Select **All clients** or **Unassigned** if needed. For a GitHub issue or pull request, the **Task source** is `owner/repository`; for another URL it is the hostname. The **Time repository** is the destination that stores the record.
 
 ## Charts
 
@@ -61,7 +61,7 @@ Choose independent horizontal and stack dimensions:
 
 The analytics are calculated for the chart; the data table's rows are rendered only when expanded, which keeps large reports responsive.
 
-Billable amounts need [billable rates](billable-rates.md). When a report contains more than one currency, Reports offers a currency selector for billable charts and converts amounts by day.
+Billable amounts need [client-specific billable rates](billable-rates.md). Choose **Calculate amounts using** to evaluate all visible work using one selected client's rates, or use **Each project's client** to choose the rate card based on the work's project. There are no global rate fallbacks. When a report contains more than one currency, Reports offers a currency selector for billable charts and converts amounts by day.
 
 ## Export a timesheet
 

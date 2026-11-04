@@ -1,4 +1,4 @@
-# Version 1 specification compliance
+# Specification compliance
 
 Source analyzed: Clockoli's GitHub onboarding requirements plus the delivered URL-first task, personal-branch, Tasks, Reports, local-billing, durable-mutation, and work-record v1 requirements.
 
@@ -6,7 +6,7 @@ Source analyzed: Clockoli's GitHub onboarding requirements plus the delivered UR
 
 | Decision | Implementation |
 |---|---|
-| Browser | Manifest V3 from shared source: Chrome/Chromium development manifest (existing 102 baseline), Firefox 140+, Safari 18+ on macOS; see [browser release contracts](browser-releases.md) for compatibility and verification limits |
+| Browser | Manifest V3 from shared source: Chrome/Chromium development manifest (minimum version 102), Firefox 140+, Safari 18+ on macOS; see [browser release contracts](browser-releases.md) for compatibility and verification limits |
 | Tasks | Any canonical HTTP(S) URL; title optional; GitHub issue/PR metadata retained as enrichment |
 | Work actors | Human and agent identities use the same work-record schema |
 | Descriptions | Optional, maximum 2,000 characters |

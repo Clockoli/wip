@@ -22,7 +22,7 @@ The Firefox declaration uses `authenticationInfo`, `personallyIdentifyingInfo`, 
 
 The background audit found no `self.registration`, `clients`, `skipWaiting`, `importScripts`, service-worker install/activate listeners, or `ServiceWorkerGlobalScope` dependencies under `src/background/`. Background module imports, IndexedDB persistence, and WebExtension event registration can therefore retain the same source. This audit does not establish end-to-end Firefox or Safari runtime correctness.
 
-Chrome's original manifest and ZIP format are preserved. Its existing `minimum_chrome_version: 102` predates static MAIN-world support (111 in the linked compatibility data); this release work does not change that existing Chrome contract.
+The Chrome manifest declares `minimum_chrome_version: 102`, while static MAIN-world script support starts in Chromium 111 (see the linked compatibility data).
 
 ## Distribution licensing
 

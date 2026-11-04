@@ -259,15 +259,28 @@
     <summary id="more-settings-toggle">More settings</summary>
 
 
+  <section id="clients-settings" class="card" aria-labelledby="clients-title">
+    <div class="card-heading"><div><h2 id="clients-title">Clients</h2><p>Clients own billable rates and may also have invoice details. All details remain in this browser and its settings backups.</p></div></div>
+    <form id="clients-form">
+      <fieldset class="clients-fieldset"><legend>Clients</legend>
+        <div id="clients-list" class="clients-list"></div>
+        <button id="add-client" type="button" class="secondary">Add client</button>
+      </fieldset>
+      <div class="actions"><button id="save-clients" type="submit">Save clients</button><p id="clients-feedback" class="form-feedback" role="status" aria-live="polite"></p></div>
+    </form>
+  </section>
+
   <section id="billing-settings" class="card" aria-labelledby="billing-title">
     <div class="card-heading">
-      <div><h2 id="billing-title">Billable rates</h2><p>Set hourly rates for people whose time appears in Clockoli reports. Add date ranges if a rate changes over time. Rates are private to this browser; hourly rates and calculated amounts are never written to your GitHub repository.</p></div>
+      <div><h2 id="billing-title">Billable rates</h2><p>Choose a client and set hourly rates for its employees. Every rate belongs to exactly one client and remains private to this browser. Rates are never written to your GitHub repository.</p></div>
     </div>
     <form id="billing-form">
+      <label>Client<select id="rates-client" required><option value="">— Choose a client —</option></select></label>
+      <p id="rates-client-help" class="help">Create and save a client before assigning rates. Every rate belongs to the selected client.</p>
       <div id="rates-list" class="rates-list"></div>
       <p id="rate-date-help" class="help">Leave End date empty if the rate is still current. Clockoli applies it through today and keeps it current until you add a later rate period.</p>
       <div class="actions billing-actions">
-        <button id="add-rate" type="button" class="secondary">Add rate period</button>
+        <button id="add-rate" type="button" class="secondary">Add rate</button>
         <div class="actions">
           <button id="save-billing" type="submit">Save billable rates</button>
           <p id="billing-feedback" class="form-feedback" role="status" aria-live="polite"></p>
@@ -278,7 +291,7 @@
 
   <section id="invoicing-settings" class="card" aria-labelledby="invoicing-title">
     <div class="card-heading">
-      <div><h2 id="invoicing-title">Invoicing</h2><p>Set the seller, clients, numbering and payment details used for invoices. These details stay in this browser and are never written to the GitHub repository.</p></div>
+      <div><h2 id="invoicing-title">Invoicing</h2><p>Set seller details, numbering and payment defaults. Clients and their rate cards are managed above; rates and invoice details are never written to the GitHub repository.</p></div>
     </div>
     <form id="invoicing-form">
       <fieldset><legend>Seller</legend>
@@ -288,10 +301,6 @@
           <label class="wide-field">Address<textarea id="seller-address" maxlength="1000" rows="1" autocomplete="street-address"></textarea></label>
           <label>Tax ID<input id="seller-tax-id" maxlength="200" autocomplete="off"></label>
         </div>
-      </fieldset>
-      <fieldset class="clients-fieldset"><legend>Clients</legend>
-        <div id="clients-list" class="clients-list"></div>
-        <button id="add-client" type="button" class="secondary">Add client</button>
       </fieldset>
       <fieldset><legend>Invoice defaults</legend>
         <div class="invoicing-defaults-grid">
@@ -340,7 +349,7 @@
     <section class="advanced-section" aria-labelledby="pat-title">
       <details id="advanced-pat" class="nested-details">
         <summary id="pat-title">Use a personal access token</summary>
-        <p>This single-repository compatibility option is for existing PAT setups or environments where the GitHub App cannot be installed. Personal access token compatibility mode supports one time repository only. Clockoli never displays a stored token.</p>
+        <p>Use this single-repository option when the GitHub App cannot be installed. Personal access token compatibility mode supports one time repository only. Clockoli never displays a stored token.</p>
         <p><a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noreferrer">Create a fine-grained personal access token</a> restricted to one private repository with <strong>Contents: Read and write</strong>.</p>
         <form id="settings-form">
           <fieldset><legend>Repository used by this token</legend>

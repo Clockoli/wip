@@ -327,7 +327,7 @@ test('page state exposes full totals while retaining safe active and pending pro
     trackerForDestination: async () => tracker,
     store: {
       getTrackingSnapshot: async () => ({ activeTimer: { destinationId, record: active } }),
-      getLocalPreferences: async () => ({ projects: [] }),
+      getLocalPreferences: async () => ({ projects: [] }), getActivityDisplayPreferences: async () => ({ projects: [] }),
     },
   });
   installWorkerHandler(context);
@@ -364,7 +364,7 @@ test('read-only Activity timer check exposes GitHub-only active without changing
       };
     },
     store: { getTrackingSnapshot: async () => ({ activeTimer: localActive ? { destinationId } : null }),
-      getLocalPreferences: async () => ({ projects: [] }) },
+      getLocalPreferences: async () => ({ projects: [] }), getActivityDisplayPreferences: async () => ({ projects: [] }) },
   });
   installWorkerHandler(context);
   const result = plain(await context.handle({ type: 'GET_REMOTE_TIMER_STATUS' }, sender));
@@ -451,7 +451,7 @@ test('real page-state handler confirms a used destination without requiring summ
       getState: async () => structuredClone(states.get(id)),
       loadMenuData: async () => structuredClone(states.get(id)),
     }),
-    store: { getTrackingSnapshot: async () => ({ activeTimer: null }), getLocalPreferences: async () => ({ projects: [] }) },
+    store: { getTrackingSnapshot: async () => ({ activeTimer: null }), getLocalPreferences: async () => ({ projects: [] }), getActivityDisplayPreferences: async () => ({ projects: [] }) },
   });
   installWorkerHandler(context);
   const result = plain(await context.handle({ type: 'GET_PAGE_STATE', refresh: false }, sender));
@@ -469,7 +469,7 @@ test('page state keeps accepted local work available when complete summaries can
     trackerForDestination: async () => tracker,
     store: {
       getTrackingSnapshot: async () => ({ activeTimer: { destinationId, record: state.active } }),
-      getLocalPreferences: async () => ({ projects: [] }),
+      getLocalPreferences: async () => ({ projects: [] }), getActivityDisplayPreferences: async () => ({ projects: [] }),
     },
   });
   vm.runInContext(worker.slice(worker.indexOf('function serializeError('), worker.indexOf('function authSummary(')), context);
@@ -514,7 +514,7 @@ for (const cacheDate of ['today', 'stale', 'absent']) {
     const store = {
       getState: async () => structuredClone(state),
       getTrackingSnapshot: async () => ({ activeTimer: { destinationId, record: state.activeCache } }),
-      getLocalPreferences: async () => ({ projects: [] }),
+      getLocalPreferences: async () => ({ projects: [] }), getActivityDisplayPreferences: async () => ({ projects: [] }),
     };
     const tracker = new TrackerService({ github, store, user: 'alice', clock: () => now });
     const context = vm.createContext({ assertMessageAllowed, diagnosticError: value => value,
@@ -547,7 +547,7 @@ test('local page state skips network-capable configuration probes as well as tra
     getAuthSnapshot: async () => ({ auth: { githubLogin: 'alice' } }),
     getState: async () => structuredClone(state), ensureDataVersion: async () => structuredClone(state),
     getTrackingSnapshot: async () => ({ activeTimer: null }),
-    getLocalPreferences: async () => ({ projects: [] }),
+    getLocalPreferences: async () => ({ projects: [] }), getActivityDisplayPreferences: async () => ({ projects: [] }),
   };
   const tracker = new TrackerService({ github: network, store, user: 'alice' });
   const context = vm.createContext({ assertMessageAllowed, TrackerService,
@@ -574,7 +574,7 @@ function pageStateFixture() {
       return structuredClone(state);
     },
     getTrackingSnapshot: async () => ({ activeTimer: state.activeCache ? { destinationId, record: state.activeCache } : null }),
-    getLocalPreferences: async () => ({ projects: [] }),
+    getLocalPreferences: async () => ({ projects: [] }), getActivityDisplayPreferences: async () => ({ projects: [] }),
   };
   const github = {
     listTextFilesSnapshot: async () => ({

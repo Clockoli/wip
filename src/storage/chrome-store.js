@@ -1,5 +1,5 @@
 import {
-  invoicingSettings, normalizeBillingSettings, normalizeDefaultDestinationId, normalizeOtherProjectClient, normalizeOtherProjectName,
+  invoicingSettings, normalizeBillingSettings, normalizeStoredBillingSettings, normalizeInvoicingSettings, normalizeDefaultDestinationId, normalizeOtherProjectClient, normalizeOtherProjectName,
   normalizeProjectDefinitions, normalizeProjects, normalizeReportingUtc, parseSettingsImport, projectClientPreferences, settingsExportText,
 } from '../domain/local-settings.js';
 import { listAddons } from '../addons/registry.js';
@@ -903,7 +903,7 @@ export class ChromeStore {
 
   async getLocalPreferences() {
     const values = await this.backend.getMany(['config', 'dataVersion', DESTINATION_REGISTRY, INTERFACE_WIDTH, ...SETTINGS_KEYS]);
-    const normalizedBilling = normalizeBillingSettings(values[BILLING_SETTINGS] || {});
+    const normalizedBilling = normalizeStoredBillingSettings(values[BILLING_SETTINGS] || {});
     const billing = { ...normalizedBilling, invoicing: invoicingSettings(normalizedBilling) };
     const revision = Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0;
     const exportedRevision = Number.isSafeInteger(values[SETTINGS_EXPORTED_REVISION]) && values[SETTINGS_EXPORTED_REVISION] >= 0 ? values[SETTINGS_EXPORTED_REVISION] : 0;
@@ -925,6 +925,22 @@ export class ChromeStore {
     };
   }
 
+  // Activity and the tracker must not depend on financial settings. This
+  // read deliberately excludes the billing key, even when billing is damaged.
+  async getActivityDisplayPreferences() {
+    const values = await this.backend.getMany(['dataVersion', DESTINATION_REGISTRY, INTERFACE_WIDTH, PROJECTS, OTHER_PROJECT_NAME, OTHER_PROJECT_CLIENT, SHOW_QUEUE_DIAGNOSTICS]);
+    const projects = values[PROJECTS] || [];
+    const destinations = normalizedRegistryDestinations(values[DESTINATION_REGISTRY]?.destinations);
+    if (values.dataVersion === 5) normalizeProjectDefinitions(projects, destinations);
+    else normalizeProjects(projects);
+    const otherProjectName = normalizeOtherProjectName(values[OTHER_PROJECT_NAME]);
+    const normalized = projectClientPreferences({ projects, otherProjectName, otherProjectClient: values[OTHER_PROJECT_CLIENT] });
+    return {
+      projects: normalized.projects, otherProjectName, showQueueDiagnostics: values[SHOW_QUEUE_DIAGNOSTICS] === true,
+      interfaceWidth: values[INTERFACE_WIDTH] === 'full' ? 'full' : 'contained',
+    };
+  }
+
   async setInterfaceWidth(width) {
     if (!['contained', 'full'].includes(width)) throw new Error('Invalid interface width');
     return this.backend.mutateMany([INTERFACE_WIDTH], () => ({ set: { [INTERFACE_WIDTH]: width }, result: width }));
@@ -942,7 +958,7 @@ export class ChromeStore {
 
   async saveBillingSettings(value, projectLinks = null, expectedRevision = null) {
     if (!value || typeof value !== 'object' || Array.isArray(value)
-        || !Object.keys(value).length || Object.keys(value).some(key => !['rates', 'invoicing'].includes(key))) {
+        || !Object.keys(value).length || Object.keys(value).some(key => !['clientRates', 'invoicing'].includes(key))) {
       throw new Error('Billing settings are invalid');
     }
     if (expectedRevision !== null && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0)) throw new Error('Settings revision is invalid');
@@ -961,8 +977,14 @@ export class ChromeStore {
       };
     }
     return this.backend.mutateMany([BILLING_SETTINGS, PROJECTS, OTHER_PROJECT_NAME, OTHER_PROJECT_CLIENT, SETTINGS_REVISION], values => {
-      const previousBilling = normalizeBillingSettings(values[BILLING_SETTINGS] || {});
-      const billing = normalizeBillingSettings({ ...previousBilling, ...value });
+      const previousBilling = normalizeStoredBillingSettings(values[BILLING_SETTINGS] || {});
+      const nextBilling = { ...previousBilling, ...value };
+      // Deleting a client also removes that client's private rate card.
+      if (value.invoicing) {
+        const remaining = new Set(normalizeInvoicingSettings(value.invoicing).clients.map(client => client.id));
+        nextBilling.clientRates = Object.fromEntries(Object.entries(nextBilling.clientRates || {}).filter(([id]) => remaining.has(id)));
+      }
+      const billing = normalizeBillingSettings(nextBilling);
       const stored = invoicingSettings(previousBilling).nextNumber;
       if (invoicingSettings(billing).nextNumber < stored) throw new Error(`Next invoice number cannot go below ${stored}; invoice ${stored - 1} has already been issued.`);
       const currentRevision = Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0;
@@ -990,7 +1012,7 @@ export class ChromeStore {
 
   async reserveInvoiceNumber() {
     return this.backend.mutateMany([BILLING_SETTINGS, PROJECTS, OTHER_PROJECT_NAME, OTHER_PROJECT_CLIENT, SETTINGS_REVISION], values => {
-      const billing = normalizeBillingSettings(values[BILLING_SETTINGS] || {}), invoicing = invoicingSettings(billing);
+      const billing = normalizeStoredBillingSettings(values[BILLING_SETTINGS] || {}), invoicing = invoicingSettings(billing);
       const sequence = invoicing.nextNumber;
       if (sequence >= 1e9) throw new Error('Invoice number sequence is exhausted');
       const revision = generationValue(values[SETTINGS_REVISION]) + 1;
@@ -1134,14 +1156,19 @@ export class ChromeStore {
   async exportSettings() {
     const values = await this.backend.getMany(['config', 'dataVersion', DESTINATION_REGISTRY, BILLING_SETTINGS, LOCAL_RECENT_DAYS, PROJECTS, OTHER_PROJECT_NAME, OTHER_PROJECT_CLIENT, REPORTING_UTC, SHOW_QUEUE_DIAGNOSTICS, SETTINGS_REVISION]);
     const revision = generationValue(values[SETTINGS_REVISION]);
+    const savedBilling = values[BILLING_SETTINGS] || {};
+    const billing = normalizeStoredBillingSettings(savedBilling);
+    const linked = preservedProjectClients(values);
+    const projects = linked[PROJECTS] || values[PROJECTS] || [];
+    const otherProjectClient = linked[OTHER_PROJECT_CLIENT] ?? values[OTHER_PROJECT_CLIENT];
     if (values.dataVersion === 5) {
       const registry = values[DESTINATION_REGISTRY] ?? emptyDestinationRegistry();
       const destinations = normalizedRegistryDestinations(registry.destinations);
       const config = { recentDays: values[LOCAL_RECENT_DAYS] ?? registry.destinations?.[registry.defaultDestinationId]?.recentDays ?? 7 };
       return {
         text: settingsExportText({
-          config, billing: values[BILLING_SETTINGS] || {}, projects: values[PROJECTS] || [],
-          otherProjectName: values[OTHER_PROJECT_NAME], otherProjectClient: values[OTHER_PROJECT_CLIENT],
+          config, billing, projects,
+          otherProjectName: values[OTHER_PROJECT_NAME], otherProjectClient,
           reportingUtc: values[REPORTING_UTC] === true, showQueueDiagnostics: values[SHOW_QUEUE_DIAGNOSTICS],
           destinations, defaultDestinationId: registry.defaultDestinationId,
         }),
@@ -1151,8 +1178,8 @@ export class ChromeStore {
     const config = values.config ? { ...values.config } : { recentDays: values[LOCAL_RECENT_DAYS] ?? 7 };
     return {
       text: settingsExportText({
-        config, billing: values[BILLING_SETTINGS] || {}, projects: values[PROJECTS] || [], otherProjectName: values[OTHER_PROJECT_NAME],
-        otherProjectClient: values[OTHER_PROJECT_CLIENT], reportingUtc: values[REPORTING_UTC] === true, showQueueDiagnostics: values[SHOW_QUEUE_DIAGNOSTICS],
+        config, billing, projects, otherProjectName: values[OTHER_PROJECT_NAME],
+        otherProjectClient, reportingUtc: values[REPORTING_UTC] === true, showQueueDiagnostics: values[SHOW_QUEUE_DIAGNOSTICS],
       }),
       revision,
     };

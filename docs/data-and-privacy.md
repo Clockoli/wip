@@ -77,7 +77,7 @@ Routine Start, Stop, Edit, and Delete operations use the personal branch. Comple
 
 ## Data format v1
 
-Clockoli supports one persistent data format. It does not read or migrate any earlier pre-release representation.
+Clockoli stores work records in its documented persistent data format.
 
 An active file is one JSON object. A monthly file is JSON Lines with one compact completed record per non-empty line. Each record includes:
 
@@ -194,7 +194,7 @@ An invoice exists only as the on-screen preview and as a file the user prints or
 
 ## Settings backup exclusions
 
-A version 6 settings export includes local display and billing preferences plus credential-free destination references, the exported default destination, and project routing. It excludes:
+Settings backups include local display preferences, client-specific rate cards, invoice details, credential-free destination references, and project routing. They exclude:
 
 - access and refresh tokens;
 - personal access tokens;
