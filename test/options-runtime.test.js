@@ -41,7 +41,7 @@ function element(tagName = 'div') {
     replaceChildren(...children) { this.children = []; this.textContent = ''; this.append(...children); },
     setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name) { delete this.attributes[name]; }, focus() { this.focused = true; }, scrollIntoView() { this.scrolled = true; },
     showModal() { this.open = true; }, close() { this.open = false; this.listeners.close?.(); },
-    querySelectorAll(selector) { const className = selector.startsWith('.') ? selector.slice(1) : ''; const matches = child => className && child.className.split(' ').includes(className); return this.children.flatMap(child => [...(matches(child) ? [child] : []), ...child.querySelectorAll(selector)]); },
+    querySelectorAll(selector) { const className = selector.startsWith('.') ? selector.slice(1) : ''; const matches = child => className ? child.className.split(' ').includes(className) : child.tagName.toLowerCase() === selector.toLowerCase(); return this.children.flatMap(child => [...(matches(child) ? [child] : []), ...child.querySelectorAll(selector)]); },
     querySelector(selector) { return this.querySelectorAll(selector)[0] || null; },
     contains(child) { return this === child || this.children.some(node => node.contains(child)); },
     remove() { if (this.parentNode) this.parentNode.children = this.parentNode.children.filter(child => child !== this); },
@@ -1773,13 +1773,13 @@ test('client-card save confirms on the clicked replacement button and stale time
   const page = harness({ reply: request => billingSaveResult(request) });
   page.context.renderLocalPreferences(preferences);
   const first = page.nodes.get('clients-list').querySelector('.save-client');
-  await page.submit('invoicing-form', first);
+  await page.submit('clients-form', first);
   const replacement = page.nodes.get('clients-list').querySelector('.save-client');
   assert.notEqual(replacement, first);
   assert.equal(replacement.textContent, 'Saved'); assert.equal(replacement.disabled, true);
   const stale = page.timers.at(-1);
   replacement.disabled = false;
-  await page.submit('invoicing-form', replacement);
+  await page.submit('clients-form', replacement);
   const newest = page.nodes.get('clients-list').querySelector('.save-client'), current = page.timers.at(-1);
   stale.callback();
   assert.equal(newest.textContent, 'Saved'); assert.equal(newest.disabled, true);
@@ -1787,7 +1787,7 @@ test('client-card save confirms on the clicked replacement button and stale time
   assert.equal(newest.textContent, 'Save'); assert.equal(newest.disabled, false);
 });
 
-test('invoicing save blocks every section save button and ignores concurrent submits until completion', async () => {
+test('client save blocks every section save button and ignores concurrent submits until completion', async () => {
   const clients = [preferences.invoicing.clients[0], { ...preferences.invoicing.clients[0], id: 'client-2', name: 'Second client' }];
   const saved = { ...preferences, invoicing: { ...preferences.invoicing, clients } };
   let finishSave;
@@ -1795,10 +1795,10 @@ test('invoicing save blocks every section save button and ignores concurrent sub
   const page = harness({ reply: request => request.type === 'SAVE_BILLING_SETTINGS' ? pendingSave : saved });
   page.context.renderLocalPreferences(saved);
   const buttons = page.nodes.get('clients-list').querySelectorAll('.save-client'), clicked = buttons[0];
-  const first = page.submit('invoicing-form', clicked);
+  const first = page.submit('clients-form', clicked);
   assert.equal(page.nodes.get('save-invoicing').disabled, true);
   for (const button of buttons) assert.equal(button.disabled, true);
-  await page.submit('invoicing-form', buttons[1]);
+  await page.submit('clients-form', buttons[1]);
   assert.equal(page.requests.filter(request => request.type === 'SAVE_BILLING_SETTINGS').length, 1);
   finishSave(billingSaveResult(page.requests[0], saved)); await first;
   const replacements = page.nodes.get('clients-list').querySelectorAll('.save-client');
@@ -1813,7 +1813,7 @@ test('restoring invoicing siblings does not clobber another active Saved confirm
   await page.submit('invoicing-form');
   const sectionButton = page.nodes.get('save-invoicing'), sectionTimer = page.timers.at(-1);
   assert.equal(sectionButton.textContent, 'Saved'); assert.equal(sectionButton.disabled, true);
-  await page.submit('invoicing-form', page.nodes.get('clients-list').querySelector('.save-client'));
+  await page.submit('clients-form', page.nodes.get('clients-list').querySelector('.save-client'));
   const clientButton = page.nodes.get('clients-list').querySelector('.save-client');
   assert.equal(sectionButton.textContent, 'Saved'); assert.equal(sectionButton.disabled, true);
   assert.equal(clientButton.textContent, 'Saved'); assert.equal(clientButton.disabled, true);
