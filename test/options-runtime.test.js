@@ -1871,6 +1871,61 @@ for (const form of ['billing', 'invoicing']) test(`${form} surfaces stale invoic
   assert.equal(page.nodes.get(`save-${form}`).textContent, 'Saved');
 });
 
+test('saving a client does not validate or overwrite unsaved invoice number and seller drafts', async () => {
+  const page = harness({ reply(request) {
+    if (request.type === 'SAVE_BILLING_SETTINGS') return billingSaveResult(request);
+    throw new Error(`Unexpected message: ${request.type}`);
+  } });
+  page.context.renderLocalPreferences(preferences);
+  page.context.addClientRow();
+  const client = page.nodes.get('clients-list').querySelectorAll('.client-row').at(-1);
+  client.querySelector('.client-name').value = 'New client';
+  client.querySelector('.client-email').value = 'new@example.com';
+  page.nodes.get('invoice-next-number').value = '';
+  page.nodes.get('invoice-number-format').value = '';
+  page.nodes.get('invoice-payment-terms').value = '';
+  page.nodes.get('invoice-tax-percent').value = 'not-a-number';
+  page.nodes.get('seller-name').value = 'Unsaved seller';
+  page.nodes.get('invoice-notes').value = 'Unsaved notes';
+
+  await page.submit('clients-form');
+
+  assert.equal(page.nodes.get('clients-feedback').textContent, '');
+  assert.equal(page.requests.length, 1);
+  const request = page.requests[0];
+  assert.equal(request.type, 'SAVE_BILLING_SETTINGS');
+  assert.equal(request.projectLinks, null, 'client saves must not commit draft project links');
+  assert.equal(request.payload.invoicing.nextNumber, preferences.invoicing.nextNumber);
+  assert.equal(request.payload.invoicing.numberFormat, preferences.invoicing.numberFormat);
+  assert.equal(request.payload.invoicing.seller.name, preferences.invoicing.seller.name);
+  assert.equal(request.payload.invoicing.clients.at(-1).name, 'New client');
+  assert.equal(request.payload.invoicing.clients.at(-1).email, 'new@example.com');
+  assert.equal(page.nodes.get('invoice-next-number').value, '');
+  assert.equal(page.nodes.get('invoice-number-format').value, '');
+  assert.equal(page.nodes.get('invoice-payment-terms').value, '');
+  assert.equal(page.nodes.get('invoice-tax-percent').value, 'not-a-number');
+  assert.equal(page.nodes.get('seller-name').value, 'Unsaved seller');
+  assert.equal(page.nodes.get('invoice-notes').value, 'Unsaved notes');
+  assert.equal(page.nodes.get('clients-list').querySelectorAll('.client-row').at(-1).querySelector('.client-name').value, 'New client');
+});
+
+test('individual client Save works even if invoice defaults are invalid', async () => {
+  const page = harness({ reply: request => billingSaveResult(request) });
+  page.context.renderLocalPreferences(preferences);
+  page.nodes.get('invoice-next-number').value = '0';
+  page.nodes.get('invoice-tax-percent').value = '101';
+  const button = page.nodes.get('clients-list').querySelector('.save-client');
+
+  await page.submit('clients-form', button);
+
+  assert.equal(page.requests.length, 1);
+  assert.equal(page.requests[0].payload.invoicing.nextNumber, 7);
+  assert.equal(page.nodes.get('clients-feedback').textContent, '');
+  assert.equal(page.nodes.get('clients-list').querySelector('.save-client').textContent, 'Saved');
+  assert.equal(page.nodes.get('invoice-next-number').value, '0');
+  assert.equal(page.nodes.get('invoice-tax-percent').value, '101');
+});
+
 test('invalid billable input reports inline without sending a mutation', async () => {
   const page = harness();
   page.context.renderLocalPreferences(preferences);
