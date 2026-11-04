@@ -1769,13 +1769,13 @@ for (const [form, requestType, originalLabel] of [
   });
 }
 
-test('client-card save confirms on the clicked replacement button and stale timers cannot restore a newer save', async () => {
+test('client-card save keeps its button and ignores stale save confirmations', async () => {
   const page = harness({ reply: request => billingSaveResult(request) });
   page.context.renderLocalPreferences(preferences);
   const first = page.nodes.get('clients-list').querySelector('.save-client');
   await page.submit('clients-form', first);
   const replacement = page.nodes.get('clients-list').querySelector('.save-client');
-  assert.notEqual(replacement, first);
+  assert.equal(replacement, first, 'saving one client keeps the existing row and other drafts');
   assert.equal(replacement.textContent, 'Saved'); assert.equal(replacement.disabled, true);
   const stale = page.timers.at(-1);
   replacement.disabled = false;
@@ -1785,6 +1785,37 @@ test('client-card save confirms on the clicked replacement button and stale time
   assert.equal(newest.textContent, 'Saved'); assert.equal(newest.disabled, true);
   current.callback();
   assert.equal(newest.textContent, 'Save'); assert.equal(newest.disabled, false);
+});
+
+test('saving one client leaves other client drafts and pending deletions untouched', async () => {
+  const initial = { ...preferences, invoicing: { ...preferences.invoicing, clients: [
+    preferences.invoicing.clients[0], { ...preferences.invoicing.clients[0], id: 'client-2', name: 'Client Two' },
+  ] } };
+  const page = harness({ reply: request => billingSaveResult(request, initial) });
+  page.context.renderLocalPreferences(initial);
+  const [first, second] = page.nodes.get('clients-list').querySelectorAll('.client-row');
+  first.querySelector('.remove-client').listeners.click();
+  page.context.addClientRow();
+  const draft = page.nodes.get('clients-list').querySelectorAll('.client-row').at(-1);
+  assert.equal(draft.dataset.clientId, 'client-3', 'pending removal must not allow reuse of a saved ID');
+  draft.querySelector('.client-name').value = 'Unsaved third client';
+  second.querySelector('.client-name').value = 'Edited second client';
+  const button = second.querySelector('.save-client');
+
+  await page.submit('clients-form', button);
+  const saved = page.requests.find(request => request.type === 'SAVE_BILLING_SETTINGS');
+  assert.deepEqual(Array.from(saved.payload.invoicing.clients, client => client.id), ['client-1', 'client-2']);
+  assert.equal(saved.payload.invoicing.clients[0].name, initial.invoicing.clients[0].name,
+    'another client's pending removal is not saved');
+  assert.equal(saved.payload.invoicing.clients[1].name, 'Edited second client');
+  assert.equal(page.nodes.get('clients-list').querySelectorAll('.client-row').length, 2,
+    'the removed client remains removed from the unsaved form');
+  assert.equal(draft.querySelector('.client-name').value, 'Unsaved third client',
+    'an unsaved new client must survive the other client save');
+  assert.equal(draft.dataset.persisted, undefined);
+  assert.equal(second.querySelector('.save-client'), button);
+  assert.equal(second.dataset.persisted, 'true');
+  assert.equal(button.textContent, 'Saved');
 });
 
 test('client save blocks every section save button and ignores concurrent submits until completion', async () => {
