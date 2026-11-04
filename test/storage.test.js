@@ -664,7 +664,7 @@ test('a catch-all-only legacy assignment is projected without resurrecting an ex
 });
 
 
-test('UTC display preference survives restart and v7 export without overwriting other display settings', async () => {
+test('UTC display preference survives restart and strict settings export without overwriting other display settings', async () => {
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   await store.saveConfig({ owner: 'acme', repo: 'time-data', recentDays: 14 });
   await store.updateDisplayPreferences({ recentDays: 14, projects: [{ name: 'Work', substrings: ['example.com'] }], otherProjectName: 'General', showQueueDiagnostics: true }, 0);
@@ -676,7 +676,11 @@ test('UTC display preference survives restart and v7 export without overwriting 
   assert.equal(parsed.version, 8); assert.equal(parsed.display.reportingUtc, true);
   const restored = new ChromeStore(new MemoryBackend()); await restored.importSettings(exported.text);
   assert.equal((await restored.getLocalPreferences()).reportingUtc, true);
-  delete parsed.display.reportingUtc; await restored.importSettings(JSON.stringify(parsed));
+  delete parsed.display.reportingUtc;
+  await assert.rejects(() => restored.importSettings(JSON.stringify(parsed)), /display fields/);
+  assert.equal((await restored.getLocalPreferences()).reportingUtc, true);
+  parsed.display.reportingUtc = false;
+  await restored.importSettings(JSON.stringify(parsed));
   assert.equal((await restored.getLocalPreferences()).reportingUtc, false);
   await restarted.updateDisplayPreferences({ recentDays: 7 }, 2);
   assert.equal((await restarted.getLocalPreferences()).reportingUtc, true);
