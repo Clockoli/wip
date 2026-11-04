@@ -1,5 +1,5 @@
 import {
-  invoicingSettings, normalizeBillingSettings, normalizeDefaultDestinationId, normalizeOtherProjectClient, normalizeOtherProjectName,
+  invoicingSettings, normalizeBillingSettings, normalizeInvoicingSettings, normalizeDefaultDestinationId, normalizeOtherProjectClient, normalizeOtherProjectName,
   normalizeProjectDefinitions, normalizeProjects, normalizeReportingUtc, parseSettingsImport, projectClientPreferences, settingsExportText,
 } from '../domain/local-settings.js';
 import { listAddons } from '../addons/registry.js';
