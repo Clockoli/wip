@@ -267,6 +267,7 @@ export function buildPrintableTimesheet(records, { reportingUtc = false } = {}) 
 export function exportTimesheet(records, { format, startDate, endDate, clientRates = {}, invoicing = {}, rateClientId = '__project__', projectDefinitions = [], otherProjectName = 'Other', otherProjectClient = '', reportingUtc = false }) {
   validateDateRange(startDate, endDate);
   const ordered = sortedRecords(records), totalSeconds = ordered.reduce((sum, record) => sum + (Number(record.durationSeconds) || 0), 0);
+  const includeRates = Object.values(clientRates).some(card => Object.keys(card).length);
   const entries = ordered.map(record => {
     const date = recordDate(record, reportingUtc), rate = rateForReportRecord(record, { clientRates, invoicing, rateClientId, projectDefinitions, otherProjectName, otherProjectClient, reportingUtc }, date);
     return {
@@ -277,16 +278,18 @@ export function exportTimesheet(records, { format, startDate, endDate, clientRat
       end: record.endedAt,
       duration: hms(record.durationSeconds),
       durationSeconds: record.durationSeconds,
-      ...({
+      ...(includeRates ? {
         hourlyRate: rate ? (rate.amountMinorPerHour / 100).toFixed(2) : '',
         billableAmount: rate ? (recordBillableMinor(record, rate) / 100).toFixed(2) : '',
         currency: rate?.currency || '',
-      }),
+      } : {}),
       description: record.description || '',
     };
   });
   if (format === 'csv') {
-    const rows = [['Person', 'Task URL', 'Task title', 'Start', 'End', 'Duration', 'Duration seconds', 'Hourly rate', 'Billable amount', 'Currency', 'Description']];
+    const rows = [includeRates
+      ? ['Person', 'Task URL', 'Task title', 'Start', 'End', 'Duration', 'Duration seconds', 'Hourly rate', 'Billable amount', 'Currency', 'Description']
+      : ['Person', 'Task URL', 'Task title', 'Start', 'End', 'Duration', 'Duration seconds', 'Description']];
     for (const entry of entries) rows.push(Object.values(entry));
     return `${rows.map(row => row.map(csvCell).join(',')).join('\r\n')}\r\n`;
   }
