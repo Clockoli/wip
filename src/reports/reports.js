@@ -15,7 +15,7 @@ const state = {
   people: new Set(), projects: new Set(), repositories: new Set(), timeRepositories: new Set(), projectDefinitions: [], peopleSearch: '', projectsSearch: '', repositoriesSearch: '', timeRepositoriesSearch: '',
   allSelected: { people: false, projects: true, repositories: true, timeRepositories: true }, otherProjectName: 'Other', otherProjectClient: '', rateClientId: '__project__', clientIdFilter: '',
   exchangeRates: null, exchangeKey: '', analyticsRequestId: 0, progressRequestId: null, progressValue: 0,
-  invoice: null, invoiceExchangeRates: null, invoiceRequestId: 0, invoiceReservedSequence: null, invoiceCompositionKey: '', invoiceControlsReady: false, invoiceClientChosen: false,
+  invoice: null, invoiceExchangeRates: null, invoiceRequestId: 0, invoiceReservedSequence: null, invoiceCompositionKey: '', invoiceControlsReady: false, invoiceClientChosen: false, invoiceOutputInFlight: false,
   preset: 'last-week', reportingUtc: false, settingsRevision: 0, calendarMonth: '', focusedDay: '', savingBasis: false,
   invoiceExtraLines: [], invoiceProjects: new Set(), invoiceProjectOptions: [],
 };
@@ -304,6 +304,7 @@ function setInvoiceAvailable(filtered) {
   const control = $('create-invoice');
   let reason = '';
   if (state.pendingCount) reason = 'Local changes are not included. Wait for GitHub sync before invoicing.';
+  else if (state.partial) reason = 'This report is incomplete. Reload all time repositories before invoicing.';
   else if (!filtered.length) reason = 'No entries in this period to invoice';
   else if (!filtered.some(record => state.billing.invoicing.clients.some(client => rateForClient(client.id, state.billing, record.user, recordDate(record))))) reason = 'No client rate covers these entries. Add rates in Settings.';
   else if (state.loading) reason = 'Report is loading';
@@ -324,7 +325,7 @@ function updateInvoiceExtraHint() {
 }
 
 function setInvoiceActionsAvailable(available) {
-  for (const id of ['invoice-print', 'invoice-save-pdf']) $(id).disabled = !available || hasIncompleteInvoiceExtraLines() || state.loading || Boolean(state.pendingCount);
+  for (const id of ['invoice-print', 'invoice-save-pdf']) $(id).disabled = !available || hasIncompleteInvoiceExtraLines() || state.invoiceOutputInFlight || state.loading || state.partial || Boolean(state.pendingCount);
 }
 
 function renderPendingStatus(pendingWrites, pendingCount = 0) {
@@ -514,6 +515,7 @@ function showInvoiceError(error) {
 }
 
 async function rebuildInvoicePreview() {
+  if (state.partial) { showInvoiceError(new Error('This report is incomplete. Reload all time repositories before invoicing.')); return false; }
   if (!state.range || state.loading || state.pendingCount) return false;
   $('invoice-billing-period').textContent = `Billing ${state.range.startDate} to ${state.range.endDate}`;
   const requestId = ++state.invoiceRequestId, filtered = invoiceFilteredRecords();
@@ -547,7 +549,7 @@ function prepareInvoiceControls(filtered) {
 
 async function ensureReservedInvoice() {
   if (hasIncompleteInvoiceExtraLines()) throw new Error('Complete or remove unfinished additional lines before printing or saving.');
-  if (!state.invoice || state.loading || state.pendingCount) throw new Error('Invoice preview is not ready.');
+  if (!state.invoice || state.loading || state.partial || state.pendingCount) throw new Error('Invoice preview is not ready.');
   if (state.invoiceReservedSequence === null) {
     const requestId = state.invoiceRequestId, compositionKey = state.invoiceCompositionKey;
     const result = await send({ type: 'RESERVE_INVOICE_NUMBER' });
@@ -1079,10 +1081,10 @@ $('download-pdf').addEventListener('click', async event => {
 
 $('create-invoice').addEventListener('click', async event => {
   event.preventDefault();
-  if (state.loading || state.pendingCount || $('create-invoice').classList.contains('disabled')) return;
+  if (state.loading || state.partial || state.pendingCount || $('create-invoice').classList.contains('disabled')) return;
   const requestId = state.requestId;
   if (!(await pendingSafeForAction()) || requestId !== state.requestId
-      || state.loading || state.pendingCount || $('create-invoice').classList.contains('disabled')) return;
+      || state.loading || state.partial || state.pendingCount || $('create-invoice').classList.contains('disabled')) return;
   const filtered = currentFilteredRecords(); prepareInvoiceControls(filtered); $('print-invoice').replaceChildren(); $('invoice-dialog').showModal(); void rebuildInvoicePreview();
 });
 $('invoice-add-line').addEventListener('click', () => {
@@ -1107,12 +1109,15 @@ function invoicePdfFilename(invoice) {
 }
 
 async function printInvoice({ saveAsPdf = false } = {}) {
-  if (state.loading || state.pendingCount || !state.invoice) return;
-  if (!(await pendingSafeForAction()) || state.loading || state.pendingCount || !state.invoice) return;
-  setInvoiceActionsAvailable(false); $('invoice-feedback').textContent = '';
+  // Lock synchronously, before the first asynchronous pending-write check.
+  // Otherwise two quick clicks can reserve two numbers for one invoice.
+  if (state.invoiceOutputInFlight || state.loading || state.partial || state.pendingCount || !state.invoice) return;
+  state.invoiceOutputInFlight = true; setInvoiceActionsAvailable(false);
   try {
+    if (!(await pendingSafeForAction()) || state.loading || state.partial || state.pendingCount || !state.invoice) return;
+    $('invoice-feedback').textContent = '';
     const invoice = await ensureReservedInvoice();
-    if (!(await pendingSafeForAction()) || state.loading || state.pendingCount || !state.invoice) return;
+    if (!(await pendingSafeForAction()) || state.loading || state.partial || state.pendingCount || !state.invoice) return;
     if (saveAsPdf) {
       await saveInvoicePdf(invoice);
       return;
@@ -1125,8 +1130,9 @@ async function printInvoice({ saveAsPdf = false } = {}) {
   } catch (error) {
     $('invoice-feedback').textContent = error?.message || 'Could not process invoice.';
   } finally {
-    // Both print and PDF save must restore their controls after success,
-    // cancellation or failure. Keep them disabled if the preview is now invalid.
+    state.invoiceOutputInFlight = false;
+    // Restore both controls on success, cancellation and failure, unless the
+    // invoice became invalid or the report is now incomplete.
     setInvoiceActionsAvailable(Boolean(state.invoice));
   }
 }
