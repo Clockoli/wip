@@ -460,7 +460,7 @@ function renderInvoiceExtraLines() {
       description.style.height = 'auto';
       const height = Number(description.scrollHeight) || 0;
       const clipped = count > 8 || height > 180 + 1;
-      if (height) description.style.height = `${Math.min(180, Math.max(32, height))}px`;
+      if (height) description.style.height = `${Math.min(180, Math.max(40, height))}px`;
       description.style.overflowY = clipped ? 'auto' : 'hidden';
       more.hidden = !clipped;
     };
