@@ -1115,7 +1115,6 @@ async function printInvoice({ saveAsPdf = false } = {}) {
     if (!(await pendingSafeForAction()) || state.loading || state.pendingCount || !state.invoice) return;
     if (saveAsPdf) {
       await saveInvoicePdf(invoice);
-      setInvoiceActionsAvailable(Boolean(state.invoice));
       return;
     }
     const previousTitle = document.title;
@@ -1123,7 +1122,13 @@ async function printInvoice({ saveAsPdf = false } = {}) {
     document.title = `invoice-${invoice.number.replace(/[^A-Za-z0-9._-]/g, '_')}`;
     addEventListener('afterprint', () => { document.body.classList.remove('printing-invoice'); document.title = previousTitle; }, { once: true });
     window.print();
-  } catch (error) { $('invoice-feedback').textContent = error?.message || 'Could not process invoice.'; setInvoiceActionsAvailable(Boolean(state.invoice)); }
+  } catch (error) {
+    $('invoice-feedback').textContent = error?.message || 'Could not process invoice.';
+  } finally {
+    // Both print and PDF save must restore their controls after success,
+    // cancellation or failure. Keep them disabled if the preview is now invalid.
+    setInvoiceActionsAvailable(Boolean(state.invoice));
+  }
 }
 
 $('invoice-print').addEventListener('click', () => printInvoice());
