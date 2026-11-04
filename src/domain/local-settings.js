@@ -649,7 +649,6 @@ export function parseSettingsImport(text) {
   }
   const resolvedOtherProjectName = value.version >= 4 ? normalizeOtherProjectName(value.display.otherProjectName) : OTHER_PROJECT;
   const importedSourceProjects = routedExport ? value.projects : (value.version >= 3 ? value.projects : []);
-  const hasInvoiceFields = Object.hasOwn(value.billing, 'invoicing');
   const hasClientFields = Object.hasOwn(value.display, 'otherProjectClient') || importedSourceProjects.some(project => Object.hasOwn(project, 'client'))
     || (value.billing.invoicing?.clients ?? []).some(client => Array.isArray(client?.projects));
   const hasReportingUtc = value.version >= 7 || Object.hasOwn(value.display, 'reportingUtc');
@@ -659,7 +658,6 @@ export function parseSettingsImport(text) {
   });
   const normalizedImportedProjects = hasClientFields ? importedProjects : importedProjects.map(({ client: _client, ...project }) => project);
   if (normalizedImportedProjects.some(project => project.name.toLowerCase() === resolvedOtherProjectName.toLowerCase())) throw new Error('Main project name must differ from named projects');
-  const invoiceDefaultsRequired = !routedExport;
   const imported = {
     recentDays, projects: normalizedImportedProjects, otherProjectName: resolvedOtherProjectName,
     ...(hasClientFields ? { otherProjectClient } : {}),
