@@ -4,16 +4,16 @@ import {
   periodRange, recordDate, reportFilename, reportPdfTitle, taskSource, timeRepository,
 } from '../domain/reporting.js';
 import { buildInvoice, invoiceExchangeRequest } from '../domain/invoicing.js';
-import { billableTotalsByCurrency, clientForProject, exchangeCurrencyCode, invoicingSettings, projectNameForUrl, rateForUser, rateMajorToMinor } from '../domain/local-settings.js';
+import { clientForProject, exchangeCurrencyCode, invoicingSettings, projectNameForUrl, rateForClient, rateForRecord, rateMajorToMinor } from '../domain/local-settings.js';
 import { taskUrlOf } from '../domain/values.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const FACET_KEYS = ['people', 'projects', 'repositories', 'timeRepositories'];
 const $ = id => document.getElementById(id);
 const state = {
-  records: [], range: null, pendingRange: null, sourceRepository: '', branch: '', sourceRepositories: [], billing: { rates: {}, invoicing: invoicingSettings() }, loading: false, requestId: 0, analytics: null, partial: false, readStatus: [], pendingCount: 0,
+  records: [], range: null, pendingRange: null, sourceRepository: '', branch: '', sourceRepositories: [], billing: { clientRates: {}, invoicing: invoicingSettings() }, loading: false, requestId: 0, analytics: null, partial: false, readStatus: [], pendingCount: 0,
   people: new Set(), projects: new Set(), repositories: new Set(), timeRepositories: new Set(), projectDefinitions: [], peopleSearch: '', projectsSearch: '', repositoriesSearch: '', timeRepositoriesSearch: '',
-  allSelected: { people: false, projects: true, repositories: true, timeRepositories: true }, otherProjectName: 'Other', otherProjectClient: '',
+  allSelected: { people: false, projects: true, repositories: true, timeRepositories: true }, otherProjectName: 'Other', otherProjectClient: '', rateClientId: '__project__', clientIdFilter: '',
   exchangeRates: null, exchangeKey: '', analyticsRequestId: 0, progressRequestId: null, progressValue: 0,
   invoice: null, invoiceExchangeRates: null, invoiceRequestId: 0, invoiceReservedSequence: null, invoiceCompositionKey: '', invoiceControlsReady: false, invoiceClientChosen: false,
   preset: 'last-week', reportingUtc: false, settingsRevision: 0, calendarMonth: '', focusedDay: '', savingBasis: false,
@@ -257,14 +257,36 @@ function setDownloadsAvailable(available) {
 }
 
 function selectedFilters() {
-  return { people: [...state.people], projects: [...state.projects], repositories: [...state.repositories], timeRepositories: [...state.timeRepositories], projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName, emptyMeansNone: true };
+  return { people: [...state.people], projects: [...state.projects], repositories: [...state.repositories], timeRepositories: [...state.timeRepositories], projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName, otherProjectClient: state.otherProjectClient, clientIdFilter: state.clientIdFilter, emptyMeansNone: true };
 }
 
 function currentFilteredRecords() { return filterReportRecords(state.records, selectedFilters()); }
 
+function rateOptions(clientId = state.rateClientId) {
+  return { clientId, projects: state.projectDefinitions, otherProjectName: state.otherProjectName, otherProjectClient: state.otherProjectClient };
+}
+
+function recordRate(record, clientId = state.rateClientId) {
+  return rateForRecord(record, state.billing, { ...rateOptions(clientId), date: recordDate(record) });
+}
+
+function populateClientContextSelectors() {
+  const clients = state.billing.invoicing.clients;
+  for (const [id, options, requested, fallback] of [
+    ['report-client-filter', [{ id: '', name: 'All clients' }, ...clients, { id: '__unassigned__', name: 'Unassigned' }], state.clientIdFilter, ''],
+    ['rate-client', [{ id: '__project__', name: "Each project's client" }, ...clients], state.rateClientId, '__project__'],
+  ]) {
+    const select = $(id);
+    select.replaceChildren();
+    for (const client of options) { const option = document.createElement('option'); option.value = client.id; option.textContent = client.name || client.id; select.append(option); }
+    select.value = options.some(client => client.id === requested) ? requested : fallback;
+    if (id === 'rate-client') state.rateClientId = select.value; else state.clientIdFilter = select.value;
+  }
+}
+
 function invoiceCompositionKey(filtered) {
   const records = filtered.map(record => [record.id || record.taskUrl || record.issue?.url || record.url, record.user, recordDate(record), record.durationSeconds]);
-  return JSON.stringify({ range: state.range, filters: selectedFilters(), records, rates: state.billing.rates, invoicing: state.billing.invoicing });
+  return JSON.stringify({ range: state.range, filters: selectedFilters(), records, clientRates: state.billing.clientRates, invoicing: state.billing.invoicing });
 }
 
 function resetInvoiceReservation() {
@@ -283,7 +305,7 @@ function setInvoiceAvailable(filtered) {
   let reason = '';
   if (state.pendingCount) reason = 'Local changes are not included. Wait for GitHub sync before invoicing.';
   else if (!filtered.length) reason = 'No entries in this period to invoice';
-  else if (!filtered.some(record => rateForUser(record.user, state.billing.rates, recordDate(record)))) reason = 'No hourly rate covers these entries. Add rates in Settings.';
+  else if (!filtered.some(record => state.billing.invoicing.clients.some(client => rateForClient(client.id, state.billing, record.user, recordDate(record))))) reason = 'No client rate covers these entries. Add rates in Settings.';
   else if (state.loading) reason = 'Report is loading';
   control.classList.toggle('disabled', Boolean(reason)); control.setAttribute('aria-disabled', String(Boolean(reason)));
   if (reason) control.setAttribute('data-clockoli-tooltip', reason); else control.removeAttribute('data-clockoli-tooltip');
@@ -317,7 +339,7 @@ async function pendingSafeForAction() {
 }
 
 function invoiceCurrencies(filtered) {
-  return [...new Set(filtered.map(record => rateForUser(record.user, state.billing.rates, recordDate(record))?.currency).filter(Boolean))].sort();
+  return [...new Set(filtered.map(record => recordRate(record, $('invoice-client').value)?.currency).filter(Boolean))].sort();
 }
 
 function selectedInvoiceClient() {
@@ -400,7 +422,7 @@ function invoiceBuildOptions(sequence, exchangeRates) {
     return { description, amountMinor: rateMajorToMinor(negative ? text.slice(1) : text) * (negative ? -1 : 1) };
   });
   return {
-    rates: state.billing.rates, invoicing: state.billing.invoicing, clientId: $('invoice-client').value,
+    clientRates: state.billing.clientRates, invoicing: state.billing.invoicing, clientId: $('invoice-client').value,
     currency: $('invoice-currency').value, exchangeRates, groupBy: $('invoice-group-by').value,
     startDate: state.range.startDate, endDate: state.range.endDate, issueDate: $('invoice-issue-date').value,
     extraLines, sequence,
@@ -481,7 +503,7 @@ async function rebuildInvoicePreview() {
     let exchangeRates = null;
     const targetCurrency = $('invoice-currency').value;
     if (targetCurrency) {
-      const payload = invoiceExchangeRequest(filtered, state.billing.rates, targetCurrency);
+      const payload = invoiceExchangeRequest(filtered, state.billing.clientRates, $('invoice-client').value, targetCurrency);
       if (payload.sourceCurrencies.length) {
         showInvoiceLoading();
         const result = await send({ type: 'GET_EXCHANGE_RATES', payload: { ...payload, requestId: `invoice-${state.requestId}-${requestId}` } });
@@ -575,7 +597,15 @@ function billableSummary(totals) {
 
 function renderCurrencySelector(filtered) {
   const select = $('billable-currency'), selected = select.value;
-  const totals = billableTotalsByCurrency(filtered, state.billing.rates);
+  const byCurrency = new Map();
+  for (const record of filtered) {
+    const rate = recordRate(record);
+    if (!rate) continue;
+    const item = byCurrency.get(rate.currency) || { currency: rate.currency, currencyPosition: rate.currencyPosition, amountMinor: 0 };
+    item.amountMinor += rate.amountMinorPerHour * Math.max(0, Number(record.durationSeconds) || 0) / 3600;
+    byCurrency.set(rate.currency, item);
+  }
+  const totals = [...byCurrency.values()].sort((a, b) => a.currency.localeCompare(b.currency));
   select.replaceChildren();
   for (const item of totals) {
     const option = document.createElement('option'); option.value = item.currency; option.textContent = item.currency;
@@ -589,8 +619,8 @@ function renderCurrencySelector(filtered) {
 function renderSummary(filtered, totals) {
   const total = filtered.reduce((sum, record) => sum + (Number(record.durationSeconds) || 0), 0);
   $('summary-time').textContent = formatClockDuration(total);
-  $('summary-billable').hidden = !Object.keys(state.billing.rates).some(user => rateForUser(user, state.billing.rates));
-  const missingRates = [...new Set(filtered.filter(record => !rateForUser(record.user, state.billing.rates, recordDate(record))).map(record => record.user))];
+  $('summary-billable').hidden = !Object.values(state.billing.clientRates).some(card => Object.keys(card).length);
+  const missingRates = [...new Set(filtered.filter(record => !recordRate(record)).map(record => record.user))];
   $('summary-money').textContent = `${billableSummary(totals)}${missingRates.length ? ` · No rate for ${missingRates.join(', ')}` : ''}`;
   const people = new Set(filtered.map(record => record.user)).size;
   const sources = new Set(filtered.map(record => taskSource(record))).size;
@@ -783,7 +813,7 @@ function renderPrintableTimesheet(filtered) {
 function exchangeRequest(filtered, targetCurrency) {
   const datedRates = filtered.map(record => ({
     date: recordDate(record),
-    rate: rateForUser(record.user, state.billing.rates, recordDate(record)),
+    rate: recordRate(record),
   })).filter(item => item.rate);
   const dates = [...new Set(datedRates.map(item => item.date))].sort();
   const sourceCurrencies = [...new Set(datedRates.map(item => item.rate.currency))].sort();
@@ -819,6 +849,7 @@ function render() {
   $('projects-all').textContent = allProjects.length && allProjects.every(value => state.projects.has(value)) ? 'Unselect all' : 'Select all';
   $('repositories-all').textContent = allRepositories.length && allRepositories.every(value => state.repositories.has(value)) ? 'Unselect all' : 'Select all';
   $('timeRepositories-all').textContent = allTimeRepositories.length && allTimeRepositories.every(value => state.timeRepositories.has(value)) ? 'Unselect all' : 'Select all';
+  populateClientContextSelectors();
   const filtered = filterReportRecords(state.records, selectedFilters());
   syncInvoiceComposition(filtered); setInvoiceAvailable(filtered);
   const billableTotals = renderCurrencySelector(filtered);
@@ -844,7 +875,9 @@ function render() {
   } else { state.analyticsRequestId += 1; state.exchangeRates = null; state.exchangeKey = ''; }
   state.analytics = buildAnalytics(filtered, {
     metric, horizontalAxis: $('horizontal-axis').value, stackBy: $('stack-by').value,
-    rates: state.billing.rates, currency: targetCurrency, exchangeRates,
+    clientRates: state.billing.clientRates, invoicing: state.billing.invoicing, rateClientId: state.rateClientId,
+    projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName, otherProjectClient: state.otherProjectClient,
+    currency: targetCurrency, exchangeRates,
   });
   renderChart(state.analytics); setError();
   if (!state.loading) hideProgress();
@@ -878,7 +911,7 @@ async function loadRange(range) {
     const conflictCount = result.conflicts?.length || 0;
     $('partial-status').hidden = !state.partial;
     $('partial-status').textContent = !state.partial ? '' : [failed.length ? `${failed.length} time ${failed.length === 1 ? 'repository' : 'repositories'} could not be loaded.` : '', conflictCount ? `${conflictCount} conflicting ${conflictCount === 1 ? 'record was' : 'records were'} omitted.` : '', 'Exports are disabled until the report is complete.'].filter(Boolean).join(' ');
-    state.billing = { rates: result.billing?.rates || {}, invoicing: invoicingSettings(result.billing) };
+    state.billing = { clientRates: result.billing?.clientRates || {}, invoicing: invoicingSettings(result.billing) };
     state.projectDefinitions = result.billing?.projects || [];
     state.otherProjectName = result.billing?.otherProjectName || 'Other';
     state.otherProjectClient = result.billing?.otherProjectClient || '';
@@ -956,6 +989,8 @@ $('reporting-utc').addEventListener('change', async () => {
   finally { state.savingBasis = false; $('reporting-utc').disabled = false; }
 });
 for (const id of ['metric', 'billable-currency', 'horizontal-axis', 'stack-by']) $(id).addEventListener('change', render);
+$('rate-client').addEventListener('change', () => { state.rateClientId = $('rate-client').value; state.exchangeKey = ''; render(); });
+$('report-client-filter').addEventListener('change', () => { state.clientIdFilter = $('report-client-filter').value; render(); });
 $('analytics-details').addEventListener('toggle', () => { if (state.analytics) renderAnalyticsTable(state.analytics); });
 $('people-search').addEventListener('input', event => { state.peopleSearch = event.target.value; render(); });
 $('projects-search').addEventListener('input', event => { state.projectsSearch = event.target.value; render(); });
@@ -984,6 +1019,7 @@ $('reset-filters').addEventListener('click', () => {
     state[key] = new Set(facets[key].map(option => option.value));
     state[`${key}Search`] = ''; $(`${key}-search`).value = '';
   }
+  state.clientIdFilter = '';
   render();
 });
 $('setup-settings').addEventListener('click', () => send({ type: 'OPEN_OPTIONS' }));
@@ -996,7 +1032,8 @@ async function downloadTimesheet(format, event) {
   if (state.loading || state.partial || state.pendingCount || !state.range || !filtered.length) return;
   const content = exportTimesheet(filtered, {
     format, startDate: state.range.startDate, endDate: state.range.endDate,
-    rates: state.billing.rates,
+    clientRates: state.billing.clientRates, invoicing: state.billing.invoicing, rateClientId: state.rateClientId,
+    projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName, otherProjectClient: state.otherProjectClient,
   });
   const type = format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8';
   const url = URL.createObjectURL(new Blob([content], { type })), anchor = document.createElement('a');
@@ -1074,7 +1111,7 @@ $('invoice-save-pdf').addEventListener('click', () => printInvoice({ saveAsPdf: 
 async function refreshProjectDefinitions() {
   const preferences = await send({ type: 'GET_LOCAL_PREFERENCES' });
   if (Number.isSafeInteger(preferences.revision) && preferences.revision >= 0) state.settingsRevision = preferences.revision;
-  state.billing = { rates: preferences.rates || {}, invoicing: invoicingSettings(preferences) };
+  state.billing = { clientRates: preferences.clientRates || {}, invoicing: invoicingSettings(preferences) };
   state.projectDefinitions = preferences.projects || [];
   state.otherProjectName = preferences.otherProjectName || 'Other';
   state.otherProjectClient = preferences.otherProjectClient || '';
