@@ -98,7 +98,7 @@ test('settings v5 retains its legacy shape and exposes additive unverified routi
     projects: [{ name: 'Work', substrings: ['github.com/acme/'] }],
     otherProjectName: 'General',
     showQueueDiagnostics: true,
-    billing: { rates: {}, invoicing: { seller: { name: '', address: '', email: '', taxId: '' }, clients: [], nextNumber: 1, numberFormat: 'INV-{YYYY}-{NNNN}', paymentTermsDays: 30, taxPercent: 0, notes: '' } },
+    billing: { clientRates: {}, invoicing: { seller: { name: '', address: '', email: '', taxId: '' }, clients: [], nextNumber: 1, numberFormat: 'INV-{YYYY}-{NNNN}', paymentTermsDays: 30, taxPercent: 0, notes: '' } },
   });
   assert.deepEqual(imported.repository, legacy.repository);
   assert.deepEqual(imported.destinations, { 'github:42': destinations['github:42'] });
@@ -123,7 +123,7 @@ test('settings v6 exports exact credential-free routing fields and parses refere
   assert.deepEqual(Object.keys(saved).sort(), [
     'billing', 'defaultDestinationId', 'destinations', 'display', 'exportedAt', 'format', 'projects', 'security', 'version',
   ]);
-  assert.equal(saved.version, 6);
+  assert.equal(saved.version, 8);
   assert.deepEqual(saved.destinations, destinations);
   assert.equal(saved.defaultDestinationId, 'github:42');
   assert.deepEqual(saved.projects, projects);
@@ -131,7 +131,7 @@ test('settings v6 exports exact credential-free routing fields and parses refere
   assert.doesNotMatch(text, /token|password|authorization|installationId/i);
   assert.deepEqual(parseSettingsImport(text), {
     recentDays: 9, projects, otherProjectName: 'General', otherProjectClient: '', reportingUtc: false, showQueueDiagnostics: true,
-    billing: { rates: {} }, destinations, defaultDestinationId: 'github:42',
+    billing: { clientRates: {}, invoicing: saved.billing.invoicing }, destinations, defaultDestinationId: 'github:42',
     repositoryReferencesVerified: false,
   });
 
