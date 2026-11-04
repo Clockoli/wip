@@ -452,14 +452,14 @@ test('billable rates and settings export stay local, version changes, and import
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   await store.saveConfiguration({ owner: 'acme', repo: 'time', branch: 'main', recentDays: 7 }, 'secret', {});
   assert.deepEqual(await store.getLocalPreferences(), {
-    recentDays: 7, projects: [], interfaceWidth: 'contained', otherProjectName: 'Other', otherProjectClient: '', reportingUtc: false, showQueueDiagnostics: false, rates: {}, invoicing: invoicingSettings(), revision: 0, exportedRevision: 0, exportRecommended: false,
+    recentDays: 7, projects: [], interfaceWidth: 'contained', otherProjectName: 'Other', otherProjectClient: '', reportingUtc: false, showQueueDiagnostics: false, clientRates: {}, invoicing: invoicingSettings(), revision: 0, exportedRevision: 0, exportRecommended: false,
   });
-  const saved = await store.saveBillingSettings({ rates: { alice: [{ amountMinorPerHour: 12500, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] } });
+  const saved = await store.saveBillingSettings({ clientRates: { 'client-1': { alice: [{ amountMinorPerHour: 12500, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] } }, invoicing: { clients: [{ id: 'client-1', name: 'Client One' }] } });
   assert.equal(saved.revision, 1);
   assert.equal((await store.getLocalPreferences()).exportRecommended, true);
   const exported = await store.exportSettings();
   assert.doesNotMatch(exported.text, /secret/);
-  assert.deepEqual(JSON.parse(exported.text).billing, { invoicing: invoicingSettings(), rates: { alice: [{ amountMinorPerHour: 12500, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] } });
+  assert.deepEqual(JSON.parse(exported.text).billing, { invoicing: invoicingSettings({ invoicing: { clients: [{ id: 'client-1', name: 'Client One' }] } }), clientRates: { 'client-1': { alice: [{ amountMinorPerHour: 12500, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] } } });
   assert.equal(await store.markSettingsExported(exported.revision), true);
   assert.equal((await store.getLocalPreferences()).exportRecommended, false);
   const imported = await store.importSettings(exported.text.replace('"recentDays": 7', '"recentDays": 12'));
@@ -478,7 +478,7 @@ test('invoicing save, export and import preserve project-to-client links without
     destinationRegistry: { version: 1, defaultDestinationId: destinationId, destinations: { [destinationId]: destination } },
     projects: [project], otherProjectName: 'General', otherProjectClient: '',
   });
-  const billing = { rates: { alice: 10000 }, invoicing: { seller: { name: 'Seller' }, clients: [{ id: 'client-1', name: 'Client' }] } };
+  const billing = { clientRates: { 'client-1': { alice: 10000 } }, invoicing: { seller: { name: 'Seller' }, clients: [{ id: 'client-1', name: 'Client' }] } };
   await store.saveBillingSettings(billing, { projectClients: { 'project-1': 'client-1' }, otherProjectClient: 'client-1' }, 0);
   let preferences = await store.getLocalPreferences();
   assert.equal(preferences.projects[0].client, 'client-1');
@@ -531,30 +531,30 @@ test('stale display and billing saves cannot overwrite newer settings', async ()
     projects: [{ id: 'project-1', name: 'Work', substrings: ['work/'], destinationId, client: '' }],
     otherProjectName: 'Other', otherProjectClient: '', defaultDestinationId: destinationId,
   }, 0), /changed in another page/i);
-  await assert.rejects(store.saveBillingSettings({ rates: { stale: 10000 } }, null, 0), /changed in another page/i);
+  await assert.rejects(store.saveBillingSettings({ clientRates: {} }, null, 0), /changed in another page/i);
   assert.deepEqual(backend.values, afterNewerSave);
 });
 
 test('rates and invoicing saves update only their owned billing section', async () => {
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   await store.saveBillingSettings({
-    rates: { alice: 10000 },
-    invoicing: { seller: { name: 'Seller' }, notes: 'Original', nextNumber: 3 },
+    clientRates: { 'client-1': { alice: 10000 } },
+    invoicing: { seller: { name: 'Seller' }, notes: 'Original', nextNumber: 3, clients: [{ id: 'client-1' }] },
   });
-  await store.saveBillingSettings({ rates: { bob: 20000 } }, null, 1);
+  await store.saveBillingSettings({ clientRates: { 'client-1': { bob: 20000 } } }, null, 1);
   let preferences = await store.getLocalPreferences();
-  assert.deepEqual(preferences.rates, { bob: [{ amountMinorPerHour: 20000, currency: 'USD', currencyPosition: 'suffix', startDate: '', endDate: '' }] });
+  assert.deepEqual(preferences.clientRates['client-1'], { bob: [{ amountMinorPerHour: 20000, currency: 'USD', currencyPosition: 'suffix', startDate: '', endDate: '' }] });
   assert.equal(preferences.invoicing.notes, 'Original');
   await store.saveBillingSettings({ invoicing: { ...preferences.invoicing, notes: 'Updated' } }, null, 2);
   preferences = await store.getLocalPreferences();
-  assert.deepEqual(preferences.rates, { bob: [{ amountMinorPerHour: 20000, currency: 'USD', currencyPosition: 'suffix', startDate: '', endDate: '' }] });
+  assert.deepEqual(preferences.clientRates['client-1'], { bob: [{ amountMinorPerHour: 20000, currency: 'USD', currencyPosition: 'suffix', startDate: '', endDate: '' }] });
   assert.equal(preferences.invoicing.notes, 'Updated');
 });
 
 test('restoring an older backup never rewinds the invoice counter', async () => {
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   await store.saveConfiguration({ owner: 'acme', repo: 'time', branch: 'main', recentDays: 7 }, 'secret', {});
-  await store.saveBillingSettings({ rates: { alice: 10000 }, invoicing: { nextNumber: 5, notes: 'Backup era' } });
+  await store.saveBillingSettings({ invoicing: { nextNumber: 5, notes: 'Backup era' } });
   const backup = (await store.exportSettings()).text;
   for (const sequence of [5, 6, 7]) assert.equal((await store.reserveInvoiceNumber()).sequence, sequence);
   const restored = await store.importSettings(backup);
@@ -566,17 +566,17 @@ test('restoring an older backup never rewinds the invoice counter', async () => 
 
 test('billing saves reject stale invoice counters inside the transaction without changing settings', async () => {
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
-  await store.saveBillingSettings({ rates: { alice: 10000 }, invoicing: { nextNumber: 7, notes: 'Original' } });
+  await store.saveBillingSettings({ invoicing: { nextNumber: 7, notes: 'Original' } });
   const stale = await store.getLocalPreferences();
   assert.equal((await new ChromeStore(backend).reserveInvoiceNumber()).sequence, 7);
   const before = structuredClone(backend.values);
   backend.getMany = async () => assert.fail('counter validation must read inside mutateMany');
-  await assert.rejects(store.saveBillingSettings({ rates: stale.rates, invoicing: { ...stale.invoicing, notes: 'Edited' } }), {
+  await assert.rejects(store.saveBillingSettings({ clientRates: stale.clientRates, invoicing: { ...stale.invoicing, notes: 'Edited' } }), {
     message: 'Next invoice number cannot go below 8; invoice 7 has already been issued.',
   });
   assert.deepEqual(backend.values, before);
-  await store.saveBillingSettings({ rates: stale.rates, invoicing: { ...stale.invoicing, nextNumber: 8, notes: 'Edited' } });
-  await store.saveBillingSettings({ rates: stale.rates, invoicing: { ...stale.invoicing, nextNumber: 20 } });
+  await store.saveBillingSettings({ clientRates: stale.clientRates, invoicing: { ...stale.invoicing, nextNumber: 8, notes: 'Edited' } });
+  await store.saveBillingSettings({ clientRates: stale.clientRates, invoicing: { ...stale.invoicing, nextNumber: 20 } });
   assert.equal((await new ChromeStore(backend).reserveInvoiceNumber()).sequence, 20);
   delete backend.getMany;
   assert.equal((await new ChromeStore(backend).getLocalPreferences()).invoicing.nextNumber, 21);
@@ -597,11 +597,11 @@ test('invoice sequences reserve atomically across stores, persist and bump setti
   const empty = new ChromeStore(new MemoryBackend());
   assert.equal((await empty.reserveInvoiceNumber()).sequence, 1);
   assert.equal((await empty.getLocalPreferences()).revision, 1);
-  await store.saveBillingSettings({ rates: { alice: 12345 }, invoicing: { seller: { name: 'Seller' }, numberFormat: '{MM}-{NNNN}', nextNumber: 99 } });
+  await store.saveBillingSettings({ clientRates: { 'client-1': { alice: 12345 } }, invoicing: { seller: { name: 'Seller' }, clients: [{ id: 'client-1' }], numberFormat: '{MM}-{NNNN}', nextNumber: 99 } });
   assert.equal((await store.reserveInvoiceNumber()).sequence, 99);
   const preferences = await new ChromeStore(backend).getLocalPreferences();
   assert.equal(preferences.invoicing.seller.name, 'Seller');
-  assert.equal(preferences.rates.alice[0].amountMinorPerHour, 12345);
+  assert.equal(preferences.clientRates['client-1'].alice[0].amountMinorPerHour, 12345);
   await store.saveBillingSettings({ invoicing: { nextNumber: 1e9 } });
   const before = structuredClone(backend.values);
   await assert.rejects(store.reserveInvoiceNumber(), /number|sequence/i);
@@ -673,7 +673,7 @@ test('UTC display preference survives restart and v7 export without overwriting 
   assert.equal(preferences.reportingUtc, true); assert.equal(preferences.recentDays, 14);
   assert.equal(preferences.projects[0].name, 'Work'); assert.equal(preferences.otherProjectName, 'General'); assert.equal(preferences.showQueueDiagnostics, true);
   const exported = await restarted.exportSettings(), parsed = JSON.parse(exported.text);
-  assert.equal(parsed.version, 7); assert.equal(parsed.display.reportingUtc, true);
+  assert.equal(parsed.version, 8); assert.equal(parsed.display.reportingUtc, true);
   const restored = new ChromeStore(new MemoryBackend()); await restored.importSettings(exported.text);
   assert.equal((await restored.getLocalPreferences()).reportingUtc, true);
   delete parsed.display.reportingUtc; await restored.importSettings(JSON.stringify(parsed));
