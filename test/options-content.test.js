@@ -350,11 +350,12 @@ test('settings exposes browser-only invoicing parties, numbering and terms', () 
   assert.match(script, /function addClientRow\(/);
   assert.match(script, /function ratesPayload\(\)/);
   assert.match(script, /function invoicingPayload\(\)/);
+  assert.match(script, /function renderInvoiceDefaults\(\)/);
   assert.match(script, /payload: \{ clientRates: ratesPayload\(\) \}/);
   assert.ok(script.includes('function clientsPayload()'));
   assert.match(script, /const invoicing = clientSave/);
   assert.ok(script.includes('payload: { invoicing }'));
-  assert.ok(script.includes('projectLinks: clientSave ? null : projectClientLinksPayload()'));
+  assert.ok(script.includes('projectLinks: null, expectedRevision: localPreferences.revision'));
   assert.doesNotMatch(script, /return \{ rates, invoicing:/);
   for (const id of ['seller-address', 'invoice-notes']) assert.match(source, new RegExp(`id="${id}"[^>]*rows="1"`));
   assert.match(styles, /#seller-address,#invoice-notes\{[^}]*max-height:calc\(/);

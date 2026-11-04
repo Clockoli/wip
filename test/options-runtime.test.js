@@ -1999,7 +1999,7 @@ test('rates and invoicing saves send only their owned section and use the atomic
   assert.equal(page.requests.some(request => request.type === 'GET_LOCAL_PREFERENCES'), false);
 });
 
-test('saving invoicing also persists current client links for stored projects', async () => {
+test('saving invoicing never commits draft project-client links', async () => {
   const saved = {
     ...preferences,
     projects: [{ id: 'project-1', name: 'Work', substrings: ['work/'], destinationId: 'github:77', client: '' }],
@@ -2014,14 +2014,13 @@ test('saving invoicing also persists current client links for stored projects', 
   await page.submit('invoicing-form');
   const request = page.requests.find(request => request.type === 'SAVE_BILLING_SETTINGS');
   assert.equal(request.expectedRevision, saved.revision);
-  assert.deepEqual(JSON.parse(JSON.stringify(request.projectLinks)), {
-    projectClients: { 'project-1': 'client-1' },
-    otherProjectClient: 'client-1',
-  });
+  assert.equal(request.projectLinks, null);
+  assert.equal(page.nodes.get('projects-list').querySelector('.project-client').value, 'client-1');
+  assert.equal(page.nodes.get('other-project-client').value, 'client-1');
   assert.equal(request.payload.invoicing.clients[0].id, 'client-1');
 });
 
-test('a newly saved project is immediately included in the next invoicing link save', async () => {
+test('invoicing save does not commit unsaved links from a newly saved project', async () => {
   let latest = { ...preferences, projects: [], revision: 0 };
   const routedState = { ...connectedState, destinations: [{ id: 'github:77', repoId: 77, owner: 'acme', repo: 'time', branch: 'main' }], destinationRegistry: { defaultDestinationId: 'github:77' } };
   const page = harness({ reply(request) {
@@ -2042,10 +2041,8 @@ test('a newly saved project is immediately included in the next invoicing link s
   await page.submit('invoicing-form');
   const request = page.requests.filter(request => request.type === 'SAVE_BILLING_SETTINGS').at(-1);
   assert.equal(request.expectedRevision, 1);
-  assert.deepEqual(JSON.parse(JSON.stringify(request.projectLinks)), {
-    projectClients: { [project.dataset.projectId]: 'client-1' },
-    otherProjectClient: '',
-  });
+  assert.equal(request.projectLinks, null);
+  assert.equal(project.querySelector('.project-client').value, 'client-1');
 });
 
 test('changing the default destination remains selected and a following display save keeps it', async () => {
@@ -2157,9 +2154,10 @@ for (const form of ['billing', 'invoicing']) test(`${form} handles a typed clien
   assert.equal(page.nodes.get(`save-${form}`).textContent, 'Saved');
   const save = page.requests.find(request => request.type === 'SAVE_BILLING_SETTINGS');
   if (form === 'invoicing') {
-    assert.equal(save.payload.invoicing.clients.at(-1).name, 'Typed client');
-    assert.equal(save.payload.invoicing.clients.at(-1).email, 'typed@example.com');
-    assert.equal(Object.hasOwn(save.payload.invoicing.clients.at(-1), 'projects'), false);
+    assert.deepEqual(Array.from(save.payload.invoicing.clients, item => item.id), ['client-1']);
+    assert.equal(page.nodes.get('clients-list').querySelectorAll('.client-row').at(-1), client);
+    assert.equal(client.querySelector('.client-name').value, 'Typed client');
+    assert.equal(client.querySelector('.client-email').value, 'typed@example.com');
   } else {
     assert.deepEqual(Object.keys(save.payload), ['clientRates']);
     assert.equal(client.querySelector('.client-name').value, 'Typed client');
@@ -2205,7 +2203,7 @@ for (const form of ['billing', 'invoicing']) test(`${form} save retains stored c
   page.context.renderLocalPreferences(stored);
   assert.equal(page.nodes.get('projects-list').querySelector('.project-client').value, 'empty');
   assert.equal(page.nodes.get('other-project-client').value, 'empty');
-  assert.equal(page.context.invoicingPayload().clients.length, 2);
+  assert.equal(page.context.clientsPayload().length, 2);
 });
 
 for (const target of ['project', 'main']) test(`empty new client selected by ${target} survives serialization`, () => {
@@ -2214,7 +2212,8 @@ for (const target of ['project', 'main']) test(`empty new client selected by ${t
   const id = page.nodes.get('clients-list').querySelector('.client-row').dataset.clientId;
   if (target === 'project') page.context.addProjectRow({ name: 'Work', substrings: ['work/'], client: id });
   else page.nodes.get('other-project-client').value = id;
-  assert.deepEqual(Array.from(page.context.invoicingPayload().clients, client => client.id), [id]);
+  assert.deepEqual(Array.from(page.context.clientsPayload(), client => client.id), [id]);
+  assert.deepEqual(page.context.invoicingPayload().clients, []);
 });
 
 test('new client edited and then cleared is no longer untouched', () => {
@@ -2223,16 +2222,16 @@ test('new client edited and then cleared is no longer untouched', () => {
   const input = page.nodes.get('clients-list').querySelector('.client-email');
   input.value = 'client@example.com'; input.listeners.input?.();
   input.value = ''; input.listeners.input?.();
-  assert.equal(page.context.invoicingPayload().clients.length, 1);
+  assert.equal(page.context.clientsPayload().length, 1);
 });
 
 test('fresh preferences create no client and completely empty client cards are omitted', () => {
   const page = harness(); page.context.renderLocalPreferences({ ...preferences, invoicing: { ...preferences.invoicing, clients: [] } });
   assert.equal(page.nodes.get('clients-list').children.length, 0);
   page.context.addClientRow();
-  assert.equal(page.context.invoicingPayload().clients.length, 0);
+  assert.equal(page.context.clientsPayload().length, 0);
   page.nodes.get('clients-list').querySelector('.client-email').value = 'only@example.com';
-  assert.equal(page.context.invoicingPayload().clients.length, 1);
+  assert.equal(page.context.clientsPayload().length, 1);
   assert.equal(page.nodes.get('clients-list').querySelector('.client-projects'), null);
   assert.equal(page.nodes.get('clients-list').querySelector('.save-client').textContent, 'Save');
   assert.equal(page.nodes.get('clients-list').querySelector('.remove-client').textContent, '✕');
