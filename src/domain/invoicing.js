@@ -5,10 +5,10 @@ import { taskUrlOf } from './values.js';
 function recordDate(record) { return String(record?.entryDate || record?.startedAt || '').slice(0, 10); }
 function currencyCode(currency, target) { return currency === target ? currency : exchangeCurrencyCode(currency); }
 
-export function invoiceExchangeRequest(records, rates, targetCurrency) {
+export function invoiceExchangeRequest(records, clientRates, clientId, targetCurrency) {
   const target = parseRateFields('0', targetCurrency).currency, sourceCurrencies = new Set(), dates = new Set();
   for (const record of records ?? []) {
-    const date = recordDate(record), rate = rateForUser(record.user, rates, date);
+    const date = recordDate(record), rate = rateForUser(record.user, clientRates?.[clientId] || {}, date);
     if (!rate || rate.currency === target) continue;
     const source = exchangeCurrencyCode(rate.currency);
     if (source === exchangeCurrencyCode(target)) continue;
@@ -19,7 +19,7 @@ export function invoiceExchangeRequest(records, rates, targetCurrency) {
 }
 
 export function buildInvoice(records, {
-  rates = {}, invoicing, clientId = '', currency = '', exchangeRates = null,
+  clientRates = {}, invoicing, clientId = '', currency = '', exchangeRates = null,
   groupBy = 'task', startDate, endDate, issueDate, extraLines = [], sequence = null,
 }) {
   const settings = invoicingSettings({ invoicing }), period = validateDateRange(startDate, endDate);
@@ -29,8 +29,8 @@ export function buildInvoice(records, {
   due.setUTCDate(due.getUTCDate() + settings.paymentTermsDays);
   if (!Number.isFinite(due.getTime()) || due.getUTCFullYear() > 9999) throw new Error('Invoice due date is out of range');
   const client = settings.clients.find(item => item.id === clientId) ?? null;
-  if (clientId && !client) throw new Error('Invoice client was not found');
-  const entries = (records ?? []).map(record => ({ record, rate: rateForUser(record.user, rates, recordDate(record)) }));
+  if (!client) throw new Error(clientId ? 'Invoice client was not found' : 'Choose a client for the invoice');
+  const entries = (records ?? []).map(record => ({ record, rate: rateForUser(record.user, clientRates?.[client.id] || {}, recordDate(record)) }));
   const currencies = [...new Set(entries.filter(entry => entry.rate).map(entry => entry.rate.currency))];
   const target = currency || client?.defaultCurrency || (currencies.length === 1 ? currencies[0] : '');
   if (!target) throw new Error('Choose a target currency for the invoice; the records do not have a single rate currency');
