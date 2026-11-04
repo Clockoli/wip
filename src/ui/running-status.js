@@ -355,7 +355,7 @@ export function mountRunningStatus(container, { send, onChange, onReconnect, onA
       // Read durable local state first, even when GitHub cannot be reached.
       const local = await send({ type: 'GET_PAGE_STATE' });
       if (destroyed || id !== requestId) return;
-      state = local; readAt = Date.now(); reportDate = localDate(); container.classList.remove('is-loading'); render();
+      state = local; readAt = Date.now(); reportDate = localDate(); container.classList.toggle('is-loading', false); render();
       if (local.summaryError?.code === 'auth_expired') refreshFailure = local.summaryError;
       showError(local.summaryError || refreshFailure);
       if (focusDescriptionOnLoad && state.active) {
@@ -375,7 +375,7 @@ export function mountRunningStatus(container, { send, onChange, onReconnect, onA
     } catch (cause) {
       if (!destroyed && id === requestId) {
         refreshFailure = cause?.code === 'auth_expired' ? cause : null;
-        container.classList.remove('is-loading');
+        container.classList.toggle('is-loading', false);
         showError(cause?.code === 'auth_expired' ? cause
           : new Error('Could not load tracking status. Reload Activity to try again.'));
       }

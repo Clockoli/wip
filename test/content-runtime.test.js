@@ -4699,7 +4699,7 @@ test('shared running status confirms only above twelve hours and preserves a rej
 test('shared running status recovers fresh state after a worker restart and rejects unsafe task links', async () => {
   const h = await runningStatusHarness(runningStatusState());
   h.failRead(true); await h.events.get('visibilitychange')(); await h.settle();
-  assert.match(h.find('running-status-error').textContent, /Worker restarting/);
+  assert.match(h.find('running-status-error').textContent, /Could not load tracking status/);
   h.failRead(false); h.setState({ configured: true, active: null, todayTrackedMs: 0 });
   await h.events.get('visibilitychange')(); await h.settle();
   assert.equal(h.find('running-status-idle').textContent, 'Not tracking');

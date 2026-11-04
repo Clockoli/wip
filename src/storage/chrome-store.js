@@ -1156,14 +1156,19 @@ export class ChromeStore {
   async exportSettings() {
     const values = await this.backend.getMany(['config', 'dataVersion', DESTINATION_REGISTRY, BILLING_SETTINGS, LOCAL_RECENT_DAYS, PROJECTS, OTHER_PROJECT_NAME, OTHER_PROJECT_CLIENT, REPORTING_UTC, SHOW_QUEUE_DIAGNOSTICS, SETTINGS_REVISION]);
     const revision = generationValue(values[SETTINGS_REVISION]);
+    const savedBilling = values[BILLING_SETTINGS] || {};
+    const billing = normalizeStoredBillingSettings(savedBilling);
+    const linked = preservedProjectClients(values);
+    const projects = linked[PROJECTS] || values[PROJECTS] || [];
+    const otherProjectClient = linked[OTHER_PROJECT_CLIENT] ?? values[OTHER_PROJECT_CLIENT];
     if (values.dataVersion === 5) {
       const registry = values[DESTINATION_REGISTRY] ?? emptyDestinationRegistry();
       const destinations = normalizedRegistryDestinations(registry.destinations);
       const config = { recentDays: values[LOCAL_RECENT_DAYS] ?? registry.destinations?.[registry.defaultDestinationId]?.recentDays ?? 7 };
       return {
         text: settingsExportText({
-          config, billing: normalizeStoredBillingSettings(values[BILLING_SETTINGS] || {}), projects: values[PROJECTS] || [],
-          otherProjectName: values[OTHER_PROJECT_NAME], otherProjectClient: values[OTHER_PROJECT_CLIENT],
+          config, billing, projects,
+          otherProjectName: values[OTHER_PROJECT_NAME], otherProjectClient,
           reportingUtc: values[REPORTING_UTC] === true, showQueueDiagnostics: values[SHOW_QUEUE_DIAGNOSTICS],
           destinations, defaultDestinationId: registry.defaultDestinationId,
         }),
@@ -1173,8 +1178,8 @@ export class ChromeStore {
     const config = values.config ? { ...values.config } : { recentDays: values[LOCAL_RECENT_DAYS] ?? 7 };
     return {
       text: settingsExportText({
-        config, billing: normalizeStoredBillingSettings(values[BILLING_SETTINGS] || {}), projects: values[PROJECTS] || [], otherProjectName: values[OTHER_PROJECT_NAME],
-        otherProjectClient: values[OTHER_PROJECT_CLIENT], reportingUtc: values[REPORTING_UTC] === true, showQueueDiagnostics: values[SHOW_QUEUE_DIAGNOSTICS],
+        config, billing, projects, otherProjectName: values[OTHER_PROJECT_NAME],
+        otherProjectClient, reportingUtc: values[REPORTING_UTC] === true, showQueueDiagnostics: values[SHOW_QUEUE_DIAGNOSTICS],
       }),
       revision,
     };
