@@ -18,7 +18,7 @@ test('Settings stays in a centered column regardless of the shared width prefere
   assert.match(widthCss, /html\[data-clockoli-width="full"\] main:not\(\.settings-main\)\s*\{\s*max-width:none;\s*\}/);
 });
 const preferences = {
-  rates: { octocat: [{ amountMinorPerHour: 12500, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] },
+  clientRates: { 'client-1': { octocat: [{ amountMinorPerHour: 12500, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] } },
   invoicing: {
     seller: { name: 'Seller', address: 'Street', email: 'seller@example.com', taxId: 'TAX-1' },
     clients: [{ id: 'client-1', name: 'Client', address: 'Road', email: 'client@example.com', taxId: 'TAX-2', defaultCurrency: 'EUR' }],
@@ -91,7 +91,7 @@ function harness({ reply = () => ({}), confirm = () => false, savedChoices = new
 
 function billingSaveResult(request, current = preferences) {
   return {
-    rates: request.payload.rates ?? current.rates,
+    clientRates: request.payload.clientRates ?? current.clientRates,
     invoicing: request.payload.invoicing ?? current.invoicing,
     projects: current.projects,
     otherProjectClient: current.otherProjectClient ?? '',
@@ -1730,6 +1730,7 @@ test('secondary settings collapse only on disconnect and remain reachable across
 for (const [form, requestType, originalLabel] of [
   ['display', 'UPDATE_DISPLAY_PREFERENCES', 'Save projects and routing'],
   ['billing', 'SAVE_BILLING_SETTINGS', 'Save billable rates'],
+  ['clients', 'SAVE_BILLING_SETTINGS', 'Save clients'],
   ['invoicing', 'SAVE_BILLING_SETTINGS', 'Save invoicing settings'],
 ]) {
   test(`${form} save confirms on its button for two seconds and keeps errors beside it`, async () => {
@@ -1872,7 +1873,8 @@ for (const form of ['billing', 'invoicing']) test(`${form} surfaces stale invoic
 
 test('invalid billable input reports inline without sending a mutation', async () => {
   const page = harness();
-  page.nodes.get('rates-list').querySelectorAll = () => [{ querySelector: () => ({ value: 'invalid' }) }];
+  page.context.renderLocalPreferences(preferences);
+  page.nodes.get('rates-list').querySelector('.rate-row').querySelector('.rate-value').value = 'invalid';
   await page.submit('billing-form');
   assert.match(page.nodes.get('billing-feedback')?.textContent || '', /rate|amount|currency/i);
   assert.equal(page.requests.length, 0);
@@ -1889,8 +1891,8 @@ test('rates and invoicing saves send only their owned section and use the atomic
   await page.submit('invoicing-form');
   const saves = page.requests.filter(request => request.type === 'SAVE_BILLING_SETTINGS');
   assert.equal(saves.length, 2);
-  assert.deepEqual(Object.keys(saves[0].payload), ['rates']);
-  assert.equal(saves[0].payload.rates.octocat[0].amountMinorPerHour, 12500);
+  assert.deepEqual(Object.keys(saves[0].payload), ['clientRates']);
+  assert.equal(saves[0].payload.clientRates['client-1'].octocat[0].amountMinorPerHour, 12500);
   assert.equal(saves[0].expectedRevision, preferences.revision);
   assert.deepEqual(Object.keys(saves[1].payload), ['invoicing']);
   assert.equal(saves[1].payload.invoicing.seller.name, 'Seller');
