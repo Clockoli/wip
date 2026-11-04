@@ -104,7 +104,7 @@ Your GitHub account signs you in, a source repository may own the issue you trac
 
 - Report across personal and organization time repositories, with breakdowns by day, week, month, person, source or task.
 - Export CSV or JSON timesheets, or print a report to PDF.
-- Set effective-dated hourly rates per person. Rates stay in your browser and are never written to the repository; mixed currencies are converted at each day's exchange rate.
+- Set effective-dated hourly rates per person **for each client**. Rates stay in your browser and are never written to the repository; mixed currencies are converted at each day's exchange rate.
 - Create numbered, taxed invoices from a filtered report and print them or save them as PDF. Invoices are generated in the browser and never committed.
 
 <p align="center">
