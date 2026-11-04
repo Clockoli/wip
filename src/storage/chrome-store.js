@@ -942,7 +942,7 @@ export class ChromeStore {
 
   async saveBillingSettings(value, projectLinks = null, expectedRevision = null) {
     if (!value || typeof value !== 'object' || Array.isArray(value)
-        || !Object.keys(value).length || Object.keys(value).some(key => !['rates', 'invoicing'].includes(key))) {
+        || !Object.keys(value).length || Object.keys(value).some(key => !['clientRates', 'invoicing'].includes(key))) {
       throw new Error('Billing settings are invalid');
     }
     if (expectedRevision !== null && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0)) throw new Error('Settings revision is invalid');
@@ -962,7 +962,13 @@ export class ChromeStore {
     }
     return this.backend.mutateMany([BILLING_SETTINGS, PROJECTS, OTHER_PROJECT_NAME, OTHER_PROJECT_CLIENT, SETTINGS_REVISION], values => {
       const previousBilling = normalizeBillingSettings(values[BILLING_SETTINGS] || {});
-      const billing = normalizeBillingSettings({ ...previousBilling, ...value });
+      const nextBilling = { ...previousBilling, ...value };
+      // Deleting a client also removes that client's private rate card.
+      if (value.invoicing) {
+        const remaining = new Set(normalizeInvoicingSettings(value.invoicing).clients.map(client => client.id));
+        nextBilling.clientRates = Object.fromEntries(Object.entries(nextBilling.clientRates || {}).filter(([id]) => remaining.has(id)));
+      }
+      const billing = normalizeBillingSettings(nextBilling);
       const stored = invoicingSettings(previousBilling).nextNumber;
       if (invoicingSettings(billing).nextNumber < stored) throw new Error(`Next invoice number cannot go below ${stored}; invoice ${stored - 1} has already been issued.`);
       const currentRevision = Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0;
