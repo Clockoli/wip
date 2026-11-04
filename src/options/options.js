@@ -2512,7 +2512,7 @@ for (const formId of ['clients-form', 'invoicing-form']) $(formId).addEventListe
       otherProjectClient: result.otherProjectClient, revision: result.revision, exportRecommended: true,
     };
     if (formId === 'clients-form') renderClientPreferences(localPreferences);
-    else renderInvoiceDefaults(localPreferences);
+    else { renderInvoiceDefaults(localPreferences); refreshProjectClients(); }
     confirmationButton = clientId ? [...$('clients-list').querySelectorAll('.client-row')].find(row => row.dataset.clientId === clientId)?.querySelector('.save-client') || clicked : clicked;
     refreshRateClients();
     formFeedback(feedbackId, ''); saveButtonFeedback(confirmationButton, 'saved', operation);
