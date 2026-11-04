@@ -577,7 +577,8 @@ test('v6 settings import routes only to configured destinations and never verifi
   invalidValue.defaultDestinationId = 'github:99';
   invalidValue.projects.push({ id: 'local', name: 'Local', substrings: ['github.com/local/'], destinationId: 'github:1' });
   invalidValue.billing.clientRates = { 'client-1': { alice: [{ amountMinorPerHour: 15000, currency: 'USD', currencyPosition: 'prefix', startDate: '', endDate: '' }] } };
-  invalidValue.billing.invoicing.clients = [{ id: 'client-1', name: 'Client One' }];
+  invalidValue.billing.invoicing = { clients: [{ id: 'client-1', name: 'Client One' }] };
+  delete invalidValue.billing.rates;
   const partial = await store.importSettings(JSON.stringify(invalidValue));
   assert.equal(partial.recentDays, 12);
   assert.deepEqual(partial.projects.map(project => project.name), ['Local']);
