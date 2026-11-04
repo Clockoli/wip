@@ -359,20 +359,20 @@ export function formatInvoiceNumber(numberFormat, sequence, issueDate) {
   return settings.numberFormat.replace(/\{(YYYY|MM|NNNN)\}/g, (_, token) => tokens[token]);
 }
 
-function normalizeRateCard(source = {}, currency = 'USD') {
+function normalizeRateCard(source = {}) {
   if (!plainObject(source)) throw new Error('Billable rates must be an object');
   const rates = {};
   for (const [login, rawPeriods] of Object.entries(source)) {
     if (!LOGIN_RE.test(login)) throw new Error(`Invalid GitHub login in billable rates: ${login}`);
     if (Object.keys(rates).some(key => key.toLowerCase() === login.toLowerCase())) throw new Error(`Duplicate GitHub login in billable rates: ${login}`);
-    rates[login] = normalizeRatePeriods(rawPeriods, login, currency);
+    rates[login] = normalizeRatePeriods(rawPeriods, login);
   }
   return Object.fromEntries(Object.entries(rates).sort(([a], [b]) => a.localeCompare(b)));
 }
 
 export function normalizeBillingSettings(value = {}) {
   if (!plainObject(value)) throw new Error('Billing settings must be an object');
-  const allowed = new Set(['currency', 'rates', 'clientRates', 'invoicing']);
+  const allowed = new Set(['clientRates', 'invoicing']);
   if (Object.keys(value).some(key => !allowed.has(key))) throw new Error('Billing settings have unexpected fields');
   const invoicing = normalizeInvoicingSettings(value.invoicing ?? {});
   const source = value.clientRates ?? {};
@@ -384,18 +384,6 @@ export function normalizeBillingSettings(value = {}) {
     clientRates[clientId] = normalizeRateCard(card);
   }
 
-  // Old rate cards had no client. Keep them on a clearly labelled, unlinked
-  // local placeholder; never silently apply them to any existing client.
-  if (Object.hasOwn(value, 'rates')) {
-    const oldCard = normalizeRateCard(value.rates, normalizeCurrency(value.currency ?? 'USD'));
-    if (Object.keys(oldCard).length) {
-      if (invoicing.clients.length >= 50) throw new Error('Importing legacy rates requires room for one more client');
-      let id = 'imported-rates', n = 2;
-      while (knownClients.has(id)) id = `imported-rates-${n++}`;
-      invoicing.clients.push({ id, name: 'Imported rates (review)', address: '', email: '', taxId: '', defaultCurrency: '' });
-      clientRates[id] = oldCard;
-    }
-  }
   return { clientRates, invoicing };
 }
 
@@ -603,33 +591,23 @@ function withLegacyImportReferences(imported, references) {
 export function parseSettingsImport(text) {
   let value;
   try { value = JSON.parse(String(text)); } catch { throw new Error('Settings file is not valid JSON'); }
-  if (!plainObject(value) || value.format !== 'clockoli-settings' || ![1, 2, 3, 4, 5, 6, 7, 8].includes(value.version)) throw new Error('Unsupported Clockoli settings file');
-  const routedExport = [6, 8].includes(value.version) && Object.hasOwn(value, 'destinations');
+  if (!plainObject(value) || value.format !== 'clockoli-settings' || value.version !== 8) throw new Error('Unsupported Clockoli settings file');
+  const routedExport = Object.hasOwn(value, 'destinations');
   const expectedKeys = routedExport
     ? ['billing', 'defaultDestinationId', 'destinations', 'display', 'exportedAt', 'format', 'projects', 'security', 'version']
-    : value.version >= 3
-      ? ['billing', 'display', 'exportedAt', 'format', 'projects', 'repository', 'security', 'version']
-      : ['billing', 'display', 'exportedAt', 'format', 'repository', 'security', 'version'];
+    : ['billing', 'display', 'exportedAt', 'format', 'projects', 'repository', 'security', 'version'];
   if (Object.keys(value).sort().join(',') !== expectedKeys.join(',')) throw new Error('Settings file has unexpected fields');
   const displayKeys = plainObject(value.display) ? Object.keys(value.display).sort().join(',') : '';
-  const displayKeySets = value.version >= 7
-    ? ['otherProjectClient,otherProjectName,recentDays,reportingUtc,showQueueDiagnostics', 'otherProjectClient,otherProjectName,recentDays,showQueueDiagnostics']
-    : value.version === 6
-      ? ['otherProjectClient,otherProjectName,recentDays,reportingUtc,showQueueDiagnostics', 'otherProjectClient,otherProjectName,recentDays,showQueueDiagnostics', 'otherProjectName,recentDays,showQueueDiagnostics']
-      : value.version >= 5 ? ['otherProjectName,recentDays,showQueueDiagnostics']
-        : value.version === 4 ? ['otherProjectName,recentDays'] : ['recentDays'];
-  if (!displayKeySets.includes(displayKeys)) throw new Error('Settings file is missing display settings or has unexpected display fields');
+  if (displayKeys !== 'otherProjectClient,otherProjectName,recentDays,reportingUtc,showQueueDiagnostics')
+    throw new Error('Settings file is missing display settings or has unexpected display fields');
   const billingKeys = plainObject(value.billing) ? Object.keys(value.billing).sort().join(',') : '';
-  const billingKeySets = value.version >= 8 ? ['clientRates,invoicing'] : value.version >= 7
-    ? ['invoicing,rates'] : value.version === 6 ? ['invoicing,rates', 'rates']
-      : value.version === 1 ? ['currency,rates'] : ['rates'];
-  if (!billingKeySets.includes(billingKeys)) throw new Error('Settings file has unexpected billing fields');
+  if (billingKeys !== 'clientRates,invoicing') throw new Error('Settings file has unexpected billing fields');
   if (!plainObject(value.security) || Object.keys(value.security).join(',') !== 'credentialsIncluded' || value.security.credentialsIncluded !== false) throw new Error('Settings files must not contain credentials');
   if (typeof value.exportedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value.exportedAt)
       || Number.isNaN(Date.parse(value.exportedAt))) throw new Error('Settings file has an invalid export timestamp');
   const recentDays = Number(value.display.recentDays);
   if (!Number.isInteger(recentDays) || recentDays < 1 || recentDays > 31) throw new Error('Recent entries must be between 1 and 31 days');
-  if (value.version >= 5 && typeof value.display.showQueueDiagnostics !== 'boolean') throw new Error('Queue diagnostics setting must be true or false');
+  if (typeof value.display.showQueueDiagnostics !== 'boolean') throw new Error('Queue diagnostics setting must be true or false');
 
   let repository = null, destinations, defaultDestinationId, projects, projectDefinitions;
   if (routedExport) {
@@ -642,27 +620,24 @@ export function parseSettingsImport(text) {
     const hasStableReference = Number.isSafeInteger(repository?.repoId) && repository.repoId > 0;
     destinations = hasStableReference ? { [destinationIdForRepoId(repository.repoId)]: repository } : {};
     defaultDestinationId = hasStableReference ? destinationIdForRepoId(repository.repoId) : null;
-    projects = value.version >= 3 ? normalizeProjects(value.projects) : [];
+    projects = normalizeProjects(value.projects);
     projectDefinitions = defaultDestinationId
       ? normalizeProjectDefinitions(routeLegacyProjects(projects, defaultDestinationId), destinations)
       : projects;
   }
-  const resolvedOtherProjectName = value.version >= 4 ? normalizeOtherProjectName(value.display.otherProjectName) : OTHER_PROJECT;
-  const importedSourceProjects = routedExport ? value.projects : (value.version >= 3 ? value.projects : []);
-  const hasClientFields = Object.hasOwn(value.display, 'otherProjectClient') || importedSourceProjects.some(project => Object.hasOwn(project, 'client'))
-    || (value.billing.invoicing?.clients ?? []).some(client => Array.isArray(client?.projects));
-  const hasReportingUtc = value.version >= 7 || Object.hasOwn(value.display, 'reportingUtc');
+  const resolvedOtherProjectName = normalizeOtherProjectName(value.display.otherProjectName);
+  const importedSourceProjects = value.projects;
   const { projects: importedProjects, otherProjectClient } = projectClientPreferences({
     projects: importedSourceProjects, billing: value.billing, otherProjectName: resolvedOtherProjectName,
     otherProjectClient: Object.hasOwn(value.display, 'otherProjectClient') ? normalizeOtherProjectClient(value.display.otherProjectClient) : undefined,
   });
-  const normalizedImportedProjects = hasClientFields ? importedProjects : importedProjects.map(({ client: _client, ...project }) => project);
+  const normalizedImportedProjects = importedProjects;
   if (normalizedImportedProjects.some(project => project.name.toLowerCase() === resolvedOtherProjectName.toLowerCase())) throw new Error('Main project name must differ from named projects');
   const imported = {
     recentDays, projects: normalizedImportedProjects, otherProjectName: resolvedOtherProjectName,
-    ...(hasClientFields ? { otherProjectClient } : {}),
-    ...(hasReportingUtc ? { reportingUtc: normalizeReportingUtc(value.display.reportingUtc) } : {}),
-    showQueueDiagnostics: value.version >= 5 && value.display.showQueueDiagnostics === true,
+    otherProjectClient,
+    reportingUtc: normalizeReportingUtc(value.display.reportingUtc),
+    showQueueDiagnostics: value.display.showQueueDiagnostics,
     billing: normalizeBillingSettings(value.billing),
   };
   if (routedExport) return {

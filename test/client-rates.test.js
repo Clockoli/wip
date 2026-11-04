@@ -57,16 +57,22 @@ test('reports support project ownership and a manager selecting a single client 
   assert.match(csv, /150\.00,150\.00,USD/);
 });
 
-test('legacy global rates are quarantined under an unassigned local client and v8 backups never contain global rates', () => {
-  const old = { invoicing: { clients: [{ id: 'acme', name: 'Acme' }] }, rates: { alice: 10000 } };
-  const migrated = normalizeBillingSettings(old);
-  assert.equal(migrated.invoicing.clients[0].id, 'acme');
-  assert.equal(migrated.invoicing.clients[1].name, 'Imported rates (review)');
-  assert.equal(rateForClient('acme', migrated, 'alice', '2026-08-14'), null);
-  assert.equal(rateForClient(migrated.invoicing.clients[1].id, migrated, 'alice', '2026-08-14').amountMinorPerHour, 10000);
-  const encoded = settingsExportText({ billing: old, exportedAt: '2026-08-14T12:00:00.000Z' });
-  assert.equal(JSON.parse(encoded).version, 8);
-  assert.equal(Object.hasOwn(JSON.parse(encoded).billing, 'rates'), false);
-  assert.deepEqual(parseSettingsImport(encoded).billing, migrated);
-  assert.throws(() => normalizeBillingSettings({ invoicing: { clients: [{ id: 'acme' }] }, clientRates: { orphan: { alice: 10000 } } }), /missing client/i);
+test('only user-created clients can own rates; global rate cards are invalid', () => {
+  assert.deepEqual(normalizeBillingSettings().invoicing.clients, []);
+  const provided = { invoicing: { clients: [{ id: 'acme', name: 'Acme' }] }, clientRates: { acme: { alice: 10000 } } };
+  const normalized = normalizeBillingSettings(provided);
+  assert.deepEqual(normalized.invoicing.clients.map(client => client.id), ['acme']);
+  assert.equal(rateForClient('acme', normalized, 'alice', '2026-08-14').amountMinorPerHour, 10000);
+  for (const old of [{ rates: { alice: 10000 } }, { rates: {} }, { currency: 'USD' }, { ...provided, rates: {} }]) {
+    assert.throws(() => normalizeBillingSettings(old), /unexpected fields/i);
+  }
+  assert.throws(() => normalizeBillingSettings({
+    invoicing: { clients: [{ id: 'acme' }] }, clientRates: { orphan: { alice: 10000 } },
+  }), /missing client/i);
+  const encoded = settingsExportText({ billing: provided, exportedAt: '2026-08-14T12:00:00.000Z' });
+  assert.deepEqual(parseSettingsImport(encoded).billing, normalized);
+  assert.equal(JSON.parse(encoded).billing.invoicing.clients.length, 1);
+  const invalidBackup = JSON.parse(encoded);
+  invalidBackup.billing.rates = { alice: 10000 };
+  assert.throws(() => parseSettingsImport(JSON.stringify(invalidBackup)), /billing fields/i);
 });

@@ -28,16 +28,14 @@ test('effective-dated rates select the inclusive period by record date', () => {
   assert.equal(billableMinorForRecord({ user: 'alice', startedAt: '2026-07-15T10:00:00+00:00', durationSeconds: 1800 }, effectiveRates), 6250);
 });
 
-test('billing normalization upgrades legacy rates and rejects overlapping periods', () => {
-  const migrated = normalizeBillingSettings({ currency: 'usd', rates: { alice: 10000 } });
-  assert.deepEqual(migrated.clientRates['imported-rates'], { alice: [{ amountMinorPerHour: 10000, currency: 'USD', currencyPosition: 'suffix', startDate: '', endDate: '' }] });
-  assert.equal(migrated.invoicing.clients[0].name, 'Imported rates (review)');
-  assert.deepEqual(normalizeBillingSettings({ rates: effectiveRates }).clientRates['imported-rates'], effectiveRates);
-  assert.throws(() => normalizeBillingSettings({ rates: { alice: [
-    { amountMinorPerHour: 10000, currency: 'USD', currencyPosition: 'suffix', startDate: '2026-01-01', endDate: '2026-07-01' },
-    { amountMinorPerHour: 12000, currency: 'USD', currencyPosition: 'suffix', startDate: '2026-07-01', endDate: '' },
-  ] } }), /overlap/i);
-  assert.throws(() => normalizeBillingSettings({ rates: { alice: [
-    { amountMinorPerHour: 10000, currency: 'USD', currencyPosition: 'suffix', startDate: '2026-08-01', endDate: '2026-07-01' },
-  ] } }), /end date/i);
+test('client rate periods reject overlaps and reversed dates', () => {
+  const normalize = card => normalizeBillingSettings({ invoicing: { clients: [{ id: 'acme' }] }, clientRates: { acme: card } });
+  assert.deepEqual(normalize(effectiveRates).clientRates.acme, effectiveRates);
+  assert.throws(() => normalize({ alice: [
+    { amountMinorPerHour: 10000, currency: 'USD', startDate: '2026-01-01', endDate: '2026-07-01' },
+    { amountMinorPerHour: 12000, currency: 'USD', startDate: '2026-07-01', endDate: '' },
+  ] }), /overlap/i);
+  assert.throws(() => normalize({ alice: [
+    { amountMinorPerHour: 10000, currency: 'USD', startDate: '2026-08-01', endDate: '2026-07-01' },
+  ] }), /end date/i);
 });

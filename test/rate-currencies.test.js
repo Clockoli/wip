@@ -18,41 +18,41 @@ test('separate amount and currency fields report the field that is invalid', () 
   assert.throws(() => parseRateFields('15.50', ''), /currency/i);
 });
 
-test('currency belongs to each effective-dated rate and legacy global currency migrates safely', () => {
-  const migrated = normalizeBillingSettings({ currency: 'usd', rates: { alice: 10000 } });
-  assert.deepEqual(migrated.clientRates['imported-rates'], { alice: [{ amountMinorPerHour: 10000, currency: 'USD', currencyPosition: 'suffix', startDate: '', endDate: '' }] });
-  assert.equal(migrated.invoicing.clients[0].name, 'Imported rates (review)');
-  const billing = normalizeBillingSettings({ rates: {
-    alice: [
+test('currency and effective dates belong to each client rate card', () => {
+  const billing = normalizeBillingSettings({
+    invoicing: { clients: [{ id: 'acme', name: 'Acme' }] },
+    clientRates: { acme: { alice: [
       { ...parseRateFields('20.15', '$'), startDate: '2026-01-01', endDate: '2026-06-30' },
       { ...parseRateFields('30', 'EUR'), startDate: '2026-07-01', endDate: '' },
-    ],
-  } });
-  assert.equal(rateForUser('ALICE', billing.clientRates['imported-rates'], '2026-06-30').currency, '$');
-  assert.equal(rateForUser('alice', billing.clientRates['imported-rates'], '2026-07-01').currency, 'EUR');
-  assert.equal(rateForUser('alice', billing.clientRates['imported-rates'], '2099-12-31').currency, 'EUR');
-  assert.equal(Object.hasOwn(billing, 'currency'), false);
+    ] } },
+  });
+  assert.equal(rateForUser('ALICE', billing.clientRates.acme, '2026-06-30').currency, '$');
+  assert.equal(rateForUser('alice', billing.clientRates.acme, '2026-07-01').currency, 'EUR');
+  assert.equal(rateForUser('alice', billing.clientRates.acme, '2099-12-31').currency, 'EUR');
+  assert.equal(Object.hasOwn(billing, 'rates'), false);
 });
 
-test('a later rate implicitly supersedes an open-ended period', () => {
-  const billing = normalizeBillingSettings({ rates: { alice: [
+test('a later client rate implicitly supersedes an open-ended period', () => {
+  const base = { invoicing: { clients: [{ id: 'acme' }] } };
+  const normalized = card => normalizeBillingSettings({ ...base, clientRates: { acme: card } });
+  const billing = normalized({ alice: [
     { ...parseRateFields('20', 'USD'), startDate: '2026-01-01', endDate: '' },
     { ...parseRateFields('30', 'EUR'), startDate: '2026-09-01', endDate: '' },
-  ] } });
-  assert.deepEqual(billing.clientRates['imported-rates'].alice.map(rate => [rate.startDate, rate.endDate, rate.currency]), [
+  ] });
+  assert.deepEqual(billing.clientRates.acme.alice.map(rate => [rate.startDate, rate.endDate, rate.currency]), [
     ['2026-01-01', '2026-08-31', 'USD'],
     ['2026-09-01', '', 'EUR'],
   ]);
-  assert.equal(rateForUser('alice', billing.clientRates['imported-rates'], '2026-08-31').currency, 'USD');
-  assert.equal(rateForUser('alice', billing.clientRates['imported-rates'], '2026-09-01').currency, 'EUR');
-  assert.throws(() => normalizeBillingSettings({ rates: { alice: [
+  assert.equal(rateForUser('alice', billing.clientRates.acme, '2026-08-31').currency, 'USD');
+  assert.equal(rateForUser('alice', billing.clientRates.acme, '2026-09-01').currency, 'EUR');
+  assert.throws(() => normalized({ alice: [
     { ...parseRateFields('20', 'USD'), startDate: '2026-01-01', endDate: '2026-09-15' },
     { ...parseRateFields('30', 'EUR'), startDate: '2026-09-01', endDate: '' },
-  ] } }), /overlap/i);
-  assert.throws(() => normalizeBillingSettings({ rates: { alice: [
+  ] }), /overlap/i);
+  assert.throws(() => normalized({ alice: [
     { ...parseRateFields('20', 'USD'), startDate: '2026-09-01', endDate: '' },
     { ...parseRateFields('30', 'EUR'), startDate: '2026-09-01', endDate: '' },
-  ] } }), /overlap/i);
+  ] }), /overlap/i);
 });
 
 test('mixed-currency totals remain separate and billable analytics selects one currency', () => {
@@ -80,7 +80,7 @@ test('mixed-currency totals remain separate and billable analytics selects one c
   }), /load RUB to USD exchange rates/i);
 });
 
-test('timesheet exports each record rate currency and settings v7 has local invoicing with no global currency', () => {
+test('timesheet exports local client rates and backup contains only client-owned rates', () => {
   const rates = {
     alice: [{ ...parseRateFields('20.15', '$'), startDate: '', endDate: '' }],
     bob: [{ ...parseRateFields('750', 'RUB'), startDate: '', endDate: '' }],
@@ -94,10 +94,10 @@ test('timesheet exports each record rate currency and settings v7 has local invo
   assert.match(csv, /20\.15,20\.15,\$/);
   assert.match(csv, /750\.00,1500\.00,RUB/);
 
-  const text = settingsExportText({ billing: { rates }, config: { recentDays: 7 }, exportedAt: '2026-08-23T12:00:00.000Z' });
+  const text = settingsExportText({ billing: { clientRates: { c: rates }, invoicing: { clients: [{ id: 'c' }] } }, config: { recentDays: 7 }, exportedAt: '2026-08-23T12:00:00.000Z' });
   const saved = JSON.parse(text);
   assert.equal(saved.version, 8);
   assert.deepEqual(Object.keys(saved.billing).sort(), ['clientRates', 'invoicing']);
-  assert.deepEqual(parseSettingsImport(text).billing, normalizeBillingSettings({ rates }));
+  assert.deepEqual(parseSettingsImport(text).billing, normalizeBillingSettings({ clientRates: { c: rates }, invoicing: { clients: [{ id: 'c' }] } }));
   assert.equal(Object.hasOwn(saved.billing, 'rates'), false);
 });
