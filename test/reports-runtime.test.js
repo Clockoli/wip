@@ -24,7 +24,7 @@ const invoiceSettings = {
 };
 const result = (records = [record('alice'), record('bob', 'other.com')], rates = {}, invoicingSettings = invoiceSettings) => ({
   configured: true, currentUser: 'alice', records,
-  billing: { rates, invoicing: invoicingSettings, otherProjectName: 'General', projects: [{ name: 'Main', substrings: ['https://example.com/'], client: 'client-1' }, { name: 'Other', substrings: ['https://other.com/'], client: 'client-1' }] },
+  billing: { clientRates: { 'client-1': rates }, invoicing: invoicingSettings, otherProjectName: 'General', projects: [{ name: 'Main', substrings: ['https://example.com/'], client: 'client-1' }, { name: 'Other', substrings: ['https://other.com/'], client: 'client-1' }] },
 });
 
 function harness(preferences = {}, { delayInitialPreferences = false } = {}) {
@@ -504,7 +504,7 @@ test('invoice entry point explains empty and unrated filtered sets', async () =>
   assert.equal(empty.nodes.get('create-invoice').attributes['data-clockoli-tooltip'], 'No entries in this period to invoice');
   const unrated = await loaded(result([record('alice')]));
   assert.equal(unrated.nodes.get('create-invoice').attributes['aria-disabled'], 'true');
-  assert.equal(unrated.nodes.get('create-invoice').attributes['data-clockoli-tooltip'], 'No hourly rate covers these entries. Add rates in Settings.');
+  assert.equal(unrated.nodes.get('create-invoice').attributes['data-clockoli-tooltip'], 'No client rate covers these entries. Add rates in Settings.');
 });
 
 test('invoice dialog renders the filtered records and reserves one number across repeated prints', async () => {
@@ -705,7 +705,7 @@ test('invoice composition projects billing inputs without serializing record met
     assert.notEqual(page.context.invoiceCompositionKey([{ ...entry, ...patch }]), original);
   }
   assert.notEqual(page.context.invoiceCompositionKey([{ ...entry, id: null }]), page.context.invoiceCompositionKey([{ ...entry, id: null, taskUrl: 'https://other.com/task' }]));
-  for (const update of ["state.range.endDate = '2026-08-24'", "state.people.clear()", 'state.billing.rates.alice = 13000', "state.billing.invoicing.notes = 'Changed'"]) {
+  for (const update of ["state.range.endDate = '2026-08-24'", "state.people.clear()", 'state.billing.clientRates['client-1'].alice = 13000', "state.billing.invoicing.notes = 'Changed'"]) {
     const before = page.context.invoiceCompositionKey([entry]); vm.runInContext(update, page.context);
     assert.notEqual(page.context.invoiceCompositionKey([entry]), before);
   }
