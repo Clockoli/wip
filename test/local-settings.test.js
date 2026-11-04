@@ -162,7 +162,7 @@ test('legacy client project keys are ignored even when malformed or overlapping'
 });
 
 test('v6 imports project and catch-all links without overriding explicit project clients', () => {
-  const value = JSON.parse(settingsExportText()); value.version = 6; delete value.display.otherProjectClient; delete value.display.reportingUtc;
+  const value = JSON.parse(settingsExportText()); value.version = 6; value.billing = { rates: {}, invoicing: value.billing.invoicing }; delete value.display.otherProjectClient; delete value.display.reportingUtc;
   value.projects = [{ name: 'Web', substrings: ['web/'] }]; value.display.otherProjectName = 'Work';
   value.billing.invoicing.clients = [{ id: 'acme', projects: [' WEB ', 'work'] }];
   const imported = parseSettingsImport(JSON.stringify(value));
