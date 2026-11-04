@@ -32,7 +32,7 @@ A partial report can still produce an invoice preview when rated entries are ava
 
 ## Additional lines
 
-Add up to 20 additional lines for charges or discounts in the invoice currency. These amounts are included in the subtotal and taxed, without exchange-rate conversion. In an additional line's Description, **Shift+Enter** inserts a newline and **Enter** applies the text to the live invoice preview, showing **✓ Applied**; this is a preview change, not a saved invoice. Actual invoice output is created with **Print** or **Save as PDF**.
+Add up to 20 additional lines for charges or discounts in the invoice currency. An unfinished line is kept as a draft: the invoice preview continues to show completed lines, and printing or saving remains unavailable until all additional lines are completed or removed. These amounts are included in the subtotal and taxed, without exchange-rate conversion. In an additional line's Description, **Shift+Enter** inserts a newline and **Enter** applies the text to the live invoice preview, showing **✓ Applied**; this is a preview change, not a saved invoice. Actual invoice output is created with **Print** or **Save as PDF**.
 
 ## Invoice numbers
 

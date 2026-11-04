@@ -812,7 +812,18 @@ test('additional line controls rebuild totals, reject invalid amounts, remove ro
   const rows = page.nodes.get('invoice-extra-lines');
   const [descriptionLabel, amountLabel, remove] = rows.children[0].children, description = descriptionLabel.children[0], amount = amountLabel.children[0];
   assert.equal(page.nodes.get('invoice-print').disabled, true);
-  description.value = ' Materials '; await description.listeners.change(); amount.value = '25.50'; await amount.listeners.change(); await page.settle();
+  assert.equal(page.nodes.get('invoice-save-pdf').disabled, true);
+  assert.equal(page.nodes.get('invoice-feedback').textContent, '', 'Adding an empty line must not report an hourly-rate error');
+  assert.equal(page.nodes.get('invoice-extra-hint').hidden, false);
+  assert.match(page.textOf(page.nodes.get('invoice-preview')), /Subtotal120.00 EUR/, 'A draft must not remove the valid preview');
+  description.value = ' Materials '; await description.listeners.change(); await page.settle();
+  assert.equal(page.nodes.get('invoice-feedback').textContent, '', 'An unfinished row is not a validation error');
+  assert.equal(page.nodes.get('invoice-extra-hint').hidden, false);
+  assert.equal(page.nodes.get('invoice-print').disabled, true);
+  amount.value = '25.50'; await amount.listeners.change(); await page.settle();
+  assert.equal(page.nodes.get('invoice-extra-hint').hidden, true);
+  assert.equal(page.nodes.get('invoice-print').disabled, false);
+  assert.equal(page.nodes.get('invoice-save-pdf').disabled, false);
   const document = page.nodes.get('invoice-preview').children[0], table = document.children.find(node => node.tagName === 'table');
   assert.equal(page.textOf(table.children[1].children[1]), 'Materials25.50 EUR');
   const extraRow = table.children[1].children[1];
@@ -823,10 +834,14 @@ test('additional line controls rebuild totals, reject invalid amounts, remove ro
   amount.value = '-5.25'; await amount.listeners.change(); await page.settle();
   assert.match(page.textOf(page.nodes.get('invoice-preview')), /Subtotal114.75 EURVAT 20%22.95 EURTotal137.70 EUR/);
   amount.value = '1.001'; await amount.listeners.change(); await page.settle();
+  assert.match(page.nodes.get('invoice-feedback').textContent, /additional line amount/i);
+  assert.doesNotMatch(page.nodes.get('invoice-feedback').textContent, /hourly rate/i);
   assert.equal(page.nodes.get('invoice-print').disabled, true);
   assert.equal(page.textOf(page.nodes.get('invoice-preview')), 'Choose a client and currency to preview the invoice.');
   await remove.listeners.click(); await page.settle();
   assert.equal(rows.children.length, 0); assert.equal(page.nodes.get('invoice-print').disabled, false);
+  assert.equal(page.nodes.get('invoice-extra-hint').hidden, true);
+  assert.equal(page.nodes.get('invoice-feedback').textContent, '');
   for (let index = 0; index < 21; index++) await page.fire('invoice-add-line');
   assert.equal(rows.children.length, 20); assert.equal(page.nodes.get('invoice-add-line').disabled, true);
 });
@@ -862,8 +877,9 @@ test('invoice extra description uses Enter to apply multiline text while Shift+E
   description.listeners.input();
   description.listeners.keydown({ key: 'Enter', shiftKey: false, preventDefault() {} });
   await page.settle();
-  assert.equal(applied.hidden, true, 'a rejected invoice description must not show Applied');
-  assert.match(page.nodes.get('invoice-feedback').textContent, /extra line description/i);
+  assert.equal(applied.hidden, true, 'an unfinished invoice description must not show Applied');
+  assert.equal(page.nodes.get('invoice-feedback').textContent, '', 'An unfinished line should not display a technical error');
+  assert.equal(page.nodes.get('invoice-extra-hint').hidden, false);
   assert.equal(page.nodes.get('invoice-print').disabled, true);
 
   description.value = 'Recovered work';
@@ -871,6 +887,7 @@ test('invoice extra description uses Enter to apply multiline text while Shift+E
   description.listeners.keydown({ key: 'Enter', shiftKey: false, preventDefault() {} });
   await page.settle();
   assert.equal(applied.hidden, false, 'Applied appears only after preview recovery');
+  assert.equal(page.nodes.get('invoice-extra-hint').hidden, true);
   assert.equal(page.nodes.get('invoice-print').disabled, false);
 });
 

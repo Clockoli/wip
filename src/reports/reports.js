@@ -311,8 +311,20 @@ function setInvoiceAvailable(filtered) {
   if (reason) control.setAttribute('data-clockoli-tooltip', reason); else control.removeAttribute('data-clockoli-tooltip');
 }
 
+function incompleteInvoiceExtraLine(line) {
+  return !line.description.trim() || !line.amount.trim();
+}
+
+function hasIncompleteInvoiceExtraLines() {
+  return state.invoiceExtraLines.some(incompleteInvoiceExtraLine);
+}
+
+function updateInvoiceExtraHint() {
+  $('invoice-extra-hint').hidden = !hasIncompleteInvoiceExtraLines();
+}
+
 function setInvoiceActionsAvailable(available) {
-  for (const id of ['invoice-print', 'invoice-save-pdf']) $(id).disabled = !available || state.loading || Boolean(state.pendingCount);
+  for (const id of ['invoice-print', 'invoice-save-pdf']) $(id).disabled = !available || hasIncompleteInvoiceExtraLines() || state.loading || Boolean(state.pendingCount);
 }
 
 function renderPendingStatus(pendingWrites, pendingCount = 0) {
@@ -417,9 +429,15 @@ function populateInvoiceCurrencies(filtered, preferClient = false) {
 }
 
 function invoiceBuildOptions(sequence, exchangeRates) {
-  const extraLines = state.invoiceExtraLines.map(({ description, amount }) => {
+  // An unfinished additional line is a draft, not an invalid hourly rate.
+  // Keep the valid invoice preview visible, but disable print/save until the
+  // user completes or removes every draft.
+  const extraLines = state.invoiceExtraLines.filter(line => !incompleteInvoiceExtraLine(line)).map(({ description, amount }) => {
     const text = amount.trim(), negative = text.startsWith('-');
-    return { description, amountMinor: rateMajorToMinor(negative ? text.slice(1) : text) * (negative ? -1 : 1) };
+    let amountMinor;
+    try { amountMinor = rateMajorToMinor(negative ? text.slice(1) : text); }
+    catch { throw new Error('Enter a valid additional line amount (up to two decimal places).'); }
+    return { description, amountMinor: amountMinor * (negative ? -1 : 1) };
   });
   return {
     clientRates: state.billing.clientRates, invoicing: state.billing.invoicing, clientId: $('invoice-client').value,
@@ -457,7 +475,7 @@ function renderInvoiceExtraLines() {
       resetInvoiceReservation();
       applied.hidden = true;
       const success = await rebuildInvoicePreview();
-      if (success && line.description === value && description.value.replace(/\r\n?/g, '\n') === value) applied.hidden = false;
+      if (success && !incompleteInvoiceExtraLine(line) && line.description === value && description.value.replace(/\r\n?/g, '\n') === value) applied.hidden = false;
     };
     description.addEventListener('input', () => { resizeDescription(); applied.hidden = true; });
     description.addEventListener('change', applyDescription);
@@ -477,6 +495,7 @@ function renderInvoiceExtraLines() {
     resizeDescription();
   }
   $('invoice-add-line').disabled = state.invoiceExtraLines.length >= 20;
+  updateInvoiceExtraHint();
 }
 
 function prospectiveInvoiceSequence() { return state.invoiceReservedSequence ?? state.billing.invoicing.nextNumber; }
@@ -498,6 +517,7 @@ async function rebuildInvoicePreview() {
   if (!state.range || state.loading || state.pendingCount) return false;
   $('invoice-billing-period').textContent = `Billing ${state.range.startDate} to ${state.range.endDate}`;
   const requestId = ++state.invoiceRequestId, filtered = invoiceFilteredRecords();
+  updateInvoiceExtraHint();
   $('invoice-feedback').textContent = ''; setInvoiceActionsAvailable(false); state.invoice = null; showInvoiceEmpty();
   try {
     let exchangeRates = null;
@@ -526,6 +546,7 @@ function prepareInvoiceControls(filtered) {
 }
 
 async function ensureReservedInvoice() {
+  if (hasIncompleteInvoiceExtraLines()) throw new Error('Complete or remove unfinished additional lines before printing or saving.');
   if (!state.invoice || state.loading || state.pendingCount) throw new Error('Invoice preview is not ready.');
   if (state.invoiceReservedSequence === null) {
     const requestId = state.invoiceRequestId, compositionKey = state.invoiceCompositionKey;

@@ -126,6 +126,8 @@ test('reports exposes local invoice preview, export, numbering and print contrac
   const additional = html.slice(html.indexOf('class="invoice-additional-control"'), html.indexOf('id="invoice-feedback"'));
   assert.ok(additional.indexOf('Additional lines') < additional.indexOf('id="invoice-extra-lines"'));
   assert.ok(additional.indexOf('id="invoice-extra-lines"') < additional.indexOf('id="invoice-add-line"'));
+  assert.match(html, /id="invoice-extra-hint"[^>]*role="status" hidden/);
+  assert.match(js, /hasIncompleteInvoiceExtraLines/);
   assert.match(html, /<section class="invoice-preview-region"[^>]*aria-labelledby="invoice-preview-title"[\s\S]*<h3 id="invoice-preview-title">Preview<\/h3>[\s\S]*id="invoice-preview"[\s\S]*Choose a client and currency to preview the invoice\./);
   assert.match(styles, /\.invoice-preview\{[^}]*padding:[^}]*border:1px solid var\(--borderColor-default\)/);
   assert.match(styles, /\.invoice-seller h2\{display:flex;flex-wrap:wrap;/);
