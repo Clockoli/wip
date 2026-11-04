@@ -1420,7 +1420,8 @@ function addRateRow(login = '', period = null, clientId = $('rates-client').valu
 }
 
 function nextClientId() {
-  const used = new Set([...$('clients-list').querySelectorAll('.client-row')].map(row => row.dataset.clientId));
+  const used = new Set([...(localPreferences?.invoicing?.clients || []).map(client => client.id),
+    ...[...$('clients-list').querySelectorAll('.client-row')].map(row => row.dataset.clientId)]);
   // Missing links must not silently attach to a newly created client.
   for (const select of [$('other-project-client'), ...$('projects-list').querySelectorAll('.project-client')]) used.add(select.value);
   let index = 1;
