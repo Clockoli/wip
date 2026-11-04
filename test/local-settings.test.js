@@ -29,9 +29,9 @@ test('projects normalize ordered names and URL substrings with a safe Other fall
 });
 
 test('billable settings normalize stable GitHub logins and integer minor-unit rates', () => {
-  assert.deepEqual(normalizeBillingSettings({ currency: 'usd', rates: { bob: 1250, Alice: 10000 } }), {
-    rates: { Alice: [{ amountMinorPerHour: 10000, currency: 'USD', currencyPosition: 'suffix', startDate: '', endDate: '' }], bob: [{ amountMinorPerHour: 1250, currency: 'USD', currencyPosition: 'suffix', startDate: '', endDate: '' }] },
-  });
+  const migrated = normalizeBillingSettings({ currency: 'usd', rates: { bob: 1250, Alice: 10000 } });
+  assert.deepEqual(migrated.clientRates['imported-rates'], { Alice: [{ amountMinorPerHour: 10000, currency: 'USD', currencyPosition: 'suffix', startDate: '', endDate: '' }], bob: [{ amountMinorPerHour: 1250, currency: 'USD', currencyPosition: 'suffix', startDate: '', endDate: '' }] });
+  assert.equal(migrated.invoicing.clients[0].name, 'Imported rates (review)');
   assert.equal(rateMajorToMinor('125.50'), 12550);
   assert.equal(rateMinorToMajor(12550), '125.50');
   assert.throws(() => rateMajorToMinor('1.234'), /decimal places/);
@@ -64,27 +64,24 @@ test('plain-text settings export excludes credentials and imports display plus b
   assert.equal(JSON.parse(settingsExportText({ config: { recentDays: 7 } })).repository, null);
   assert.deepEqual(value.security, { credentialsIncluded: false });
   assert.doesNotMatch(text, /accessToken|refreshToken|personal access token/i);
-  assert.equal(value.version, 7);
+  assert.equal(value.version, 8);
   assert.equal(value.display.otherProjectName, 'General');
   assert.equal(value.display.showQueueDiagnostics, true);
   assert.deepEqual(value.projects, [{ name: 'work', substrings: ['github.com/acme/'], client: '' }]);
-  assert.deepEqual(parseSettingsImport(text), { recentDays: 9, projects: [{ name: 'work', substrings: ['github.com/acme/'], client: '' }], otherProjectName: 'General', otherProjectClient: '', reportingUtc: false, showQueueDiagnostics: true, billing: { invoicing: invoicingSettings(), rates: { alice: [{ amountMinorPerHour: 12345, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] } } });
+  assert.deepEqual(parseSettingsImport(text).billing, normalizeBillingSettings({ currency: 'EUR', rates: { alice: 12345 } }));
   const legacy = JSON.parse(text);
   legacy.version = 1;
   delete legacy.projects; delete legacy.display.otherProjectClient; delete legacy.display.reportingUtc;
   delete legacy.display.otherProjectName;
   delete legacy.display.showQueueDiagnostics;
   legacy.billing = { currency: 'gel', rates: { alice: [{ amountMinorPerHour: 88800, startDate: '', endDate: '' }] } };
-  assert.deepEqual(parseSettingsImport(JSON.stringify(legacy)).billing, {
-    invoicing: invoicingSettings(),
-    rates: { alice: [{ amountMinorPerHour: 88800, currency: 'GEL', currencyPosition: 'suffix', startDate: '', endDate: '' }] },
-  });
+  assert.deepEqual(parseSettingsImport(JSON.stringify(legacy)).billing, normalizeBillingSettings(legacy.billing));
   assert.deepEqual(parseSettingsImport(JSON.stringify(legacy)).projects, []);
   const version2 = JSON.parse(text); version2.version = 2; delete version2.display.otherProjectClient; delete version2.display.reportingUtc; delete version2.projects; delete version2.display.otherProjectName; delete version2.display.showQueueDiagnostics;
-  delete version2.billing.invoicing;
+  version2.billing = { rates: {} };
   assert.deepEqual(parseSettingsImport(JSON.stringify(version2)).projects, []);
   const version4 = JSON.parse(text); version4.version = 4; delete version4.display.otherProjectClient; delete version4.display.reportingUtc; delete version4.display.showQueueDiagnostics;
-  delete version4.billing.invoicing;
+  version4.billing = { rates: {} };
   assert.equal(parseSettingsImport(JSON.stringify(version4)).showQueueDiagnostics, false);
   assert.throws(() => parseSettingsImport(JSON.stringify({ ...value, display: { ...value.display, showQueueDiagnostics: 'yes' } })), /true or false/);
   assert.ok(new TextEncoder().encode(text).byteLength <= 262_144);
@@ -111,8 +108,8 @@ test('routed v6 settings export round-trips invoicing and still accepts pre-invo
     exportedAt: '2026-09-14T12:00:00.000Z',
   });
   const exported = JSON.parse(text);
-  assert.equal(exported.version, 6);
-  assert.deepEqual(Object.keys(exported.billing).sort(), ['invoicing', 'rates']);
+  assert.equal(exported.version, 8);
+  assert.deepEqual(Object.keys(exported.billing).sort(), ['clientRates', 'invoicing']);
   assert.equal(exported.display.otherProjectClient, 'client-1');
   assert.equal(exported.display.reportingUtc, true);
   const imported = parseSettingsImport(text);
@@ -122,15 +119,16 @@ test('routed v6 settings export round-trips invoicing and still accepts pre-invo
   assert.equal(imported.reportingUtc, true);
   assert.equal(imported.repositoryReferencesVerified, false);
 
-  delete exported.billing.invoicing;
-  assert.deepEqual(Object.keys(parseSettingsImport(JSON.stringify(exported)).billing), ['rates']);
+  exported.version = 6;
+  exported.billing = { rates: {} };
+  assert.deepEqual(parseSettingsImport(JSON.stringify(exported)).billing.clientRates, {});
 });
 
 test('invoicing settings populate defaults and normalize browser-local seller and clients', () => {
   const defaults = { seller: { name: '', address: '', email: '', taxId: '' }, clients: [], nextNumber: 1, numberFormat: 'INV-{YYYY}-{NNNN}', paymentTermsDays: 30, taxPercent: 0, notes: '' };
   assert.deepEqual(normalizeInvoicingSettings(), defaults);
   assert.deepEqual(invoicingSettings(null), defaults);
-  assert.deepEqual(normalizeBillingSettings({ rates: {} }), { rates: {} });
+  assert.deepEqual(normalizeBillingSettings({ rates: {} }), { clientRates: {}, invoicing: invoicingSettings() });
   const normalized = normalizeInvoicingSettings({ seller: { name: ' Seller ' }, clients: [{ id: ' client-1 ', name: ' Client ', defaultCurrency: ' eur ' }, { id: 'unset' }], notes: ' Thanks ', taxPercent: 7.25 });
   assert.equal(normalized.seller.name, 'Seller');
   assert.deepEqual(normalized.clients[0], { id: 'client-1', name: 'Client', address: '', email: '', taxId: '', defaultCurrency: 'EUR' });
@@ -200,13 +198,13 @@ test('invoicing rejects unknown fields, invalid strings, clients, numbering and 
 test('settings v7 round-trip invoicing and older files import explicit defaults with strict billing keys', () => {
   const invoicing = normalizeInvoicingSettings({ seller: { name: 'Seller' }, clients: [{ id: 'client', defaultCurrency: '$' }], nextNumber: 7, numberFormat: '{YYYY}/{MM}/{NNNN}', paymentTermsDays: 14, taxPercent: 12.34, notes: 'Thank you' });
   const value = JSON.parse(settingsExportText({ billing: { invoicing } }));
-  assert.equal(value.version, 7);
-  assert.deepEqual(Object.keys(value.billing).sort(), ['invoicing', 'rates']);
-  assert.deepEqual(parseSettingsImport(JSON.stringify(value)).billing, { invoicing, rates: {} });
+  assert.equal(value.version, 8);
+  assert.deepEqual(Object.keys(value.billing).sort(), ['clientRates', 'invoicing']);
+  assert.deepEqual(parseSettingsImport(JSON.stringify(value)).billing, { invoicing, clientRates: {} });
   assert.throws(() => parseSettingsImport(JSON.stringify({ ...value, billing: { rates: {} } })), /billing fields/);
   assert.throws(() => parseSettingsImport(JSON.stringify({ ...value, display: { ...value.display, extra: true } })), /display/);
   for (const version of [2, 3, 4, 5]) {
-    const older = structuredClone(value); older.version = version; delete older.display.otherProjectClient; delete older.display.reportingUtc;
+    const older = structuredClone(value); older.version = version; older.billing = { rates: {}, invoicing }; delete older.display.otherProjectClient; delete older.display.reportingUtc;
     if (version < 3) delete older.projects;
     if (version < 4) delete older.display.otherProjectName;
     if (version < 5) delete older.display.showQueueDiagnostics;
@@ -224,9 +222,10 @@ test('payment days normalize legacy text without throwing and validate the new n
   assert.equal(normalizeInvoicingSettings({ paymentTerms: 'Net 45', paymentTermsDays: 0 }).paymentTermsDays, 0);
   for (const paymentTermsDays of [-1, 366, 1.5, '45', NaN, Infinity, null]) assert.throws(() => normalizeInvoicingSettings({ paymentTermsDays }), /payment terms/i);
   const exported = JSON.parse(settingsExportText({ billing: { invoicing: { paymentTerms: 'Net 45' } } }));
-  assert.equal(exported.version, 7); assert.equal(exported.billing.invoicing.paymentTermsDays, 45);
+  assert.equal(exported.version, 8); assert.equal(exported.billing.invoicing.paymentTermsDays, 45);
   assert.equal(Object.hasOwn(exported.billing.invoicing, 'paymentTerms'), false);
   const legacy = structuredClone(exported); legacy.version = 6; delete legacy.display.otherProjectClient; delete legacy.display.reportingUtc;
+  legacy.billing = { rates: {}, invoicing: legacy.billing.invoicing };
   legacy.billing.invoicing.paymentTerms = 'Net 14'; delete legacy.billing.invoicing.paymentTermsDays;
   assert.equal(parseSettingsImport(JSON.stringify(legacy)).billing.invoicing.paymentTermsDays, 14);
 });
@@ -268,7 +267,7 @@ test('an invoicing address keeps its line breaks while other party fields reject
 
 test('v7 UTC basis defaults locally and rejects invalid values without loosening display fields', () => {
   const value = JSON.parse(settingsExportText({ reportingUtc: true }));
-  assert.equal(value.version, 7); assert.equal(parseSettingsImport(JSON.stringify(value)).reportingUtc, true);
+  assert.equal(value.version, 8); assert.equal(parseSettingsImport(JSON.stringify(value)).reportingUtc, true);
   delete value.display.reportingUtc; assert.equal(parseSettingsImport(JSON.stringify(value)).reportingUtc, false);
   for (const invalid of ['true', 1, null, {}]) {
     value.display.reportingUtc = invalid;
