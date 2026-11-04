@@ -665,9 +665,7 @@ export function parseSettingsImport(text) {
     ...(hasClientFields ? { otherProjectClient } : {}),
     ...(hasReportingUtc ? { reportingUtc: normalizeReportingUtc(value.display.reportingUtc) } : {}),
     showQueueDiagnostics: value.version >= 5 && value.display.showQueueDiagnostics === true,
-    billing: hasInvoiceFields || invoiceDefaultsRequired
-      ? { ...normalizeBillingSettings(value.billing), invoicing: invoicingSettings(value.billing) }
-      : normalizeBillingSettings(value.billing),
+    billing: normalizeBillingSettings(value.billing),
   };
   if (routedExport) return {
     ...imported,
