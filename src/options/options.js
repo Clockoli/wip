@@ -1616,10 +1616,14 @@ function renderClientPreferences(preferences) {
 }
 
 function renderInvoicingPreferences(preferences) {
+  renderClientPreferences(preferences);
+  renderInvoiceDefaults(preferences);
+}
+
+function renderInvoiceDefaults(preferences) {
   const invoicing = invoicingSettings(preferences);
   $('seller-name').value = invoicing.seller.name; $('seller-address').value = invoicing.seller.address;
   $('seller-email').value = invoicing.seller.email; $('seller-tax-id').value = invoicing.seller.taxId;
-  renderClientPreferences(preferences);
   $('invoice-next-number').value = String(invoicing.nextNumber); $('invoice-number-format').value = invoicing.numberFormat;
   $('invoice-payment-terms').value = String(invoicing.paymentTermsDays); $('invoice-tax-percent').value = String(invoicing.taxPercent); $('invoice-notes').value = invoicing.notes;
   autoGrowTextarea($('seller-address')); autoGrowTextarea($('invoice-notes'));
@@ -1864,7 +1868,9 @@ function invoicingPayload() {
       name: $('seller-name').value, address: $('seller-address').value,
       email: $('seller-email').value, taxId: $('seller-tax-id').value,
     },
-    clients: clientsPayload(),
+    // Clients have their own Save action. Never commit that form's unsaved rows
+    // when the user only saves seller details or invoice defaults.
+    clients: invoicingSettings(localPreferences).clients,
     nextNumber: Number($('invoice-next-number').value), numberFormat: $('invoice-number-format').value,
     paymentTermsDays: $('invoice-payment-terms').value.trim() ? Number($('invoice-payment-terms').value) : NaN, taxPercent: Number($('invoice-tax-percent').value), notes: $('invoice-notes').value,
   });
@@ -2498,15 +2504,15 @@ for (const formId of ['clients-form', 'invoicing-form']) $(formId).addEventListe
       : invoicingPayload();
     const result = await send({
       type: 'SAVE_BILLING_SETTINGS', payload: { invoicing },
-      projectLinks: clientSave ? null : projectClientLinksPayload(),
-      expectedRevision: localPreferences.revision,
+      // Project assignments are saved in Projects & routing, not Invoicing.
+      projectLinks: null, expectedRevision: localPreferences.revision,
     });
     localPreferences = {
       ...localPreferences, invoicing: result.invoicing, clientRates: result.clientRates, projects: result.projects,
       otherProjectClient: result.otherProjectClient, revision: result.revision, exportRecommended: true,
     };
     if (formId === 'clients-form') renderClientPreferences(localPreferences);
-    else renderInvoicingPreferences(localPreferences);
+    else renderInvoiceDefaults(localPreferences);
     confirmationButton = clientId ? [...$('clients-list').querySelectorAll('.client-row')].find(row => row.dataset.clientId === clientId)?.querySelector('.save-client') || clicked : clicked;
     refreshRateClients();
     formFeedback(feedbackId, ''); saveButtonFeedback(confirmationButton, 'saved', operation);
