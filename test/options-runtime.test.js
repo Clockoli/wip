@@ -1787,6 +1787,31 @@ test('client-card save keeps its button and ignores stale save confirmations', a
   assert.equal(newest.textContent, 'Save'); assert.equal(newest.disabled, false);
 });
 
+test('individual client Save ignores native validation errors in other drafts', async () => {
+  const saved = { ...preferences, invoicing: { ...preferences.invoicing, clients: [
+    preferences.invoicing.clients[0],
+    { ...preferences.invoicing.clients[0], id: 'client-2', name: 'Second client' },
+  ] } };
+  const page = harness({ reply: request => billingSaveResult(request, saved) });
+  page.context.renderLocalPreferences(saved);
+  const [first, second] = page.nodes.get('clients-list').querySelectorAll('.client-row');
+  const ownSave = first.querySelector('.save-client'), secondSave = second.querySelector('.save-client');
+  const otherEmail = second.querySelector('.client-email');
+  let reported = 0;
+  otherEmail.checkValidity = () => false;
+  otherEmail.reportValidity = () => { reported += 1; };
+  assert.equal(ownSave.formNoValidate, true, 'native form validation must not block unrelated client saves');
+  assert.equal(secondSave.formNoValidate, true);
+  assert.notEqual(page.nodes.get('save-clients').formNoValidate, true,
+    'bulk Save clients still validates the whole form');
+  await page.submit('clients-form', ownSave);
+  assert.equal(page.requests.length, 1, 'first client saves despite another invalid draft');
+  assert.equal(reported, 0);
+  await page.submit('clients-form', secondSave);
+  assert.equal(page.requests.length, 1, 'invalid selected client must not be saved');
+  assert.equal(reported, 1, 'the invalid field is shown to the user');
+});
+
 test('saving one client leaves other client drafts and pending deletions untouched', async () => {
   const initial = { ...preferences, invoicing: { ...preferences.invoicing, clients: [
     preferences.invoicing.clients[0], { ...preferences.invoicing.clients[0], id: 'client-2', name: 'Client Two' },

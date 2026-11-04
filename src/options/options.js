@@ -1459,7 +1459,7 @@ function addClientRow(client = null) {
     label.append(input); row.append(label);
   }
   const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-client'; remove.textContent = '✕'; remove.setAttribute('aria-label', value.name ? `Remove client ${value.name}` : 'Remove this client');
-  const save = document.createElement('button'); save.type = 'submit'; save.className = 'primary save-client'; save.textContent = 'Save';
+  const save = document.createElement('button'); save.type = 'submit'; save.formNoValidate = true; save.className = 'primary save-client'; save.textContent = 'Save';
   remove.addEventListener('click', () => { row.remove(); for (const rateRow of $('rates-list').querySelectorAll('.rate-row')) if (rateRow.dataset.clientId === value.id) rateRow.remove(); refreshProjectClients(); refreshRateClients(); }); row.append(remove, save); $('clients-list').append(row); refreshProjectClients(); refreshRateClients();
 }
 
@@ -2504,6 +2504,15 @@ for (const formId of ['clients-form', 'invoicing-form']) $(formId).addEventListe
   if (invoicingSaveInFlight) return;
   const clicked = event.submitter?.className.split(' ').includes('save-client') ? event.submitter : (formId === 'clients-form' ? $('save-clients') : $('save-invoicing'));
   const clientId = clicked.className.split(' ').includes('save-client') ? clicked.parentNode.dataset.clientId : '';
+  if (clientId) {
+    // formNoValidate lets one client save despite an invalid draft for
+    // another client, but the selected client's own fields still need
+    // native validation.
+    for (const selector of ['.client-name', '.client-email', '.client-address', '.client-tax-id', '.client-currency']) {
+      const input = clicked.parentNode.querySelector(selector);
+      if (input?.checkValidity && !input.checkValidity()) { input.reportValidity(); return; }
+    }
+  }
   const operation = saveButtonFeedback(clicked); invoicingSaveInFlight = true;
   for (const button of [$('save-clients'), $('save-invoicing'), ...$('clients-list').querySelectorAll('.save-client')]) button.disabled = true;
   const feedbackId = formId === 'clients-form' ? 'clients-feedback' : 'invoicing-feedback';
