@@ -6,7 +6,7 @@ Invoices are generated in the browser from your time records and local settings.
 
 ## Set up invoicing
 
-Open **Settings** → **More settings** → **Invoicing** and save the seller and client details, invoice numbering, payment terms, and tax defaults used for invoice previews. Select **Save invoicing settings**; success or an error appears beside the button. Invoicing needs [billable rates](billable-rates.md) for the people you bill.
+Open **Settings** → **More settings** → **Clients** to save each client, then use **Billable rates** to configure that client's rates. The separate **Invoicing** section holds seller details, invoice numbering, payment terms, and tax defaults used for invoice previews. Select **Save invoicing settings**; success or an error appears beside the button. Invoicing needs [billable rates](billable-rates.md) **on the selected client** for the people you bill. Rates from other clients are never substituted.
 
 Saving rates or invoicing keeps stored clients even when their metadata is empty. New client cards are omitted only while empty and untouched, and only if neither a named project nor the main project selects them. Clients can own [projects](projects-and-routing.md).
 
@@ -26,7 +26,7 @@ Each invoice uses one target currency. When effective-dated rates change within 
 
 The invoice dialog names the billing period from the Reports From/To range. Presets select This month, Last month, Last 7 days, or Last 30 days using the selected reporting date basis (local or UTC).
 
-Picking a client narrows the invoice to that client's work without changing the report filters. Clockoli warns when an invoice also includes projects owned by another client.
+Picking a client narrows the invoice to that client's work without changing the report filters, and selects the client's local rate card. Clockoli warns when an invoice also includes projects owned by another client.
 
 A partial report can still produce an invoice preview when rated entries are available, even though timesheet exports are disabled. Check that all intended time repositories loaded before printing or saving an invoice.
 
