@@ -360,7 +360,7 @@ test('pending writes block a rated invoice, including an already open preview an
   assert.equal(page.nodes.get('invoice-print').disabled, false);
 });
 
-test('remote partial status remains separate from local queue warning and permits invoice without local pending', async () => {
+test('remote partial status remains separate from local queue warning and permits only invoice preview', async () => {
   const rate = { alice: { amountMinorPerHour: 12000, currency: 'EUR' } };
   const partial = { ...result([record('alice')], rate), partial: true,
     readStatus: [{ status: 'error', timeRepository: 'team/time' }],
@@ -376,7 +376,10 @@ test('remote partial status remains separate from local queue warning and permit
   assert.equal(page.nodes.get('download-csv').attributes['aria-disabled'], 'true');
   assert.equal(page.nodes.get('create-invoice').attributes['aria-disabled'], 'false');
   await page.fire('create-invoice'); await page.settle();
-  assert.equal(page.nodes.get('invoice-print').disabled, false);
+  assert.match(page.textOf(page.nodes.get('invoice-preview')), /Review/);
+  assert.match(page.nodes.get('invoice-feedback').textContent, /preview only/i);
+  assert.equal(page.nodes.get('invoice-print').disabled, true);
+  assert.equal(page.nodes.get('invoice-save-pdf').disabled, true);
 });
 
 test('billing stays visible when a configured rate belongs to someone outside the selection', async () => {
