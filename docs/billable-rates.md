@@ -1,6 +1,8 @@
 # Billable rates
 
-Every hourly rate belongs to a **client**. There are no global, default, or shared rate cards. Clients, rate cards, and invoicing settings exist only in your browser's extension-local storage and in settings backups you explicitly export. They are never stored in the GitHub time repository.
+Every hourly rate belongs to a **client**. Rates stay in your browser and in settings backups you explicitly export. Nothing is saved to GitHub.
+
+There are no global, default, or shared rate cards. Clients, rate cards, and invoicing settings exist only in your browser's extension-local storage.
 
 ## Create a client and rate card
 
