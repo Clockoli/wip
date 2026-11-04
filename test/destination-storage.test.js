@@ -576,9 +576,9 @@ test('v6 settings import routes only to configured destinations and never verifi
   delete invalidValue.destinations['github:2'];
   invalidValue.defaultDestinationId = 'github:99';
   invalidValue.projects.push({ id: 'local', name: 'Local', substrings: ['github.com/local/'], destinationId: 'github:1' });
-  invalidValue.billing.clientRates = { 'client-1': { alice: [{ amountMinorPerHour: 15000, currency: 'USD', currencyPosition: 'prefix', startDate: '', endDate: '' }] } };
-  invalidValue.billing.invoicing = { clients: [{ id: 'client-1', name: 'Client One' }] };
-  delete invalidValue.billing.rates;
+  // The fixture remains an actual v6 file, which had only unscoped rates.
+  // On import those rates must be quarantined in an unassigned local client.
+  invalidValue.billing.rates = { alice: [{ amountMinorPerHour: 15000, currency: 'USD', currencyPosition: 'prefix', startDate: '', endDate: '' }] };
   const partial = await store.importSettings(JSON.stringify(invalidValue));
   assert.equal(partial.recentDays, 12);
   assert.deepEqual(partial.projects.map(project => project.name), ['Local']);
@@ -588,7 +588,7 @@ test('v6 settings import routes only to configured destinations and never verifi
   ]);
   assert.equal((await store.getDestinationRegistry()).defaultDestinationId, 'github:1');
   assert.equal((await store.getDestinationConfiguration('github:1')).owner, 'current-one');
-  assert.equal((await store.getLocalPreferences()).clientRates['client-1'].alice[0].amountMinorPerHour, 15000);
+  assert.equal((await store.getLocalPreferences()).clientRates['imported-rates'].alice[0].amountMinorPerHour, 15000);
   assert.equal(backend.values.get('repositoryVerification')['github:1'].status, 'write_verified');
 });
 
