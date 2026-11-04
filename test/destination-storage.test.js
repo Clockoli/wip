@@ -565,7 +565,7 @@ test('v6 settings import routes only to configured destinations and never verifi
   assert.equal((await store.getDestinationConfiguration('github:1')).owner, 'current-one');
   assert.deepEqual(backend.values.get('repositoryVerification'), { 'github:1': { status: 'write_verified' } });
   const exported = JSON.parse((await store.exportSettings()).text);
-  assert.equal(exported.version, 6);
+  assert.equal(exported.version, 8);
   assert.equal(exported.security.credentialsIncluded, false);
   assert.equal(exported.destinations['github:1'].owner, 'current-one');
   assert.equal(JSON.stringify(exported).includes('accessToken'), false);
@@ -576,7 +576,8 @@ test('v6 settings import routes only to configured destinations and never verifi
   delete invalidValue.destinations['github:2'];
   invalidValue.defaultDestinationId = 'github:99';
   invalidValue.projects.push({ id: 'local', name: 'Local', substrings: ['github.com/local/'], destinationId: 'github:1' });
-  invalidValue.billing.rates = { alice: [{ amountMinorPerHour: 15000, currency: 'USD', currencyPosition: 'prefix', startDate: '', endDate: '' }] };
+  invalidValue.billing.clientRates = { 'client-1': { alice: [{ amountMinorPerHour: 15000, currency: 'USD', currencyPosition: 'prefix', startDate: '', endDate: '' }] } };
+  invalidValue.billing.invoicing.clients = [{ id: 'client-1', name: 'Client One' }];
   const partial = await store.importSettings(JSON.stringify(invalidValue));
   assert.equal(partial.recentDays, 12);
   assert.deepEqual(partial.projects.map(project => project.name), ['Local']);
@@ -586,7 +587,7 @@ test('v6 settings import routes only to configured destinations and never verifi
   ]);
   assert.equal((await store.getDestinationRegistry()).defaultDestinationId, 'github:1');
   assert.equal((await store.getDestinationConfiguration('github:1')).owner, 'current-one');
-  assert.equal((await store.getLocalPreferences()).rates.alice[0].amountMinorPerHour, 15000);
+  assert.equal((await store.getLocalPreferences()).clientRates['client-1'].alice[0].amountMinorPerHour, 15000);
   assert.equal(backend.values.get('repositoryVerification')['github:1'].status, 'write_verified');
 });
 
