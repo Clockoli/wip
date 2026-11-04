@@ -1852,14 +1852,24 @@ function ratesPayload() {
   return clientRates;
 }
 
-function clientsPayload() {
-  const selectedClients = new Set([$('other-project-client'), ...$('projects-list').querySelectorAll('.project-client')].map(select => select.value));
-  return [...$('clients-list').querySelectorAll('.client-row')].filter(row => row.dataset.persisted === 'true' || row.dataset.touched === 'true' || selectedClients.has(row.dataset.clientId)
-    || ['.client-name', '.client-email', '.client-address', '.client-tax-id', '.client-currency'].some(selector => row.querySelector(selector).value.trim())).map(row => ({
+function clientsPayload(onlyClientId = '') {
+  const rows = [...$('clients-list').querySelectorAll('.client-row')];
+  const clientFromRow = row => ({
     id: row.dataset.clientId, name: row.querySelector('.client-name').value,
     address: row.querySelector('.client-address').value, email: row.querySelector('.client-email').value,
     taxId: row.querySelector('.client-tax-id').value, defaultCurrency: row.querySelector('.client-currency').value,
-  }));
+  });
+  if (onlyClientId) {
+    const edited = rows.find(row => row.dataset.clientId === onlyClientId);
+    if (!edited) throw new Error('Client to save was not found.');
+    const saved = invoicingSettings(localPreferences).clients, client = clientFromRow(edited);
+    return saved.some(item => item.id === onlyClientId)
+      ? saved.map(item => item.id === onlyClientId ? client : item)
+      : [...saved, client];
+  }
+  const selectedClients = new Set([$('other-project-client'), ...$('projects-list').querySelectorAll('.project-client')].map(select => select.value));
+  return rows.filter(row => row.dataset.persisted === 'true' || row.dataset.touched === 'true' || selectedClients.has(row.dataset.clientId)
+    || ['.client-name', '.client-email', '.client-address', '.client-tax-id', '.client-currency'].some(selector => row.querySelector(selector).value.trim())).map(clientFromRow);
 }
 
 function invoicingPayload() {
@@ -2500,7 +2510,7 @@ for (const formId of ['clients-form', 'invoicing-form']) $(formId).addEventListe
   try {
     const clientSave = formId === 'clients-form';
     const invoicing = clientSave
-      ? normalizeInvoicingSettings({ ...invoicingSettings(localPreferences), clients: clientsPayload() })
+      ? normalizeInvoicingSettings({ ...invoicingSettings(localPreferences), clients: clientsPayload(clientId) })
       : invoicingPayload();
     const result = await send({
       type: 'SAVE_BILLING_SETTINGS', payload: { invoicing },
@@ -2511,8 +2521,14 @@ for (const formId of ['clients-form', 'invoicing-form']) $(formId).addEventListe
       ...localPreferences, invoicing: result.invoicing, clientRates: result.clientRates, projects: result.projects,
       otherProjectClient: result.otherProjectClient, revision: result.revision, exportRecommended: true,
     };
-    if (formId === 'clients-form') renderClientPreferences(localPreferences);
-    else { renderInvoiceDefaults(localPreferences); refreshProjectClients(); }
+    if (formId === 'clients-form') {
+      if (clientId) {
+        // Saving one client must leave other draft edits and pending removals untouched.
+        const row = [...$('clients-list').querySelectorAll('.client-row')].find(item => item.dataset.clientId === clientId);
+        if (row) row.dataset.persisted = 'true';
+        refreshProjectClients();
+      } else renderClientPreferences(localPreferences);
+    } else { renderInvoiceDefaults(localPreferences); refreshProjectClients(); }
     confirmationButton = clientId ? [...$('clients-list').querySelectorAll('.client-row')].find(row => row.dataset.clientId === clientId)?.querySelector('.save-client') || clicked : clicked;
     refreshRateClients();
     formFeedback(feedbackId, ''); saveButtonFeedback(confirmationButton, 'saved', operation);
