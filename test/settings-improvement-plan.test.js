@@ -89,7 +89,7 @@ test('repository routing stays top-level while local secondary settings remain g
 });
 
 test('rates and backup copy explain locality, exclusions, and offline restoration', () => {
-  assert.match(html, /Add date ranges if a rate changes over time\. Rates are private to this browser;/i);
+  assert.match(html, /Every rate belongs to exactly one client/i);
   assert.match(html, /never written to your GitHub repository/i);
   assert.doesNotMatch(html, /class="local-only-note"/);
   assert.match(script, /Repository initialized\. Clockoli verified the setup write\./);
