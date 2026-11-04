@@ -352,7 +352,7 @@ test('settings exposes browser-only invoicing parties, numbering and terms', () 
   assert.match(script, /function invoicingPayload\(\)/);
   assert.ok(script.includes('function renderInvoiceDefaults('));
   assert.match(script, /payload: \{ clientRates: ratesPayload\(\) \}/);
-  assert.ok(script.includes('function clientsPayload()'));
+  assert.ok(script.includes('function clientsPayload('));
   assert.match(script, /const invoicing = clientSave/);
   assert.ok(script.includes('payload: { invoicing }'));
   assert.ok(script.includes('projectLinks: null, expectedRevision: localPreferences.revision'));

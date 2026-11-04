@@ -1806,7 +1806,7 @@ test('saving one client leaves other client drafts and pending deletions untouch
   const saved = page.requests.find(request => request.type === 'SAVE_BILLING_SETTINGS');
   assert.deepEqual(Array.from(saved.payload.invoicing.clients, client => client.id), ['client-1', 'client-2']);
   assert.equal(saved.payload.invoicing.clients[0].name, initial.invoicing.clients[0].name,
-    'another client's pending removal is not saved');
+    "another client's pending removal is not saved");
   assert.equal(saved.payload.invoicing.clients[1].name, 'Edited second client');
   assert.equal(page.nodes.get('clients-list').querySelectorAll('.client-row').length, 2,
     'the removed client remains removed from the unsaved form');
