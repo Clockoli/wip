@@ -59,7 +59,6 @@ test('reports page exposes periods, independent chart axes, facets, and direct e
   assert.match(worker, /function syncPendingNow[\s\S]*syncPendingAll\(\{ store, trackerForDestination, canSync:/);
   assert.match(worker, /canSync: async \(\) => \{[\s\S]*pendingSyncQuietUntil/);
   assert.match(js, /type:\s*'CANCEL_REPORT'/);
-  assert.ok(js.includes('Math.max(40, height)'));
 });
 
 test('high-cardinality analytics stays sparse in aggregation and the collapsed details table', () => {
@@ -133,7 +132,7 @@ test('reports exposes local invoice preview, export, numbering and print contrac
   assert.match(styles, /\.invoice-extra-row label\{[^}]*grid-template-rows:20px auto/);
   assert.match(styles, /\.invoice-extra-row input,\.invoice-extra-row textarea\{[^}]*height:40px;min-height:40px/);
   assert.match(styles, /\.invoice-extra-row>button\{[^}]*height:40px;margin-top:24px/);
-  assert.match(js, /Math\\.max\\(40, height\\)/);
+  assert.ok(js.includes('Math.max(40, height)'));
   assert.match(styles, /\.invoice-preview\{[^}]*padding:[^}]*border:1px solid var\(--borderColor-default\)/);
   assert.match(styles, /\.invoice-seller h2\{display:flex;flex-wrap:wrap;/);
   assert.match(styles, /\.invoice-seller-name-raster\{display:block\}/);
