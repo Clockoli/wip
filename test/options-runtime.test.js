@@ -1926,6 +1926,49 @@ test('individual client Save works even if invoice defaults are invalid', async 
   assert.equal(page.nodes.get('invoice-tax-percent').value, '101');
 });
 
+test('saving rates for one client ignores unfinished drafts for another client', async () => {
+  const clients = [...preferences.invoicing.clients, { id: 'client-2', name: 'Client Two' }];
+  const local = { ...preferences, invoicing: { ...preferences.invoicing, clients } };
+  const page = harness({ reply(request) {
+    if (request.type === 'SAVE_BILLING_SETTINGS') return billingSaveResult(request, local);
+    throw new Error(`Unexpected message: ${request.type}`);
+  } });
+  page.context.renderLocalPreferences(local);
+  const selector = page.nodes.get('rates-client');
+  assert.equal(selector.value, 'client-1');
+  page.context.addRateRow(); // Unfinished draft for client-1.
+  const draft = page.nodes.get('rates-list').querySelectorAll('.rate-row').at(-1);
+  assert.equal(draft.querySelector('.rate-login').value, '');
+  selector.value = 'client-2'; selector.listeners.change();
+  assert.equal(draft.hidden, true);
+  assert.equal(draft.querySelector('.rate-login').disabled, true, 'hidden required inputs cannot block save');
+
+  page.context.addRateRow('bob', { amountMinorPerHour: 5000, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' });
+  await page.submit('billing-form');
+  assert.equal(page.nodes.get('billing-feedback').textContent, '');
+  const save = page.requests.find(request => request.type === 'SAVE_BILLING_SETTINGS');
+  assert.equal(save.payload.clientRates['client-1'].octocat[0].amountMinorPerHour, 12500,
+    'saved first client rate remains unchanged');
+  assert.equal(save.payload.clientRates['client-2'].bob[0].amountMinorPerHour, 5000);
+  assert.equal(draft.querySelector('.rate-login').value, '', 'first client draft stays untouched');
+
+  selector.value = 'client-1'; selector.listeners.change();
+  assert.equal(draft.hidden, false);
+  assert.equal(draft.querySelector('.rate-login').disabled, false);
+  await page.submit('billing-form');
+  assert.match(page.nodes.get('billing-feedback').textContent, /GitHub user, hourly rate, and currency/i);
+  assert.equal(page.requests.length, 1, 'incomplete visible draft is still rejected');
+});
+
+test('rates cannot be added until their client is saved', () => {
+  const page = harness();
+  page.context.renderLocalPreferences({ ...preferences, invoicing: { ...preferences.invoicing, clients: [] }, clientRates: {} });
+  page.context.addClientRow();
+  assert.equal(page.nodes.get('rates-client').value.startsWith('client-'), true);
+  assert.equal(page.nodes.get('add-rate').disabled, true);
+  assert.equal(page.nodes.get('save-billing').disabled, true);
+});
+
 test('invalid billable input reports inline without sending a mutation', async () => {
   const page = harness();
   page.context.renderLocalPreferences(preferences);
