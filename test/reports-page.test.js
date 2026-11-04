@@ -59,7 +59,7 @@ test('reports page exposes periods, independent chart axes, facets, and direct e
   assert.match(worker, /function syncPendingNow[\s\S]*syncPendingAll\(\{ store, trackerForDestination, canSync:/);
   assert.match(worker, /canSync: async \(\) => \{[\s\S]*pendingSyncQuietUntil/);
   assert.match(js, /type:\s*'CANCEL_REPORT'/);
-  assert.match(js, /Math\.max\(40, height\)/);
+  assert.ok(js.includes('Math.max(40, height)'));
 });
 
 test('high-cardinality analytics stays sparse in aggregation and the collapsed details table', () => {
