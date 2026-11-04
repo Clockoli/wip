@@ -60,7 +60,7 @@ test('repository controls offer autocomplete and explicit Check, default and Fin
 test('billable rates and complete local settings backup are explicit extension-local features', async () => {
   const reportsHtml = await readFile(new URL('src/reports/reports.html', root), 'utf8');
   const reportsJs = await readFile(new URL('src/reports/reports.js', root), 'utf8');
-  assert.match(optionsHtml, /id="billing-settings"[\s\S]*Rates are private to this browser/i);
+  assert.match(optionsHtml, /id="billing-settings"[\s\S]*Every rate belongs to exactly one client/i);
   assert.match(optionsHtml, /never written to your GitHub repository/i);
   assert.ok(optionsHtml.indexOf('id="billing-settings"') < optionsHtml.indexOf('id="advanced-settings"'));
   assert.match(optionsHtml, /id="export-settings"[^>]*>Export settings/);
