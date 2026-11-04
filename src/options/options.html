@@ -259,11 +259,24 @@
     <summary id="more-settings-toggle">More settings</summary>
 
 
+  <section id="clients-settings" class="card" aria-labelledby="clients-title">
+    <div class="card-heading"><div><h2 id="clients-title">Clients</h2><p>Clients own billable rates and may also have invoice details. All details remain in this browser and its settings backups.</p></div></div>
+    <form id="clients-form">
+      <fieldset class="clients-fieldset"><legend>Clients</legend>
+        <div id="clients-list" class="clients-list"></div>
+        <button id="add-client" type="button" class="secondary">Add client</button>
+      </fieldset>
+      <div class="actions"><button id="save-clients" type="submit">Save clients</button><p id="clients-feedback" class="form-feedback" role="status" aria-live="polite"></p></div>
+    </form>
+  </section>
+
   <section id="billing-settings" class="card" aria-labelledby="billing-title">
     <div class="card-heading">
-      <div><h2 id="billing-title">Billable rates</h2><p>Set hourly rates for people whose time appears in Clockoli reports. Add date ranges if a rate changes over time. Rates are private to this browser; hourly rates and calculated amounts are never written to your GitHub repository.</p></div>
+      <div><h2 id="billing-title">Billable rates</h2><p>Choose a client and set hourly rates for its employees. Every rate belongs to exactly one client and remains private to this browser.</p></div>
     </div>
     <form id="billing-form">
+      <label>Client<select id="rates-client" required><option value="">— Choose a client —</option></select></label>
+      <p id="rates-client-help" class="help">Create and save a client before assigning rates. Imported legacy rates remain in a separate, unlinked client until you review them.</p>
       <div id="rates-list" class="rates-list"></div>
       <p id="rate-date-help" class="help">Leave End date empty if the rate is still current. Clockoli applies it through today and keeps it current until you add a later rate period.</p>
       <div class="actions billing-actions">
@@ -278,7 +291,7 @@
 
   <section id="invoicing-settings" class="card" aria-labelledby="invoicing-title">
     <div class="card-heading">
-      <div><h2 id="invoicing-title">Invoicing</h2><p>Set the seller, clients, numbering and payment details used for invoices. These details stay in this browser and are never written to the GitHub repository.</p></div>
+      <div><h2 id="invoicing-title">Invoicing</h2><p>Set seller details, numbering and payment defaults. Clients and their rate cards are managed above; nothing is written to the GitHub repository.</p></div>
     </div>
     <form id="invoicing-form">
       <fieldset><legend>Seller</legend>
@@ -288,10 +301,6 @@
           <label class="wide-field">Address<textarea id="seller-address" maxlength="1000" rows="1" autocomplete="street-address"></textarea></label>
           <label>Tax ID<input id="seller-tax-id" maxlength="200" autocomplete="off"></label>
         </div>
-      </fieldset>
-      <fieldset class="clients-fieldset"><legend>Clients</legend>
-        <div id="clients-list" class="clients-list"></div>
-        <button id="add-client" type="button" class="secondary">Add client</button>
       </fieldset>
       <fieldset><legend>Invoice defaults</legend>
         <div class="invoicing-defaults-grid">
