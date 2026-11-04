@@ -8,13 +8,13 @@ Invoices are generated in the browser from your time records and local settings.
 
 Open **Settings** → **More settings** → **Clients** to save each client, then use **Billable rates** to configure that client's rates. The separate **Invoicing** section holds seller details, invoice numbering, payment terms, and tax defaults used for invoice previews. Select **Save invoicing settings**; success or an error appears beside the button. Invoicing needs [billable rates](billable-rates.md) **on the selected client** for the people you bill. Rates from other clients are never substituted.
 
-Saving rates or invoicing keeps stored clients even when their metadata is empty. New client cards are omitted only while empty and untouched, and only if neither a named project nor the main project selects them. Clients can own [projects](projects-and-routing.md).
+Client details can be left empty when a client is used only for reports. Clients can own [projects](projects-and-routing.md).
 
 ### Payment terms
 
 Payment terms (days) in Settings determines the due date from the issue date; zero means due on receipt.
 
-Older text terms recognize “due on receipt” and “on receipt” without regard to case as zero days, then prefer the number following “net” (so “2% 10, Net 30” means 30 days). Otherwise they use a sole number or default to 30, clamped to 0–365. Unless the original text is exactly “Net {N}” for the resulting days or a due-on-receipt phrase, it is preserved as a separate “Payment terms: ” line in Notes without duplicating an existing exact line. If adding it would exceed the 1,000-character notes limit, existing notes remain unchanged. Notes supports line breaks.
+Payment terms can range from 0 to 365 days. The Notes field supports line breaks.
 
 ## Create an invoice
 
@@ -36,7 +36,7 @@ Add up to 20 additional lines for charges or discounts in the invoice currency. 
 
 ## Invoice numbers
 
-Invoice numbers are reserved only on the first **Print** or **Save as PDF** action for a preview and are never committed to the time-data repository. The counter only ever moves forward: neither a settings save nor restoring an older settings backup can lower it below a number that has already been issued.
+Invoice numbers are reserved only on the first **Print** or **Save as PDF** action for a preview and are never committed to the time-data repository. The counter only moves forward: saving or importing settings cannot lower it below a number that has already been issued.
 
 ## Where invoices live
 
@@ -44,4 +44,4 @@ An invoice exists only as the on-screen preview and as a file you print or downl
 
 ## Limits
 
-Version 1 does not support retainers, recurring invoices, reminders, payment links, tracked-time line editing, sent or paid status, an invoice archive, or emailing invoices.
+Clockoli does not support retainers, recurring invoices, reminders, payment links, tracked-time line editing, sent or paid status, an invoice archive, or emailing invoices.

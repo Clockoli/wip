@@ -4,7 +4,7 @@ The normative format of the files Clockoli writes to a time repository: active t
 
 **Status:** Canonical Version 1
 **Scope:** Persistent Clockoli work data stored in the user's GitHub repository
-**Compatibility:** Clockoli supports only this format. There is no legacy reader or migration contract.
+**Format:** Clockoli reads and writes the structures defined in this specification.
 
 ---
 
@@ -469,7 +469,7 @@ Rules:
 
 ## 14. Edits, unknown fields, and corrections
 
-Clockoli version 1 updates the logical work record in place while preserving:
+Clockoli updates the logical work record in place while preserving:
 
 - `id`;
 - `created_at`;
@@ -482,7 +482,7 @@ Mandatory preservation rule:
 
 This includes unknown fields under `actor`, `work_item`, `activity`, `producer`, `metadata`, `metrics`, and `execution`.
 
-The root `record_type` leaves room for a future append-only correction model, but version 1 supports only `record_type: work` and in-place edits.
+The root `record_type` allows for future extension; Clockoli currently supports only `record_type: work` and in-place edits.
 
 ---
 
@@ -535,20 +535,18 @@ Additional rules:
 
 ---
 
-## 17. Compatibility principles
+## 17. Data format principles
 
-1. This is Clockoli's first and only persistent work-record format.
-2. No old text-block format is supported.
-3. Prefer additive fields over changed semantics.
-4. Never reuse a field with a different meaning.
-5. Keep actor, execution, producer, and record identities separate.
-6. Keep work-item identity separate from display URL and title.
-7. Keep activity timestamps separate from persistence timestamps.
-8. Preserve local calendar semantics explicitly.
-9. Preserve unknown fields on every rewrite.
-10. Keep sensitive rates outside ordinary records.
-11. Keep browser-specific implementation details out of the logical schema.
-12. Any future breaking change requires a new explicit schema version and migration plan; version 1 defines no backward migration behavior.
+1. Prefer additive fields over changed semantics.
+2. Never reuse a field with a different meaning.
+3. Keep actor, execution, producer, and record identities separate.
+4. Keep work-item identity separate from display URL and title.
+5. Keep activity timestamps separate from persistence timestamps.
+6. Preserve local calendar semantics explicitly.
+7. Preserve unknown fields on every rewrite.
+8. Keep sensitive rates outside ordinary records.
+9. Keep browser-specific implementation details out of the logical schema.
+10. Assign an explicit schema version when changing the data contract.
 
 ---
 

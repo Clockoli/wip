@@ -73,11 +73,11 @@ Seller details, numbering, payment terms, tax, and notes. Client details are man
 
 - recent-entry and reporting preferences;
 - project rules and client assignments;
-- hourly rates with their currency signs or descriptions;
+- each client's hourly rates and currencies;
 - invoicing details such as seller, clients, and payment terms;
 - credential-free repository references and, for routed installations, the default destination.
 
-New exports use settings format version 8, including client-specific rate cards, for both single- and multi-repository configurations. Imports still accept older formats. Neither contains credentials, device codes, active timers, pending writes, or tracked time. The Activity view and interface width preferences stay on this browser and are not included. See [Settings backup exclusions](data-and-privacy.md#settings-backup-exclusions).
+Backups contain client-specific rate cards but exclude credentials, device codes, active timers, pending writes, and tracked time. The Activity view and interface width preferences stay on this browser and are not included. See [Settings backup exclusions](data-and-privacy.md#settings-backup-exclusions).
 
 Import validates the entire file and restores routes to destinations already configured in this browser. It reports missing repositories and their routes as not restored; other eligible routes can still be restored. A reference in the backup does not verify current access, and the imported default does not replace this browser's current default. Import does not test access, add a repository, or reconnect GitHub, so add any missing repository first. Before connecting, **Import settings** is reachable through **More settings** → **Backup & restore**.
 
@@ -89,7 +89,7 @@ Import validates the entire file and restores routes to destinations already con
 
 #### Use a personal access token
 
-A single-repository compatibility option for existing PAT setups or environments where the GitHub App cannot be installed. See [Advanced PAT setup](getting-started.md#use-a-personal-access-token-instead).
+A single-repository alternative when the GitHub App cannot be installed. See [Advanced PAT setup](getting-started.md#use-a-personal-access-token-instead).
 
 #### Recovery and access
 

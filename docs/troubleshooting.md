@@ -269,9 +269,10 @@ Clockoli enforces bounded file, byte, and record budgets so one report cannot ma
 
 Open Settings and:
 
-- include a currency sign or 2–12 letter description in every hourly rate, such as `$15.50` or `750 RUB`;
-- add a non-negative hourly rate for each GitHub login (matching is case-insensitive);
-- save rates;
+- select the client whose rate card should be used in Reports;
+- assign hourly rates to the required GitHub users within that client;
+- check that each rate covers the relevant entry dates;
+- save the client's rates;
 - export an updated local settings backup.
 
 Rates are local to the current browser. They are not read from the shared repository or synchronized from a colleague's browser.
@@ -335,7 +336,7 @@ Clockoli blocks transitions that could strand active or pending work. Stop activ
 
 ### Settings import did not reconnect GitHub
 
-This is intentional. A version 6 JSON backup excludes credentials. It can carry destination references, the exported default destination, and project routes, but import restores project routes only for destinations already configured in this browser. References remain unverified, and the imported default does not replace this browser's current default. Add any missing repository first. Import does not inspect repositories or reconnect GitHub. Before connecting, open **More settings** → **Backup & restore** to reach **Import settings**.
+This is intentional. A settings JSON backup excludes credentials. It can carry destination references, the exported default destination, and project routes, but import restores project routes only for destinations already configured in this browser. References remain unverified, and the imported default does not replace this browser's current default. Add any missing repository first. Import does not inspect repositories or reconnect GitHub. Before connecting, open **More settings** → **Backup & restore** to reach **Import settings**.
 
 ### A task went to the wrong time repository
 

@@ -13,10 +13,6 @@ There are no global, default, or shared rate cards. Clients, rate cards, and inv
 
 Dates are inclusive and stored with each rate period; rates use integer minor currency units. A missing employee or uncovered period is **Unrated**: Clockoli does not substitute a rate from another client.
 
-## Existing rates from older versions
-
-Older Clockoli versions had person-wide rates. On upgrade or import, these rates are moved to a separate, clearly labeled **Imported rates (review)** client, with no project assignments. They are never automatically applied to existing clients or their invoices. Review the imported card and manually place the required rates under your actual clients.
-
 ## Reports
 
 Use **Client** to filter work by the project owner's client. Use **Billable rates → Calculate amounts using** to choose either a specific client's rate card (useful for team-manager reporting across multiple projects), or **Each project's client** to evaluate entries by the client assigned to their project. All money calculations remain local.

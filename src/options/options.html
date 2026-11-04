@@ -276,7 +276,7 @@
     </div>
     <form id="billing-form">
       <label>Client<select id="rates-client" required><option value="">— Choose a client —</option></select></label>
-      <p id="rates-client-help" class="help">Create and save a client before assigning rates. Imported legacy rates remain in a separate, unlinked client until you review them.</p>
+      <p id="rates-client-help" class="help">Create and save a client before assigning rates. Every rate belongs to the selected client.</p>
       <div id="rates-list" class="rates-list"></div>
       <p id="rate-date-help" class="help">Leave End date empty if the rate is still current. Clockoli applies it through today and keeps it current until you add a later rate period.</p>
       <div class="actions billing-actions">
@@ -349,7 +349,7 @@
     <section class="advanced-section" aria-labelledby="pat-title">
       <details id="advanced-pat" class="nested-details">
         <summary id="pat-title">Use a personal access token</summary>
-        <p>This single-repository compatibility option is for existing PAT setups or environments where the GitHub App cannot be installed. Personal access token compatibility mode supports one time repository only. Clockoli never displays a stored token.</p>
+        <p>Use this single-repository option when the GitHub App cannot be installed. Personal access token compatibility mode supports one time repository only. Clockoli never displays a stored token.</p>
         <p><a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noreferrer">Create a fine-grained personal access token</a> restricted to one private repository with <strong>Contents: Read and write</strong>.</p>
         <form id="settings-form">
           <fieldset><legend>Repository used by this token</legend>
