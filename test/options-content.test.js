@@ -351,7 +351,10 @@ test('settings exposes browser-only invoicing parties, numbering and terms', () 
   assert.match(script, /function ratesPayload\(\)/);
   assert.match(script, /function invoicingPayload\(\)/);
   assert.match(script, /payload: \{ clientRates: ratesPayload\(\) \}/);
-  assert.match(script, /payload: \{ invoicing: invoicingPayload\(\) \}/);
+  assert.match(script, /function clientsPayload\\(\\)/);
+  assert.match(script, /const invoicing = clientSave/);
+  assert.match(script, /payload: \\{ invoicing \\}/);
+  assert.match(script, /projectLinks: clientSave \\? null : projectClientLinksPayload\\(\\)/);
   assert.doesNotMatch(script, /return \{ rates, invoicing:/);
   for (const id of ['seller-address', 'invoice-notes']) assert.match(source, new RegExp(`id="${id}"[^>]*rows="1"`));
   assert.match(styles, /#seller-address,#invoice-notes\{[^}]*max-height:calc\(/);
