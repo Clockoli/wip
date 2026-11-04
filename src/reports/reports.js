@@ -304,7 +304,6 @@ function setInvoiceAvailable(filtered) {
   const control = $('create-invoice');
   let reason = '';
   if (state.pendingCount) reason = 'Local changes are not included. Wait for GitHub sync before invoicing.';
-  else if (state.partial) reason = 'This report is incomplete. Reload all time repositories before invoicing.';
   else if (!filtered.length) reason = 'No entries in this period to invoice';
   else if (!filtered.some(record => state.billing.invoicing.clients.some(client => rateForClient(client.id, state.billing, record.user, recordDate(record))))) reason = 'No client rate covers these entries. Add rates in Settings.';
   else if (state.loading) reason = 'Report is loading';
@@ -515,7 +514,6 @@ function showInvoiceError(error) {
 }
 
 async function rebuildInvoicePreview() {
-  if (state.partial) { showInvoiceError(new Error('This report is incomplete. Reload all time repositories before invoicing.')); return false; }
   if (!state.range || state.loading || state.pendingCount) return false;
   $('invoice-billing-period').textContent = `Billing ${state.range.startDate} to ${state.range.endDate}`;
   const requestId = ++state.invoiceRequestId, filtered = invoiceFilteredRecords();
@@ -535,7 +533,9 @@ async function rebuildInvoicePreview() {
     }
     const invoice = buildInvoice(filtered, invoiceBuildOptions(prospectiveInvoiceSequence(), exchangeRates));
     if (requestId !== state.invoiceRequestId || state.pendingCount) return false;
-    state.invoice = invoice; state.invoiceExchangeRates = exchangeRates; renderInvoiceDocument($('invoice-preview'), invoice); setInvoiceActionsAvailable(true);
+    state.invoice = invoice; state.invoiceExchangeRates = exchangeRates; renderInvoiceDocument($('invoice-preview'), invoice);
+    if (state.partial) $('invoice-feedback').textContent = 'This report is incomplete. Preview only; printing and PDF saving are disabled until the report is complete.';
+    setInvoiceActionsAvailable(true);
     return true;
   } catch (error) { if (requestId === state.invoiceRequestId) showInvoiceError(error); return false; }
 }
@@ -1081,10 +1081,10 @@ $('download-pdf').addEventListener('click', async event => {
 
 $('create-invoice').addEventListener('click', async event => {
   event.preventDefault();
-  if (state.loading || state.partial || state.pendingCount || $('create-invoice').classList.contains('disabled')) return;
+  if (state.loading || state.pendingCount || $('create-invoice').classList.contains('disabled')) return;
   const requestId = state.requestId;
   if (!(await pendingSafeForAction()) || requestId !== state.requestId
-      || state.loading || state.partial || state.pendingCount || $('create-invoice').classList.contains('disabled')) return;
+      || state.loading || state.pendingCount || $('create-invoice').classList.contains('disabled')) return;
   const filtered = currentFilteredRecords(); prepareInvoiceControls(filtered); $('print-invoice').replaceChildren(); $('invoice-dialog').showModal(); void rebuildInvoicePreview();
 });
 $('invoice-add-line').addEventListener('click', () => {

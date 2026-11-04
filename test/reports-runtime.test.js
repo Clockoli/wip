@@ -181,29 +181,33 @@ test('first load defaults to current user, shows one time figure and hides uncon
   assert.ok(page.nodes.get('print-detail-table').children[1].children.length);
 });
 
-test('partial reports cannot produce invoices, even with a valid client rate', async () => {
+test('partial reports allow invoice previews but never reserve, print, or save them', async () => {
   const rated = result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } });
   const partial = { ...rated, partial: true, readStatus: [
     { destinationId: 'github:1', timeRepository: 'alice/time', status: 'ok' },
     { destinationId: 'github:2', timeRepository: 'missing/time', status: 'error' },
   ] };
   const page = await loaded(partial);
-  assert.equal(page.nodes.get('create-invoice').attributes['aria-disabled'], 'true');
-  assert.match(page.nodes.get('create-invoice').attributes['data-clockoli-tooltip'], /incomplete/i);
-  await page.fire('create-invoice');
-  assert.equal(page.nodes.get('invoice-dialog').open, false);
+  assert.equal(page.nodes.get('create-invoice').attributes['aria-disabled'], 'false');
+  await page.fire('create-invoice'); await page.settle();
+  assert.equal(page.nodes.get('invoice-dialog').open, true);
+  assert.match(page.textOf(page.nodes.get('invoice-preview')), /Review/);
+  assert.match(page.nodes.get('invoice-feedback').textContent, /preview only/i);
+  assert.equal(page.nodes.get('invoice-print').disabled, true);
+  assert.equal(page.nodes.get('invoice-save-pdf').disabled, true);
+  await page.fire('invoice-print'); await page.fire('invoice-save-pdf');
+  assert.equal(page.requests.some(request => request.message.type === 'RESERVE_INVOICE_NUMBER'), false);
 
   const reopened = await loaded(rated);
   await reopened.fire('create-invoice'); await reopened.settle();
   assert.equal(reopened.nodes.get('invoice-print').disabled, false);
   const loading = reopened.load(newRange);
-  await reopened.reply(partial);
-  await loading; await reopened.settle();
+  await reopened.reply(partial); await loading; await reopened.settle();
+  assert.equal(reopened.nodes.get('invoice-dialog').open, true);
+  assert.match(reopened.nodes.get('invoice-feedback').textContent, /preview only/i);
   assert.equal(reopened.nodes.get('invoice-print').disabled, true);
   assert.equal(reopened.nodes.get('invoice-save-pdf').disabled, true);
-  assert.match(reopened.nodes.get('invoice-feedback').textContent, /incomplete/i);
-  await reopened.fire('invoice-print');
-  await reopened.fire('invoice-save-pdf');
+  await reopened.fire('invoice-print'); await reopened.fire('invoice-save-pdf');
   assert.equal(reopened.requests.some(request => request.message.type === 'RESERVE_INVOICE_NUMBER'), false);
   assert.equal(reopened.pdfExports.length, 0);
   assert.equal(reopened.prints.length, 0);

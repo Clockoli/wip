@@ -28,7 +28,7 @@ The invoice dialog names the billing period from the Reports From/To range. Pres
 
 Picking a client narrows the invoice to that client's work without changing the report filters, and selects the client's local rate card. Clockoli warns when an invoice also includes projects owned by another client.
 
-A partial report can still produce an invoice preview when rated entries are available, even though timesheet exports are disabled. Check that all intended time repositories loaded before printing or saving an invoice.
+A partial report can still produce an invoice preview when rated entries are available. However, **Print** and **Save as PDF** remain disabled until the report is complete, so missing time repositories or omitted conflicts cannot cause an incomplete invoice to be issued.
 
 ## Additional lines
 
