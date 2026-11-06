@@ -702,7 +702,7 @@ const DIRECT_DEVICE_FLOW_MESSAGES = new Set([
 
 const READ_RETRY_MESSAGES = new Set([
   'LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'LOAD_TASKS', 'LOAD_TIMES', 'LOAD_RECENT', 'SEARCH_TASKS',
-  'GET_STATE', 'GET_PAGE_STATE', 'GET_REMOTE_TIMER_STATUS', 'GET_STOPPED_OVERLAP', 'GET_EXCHANGE_RATES', 'GET_ONBOARDING_STATE',
+  'GET_STATE', 'GET_PAGE_STATE', 'GET_STOPPED_OVERLAP', 'GET_EXCHANGE_RATES', 'GET_ONBOARDING_STATE',
   'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES',
 ]);
 
@@ -848,24 +848,6 @@ async function globalTrackerState({ refresh = false, includeSummary = false, inc
     result.remoteWriteConfirmed = !summaryError && summaries.every(destinationSaveConfirmed);
   }
   return result;
-}
-
-async function remoteTimerStatus() {
-  const snapshot = await configuredSnapshot({ localOnly: true });
-  const destinationIds = Object.keys(snapshot.registry?.destinations ?? {});
-  if (!snapshot.auth || !destinationIds.length) return { remoteTimers: [] };
-  const tracking = await store.getTrackingSnapshot();
-  const remoteTimers = [];
-  for (const destinationId of destinationIds) {
-    const tracker = await trackerForDestination(destinationId, { localOnly: true, persistUser: false });
-    const [remote, state] = await Promise.all([tracker.readRemoteActive(), tracker.getState()]);
-    const local = tracking.activeTimer?.destinationId === destinationId ? state.active : null;
-    if (remote && (remote.id !== local?.id || remote.startedAt !== local.startedAt
-        || taskUrlOf(remote) !== taskUrlOf(local))) {
-      remoteTimers.push({ destinationId, startedAt: remote.startedAt, timezone: remote.timezone });
-    }
-  }
-  return { remoteTimers };
 }
 
 async function loadRecentAcrossDestinations(message, sender, extensionOrigin) {
@@ -1342,12 +1324,6 @@ async function handle(message, sender) {
   if (message.type === 'GET_EXCHANGE_RATES') return loadExchangeRates(message);
   if (message.type === 'LOAD_TASKS') return loadTasks(message, sender);
   if (message.type === 'LOAD_TIMES') return loadTimes(message, sender);
-  if (message.type === 'GET_REMOTE_TIMER_STATUS') {
-    if (sender?.url !== chrome.runtime.getURL('src/times/times.html') || Object.keys(message).join(',') !== 'type') {
-      throw new Error('Invalid Activity remote timer payload or sender');
-    }
-    return remoteTimerStatus();
-  }
   if (message.type === 'SEARCH_TASKS') {
     if (Object.keys(message).sort().join(',') !== 'query,type' || typeof message.query !== 'string'
         || message.query.length > 300) throw new Error('Invalid task search query');
@@ -1677,7 +1653,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'LOCAL_PREFERENCES_CHANGED') return undefined;
   const reportReadOnly = ['LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'CANCEL_REPORT', 'GET_EXCHANGE_RATES'].includes(message?.type);
   const localStateRead = ['GET_STATE', 'GET_PAGE_STATE'].includes(message?.type) && !message?.refresh;
-  const readOnly = reportReadOnly || localStateRead || ['LOAD_TASKS', 'LOAD_TIMES', 'GET_REMOTE_TIMER_STATUS', 'GET_STOPPED_OVERLAP', 'SEARCH_TASKS', 'SEARCH_ENTRY_TASKS', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES', 'GET_ADDON_SETTINGS', 'GET_CLOCKIFY_MIGRATION_PREVIEW', 'SEARCH_INVITEE_USERS', 'SEARCH_CLOCKIFY_GITHUB_USERS', 'LOAD_REPOSITORY_COLLABORATORS'].includes(message?.type);
+  const readOnly = reportReadOnly || localStateRead || ['LOAD_TASKS', 'LOAD_TIMES', 'GET_STOPPED_OVERLAP', 'SEARCH_TASKS', 'SEARCH_ENTRY_TASKS', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES', 'GET_ADDON_SETTINGS', 'GET_CLOCKIFY_MIGRATION_PREVIEW', 'SEARCH_INVITEE_USERS', 'SEARCH_CLOCKIFY_GITHUB_USERS', 'LOAD_REPOSITORY_COLLABORATORS'].includes(message?.type);
   const changesConfiguration = ['SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'IMPORT_SETTINGS', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION', 'INVITE_REPOSITORY_USER'].includes(message?.type);
   let operation;
   if (changesConfiguration) {

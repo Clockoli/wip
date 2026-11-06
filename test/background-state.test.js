@@ -347,35 +347,8 @@ test('page state exposes full totals while retaining safe active and pending pro
   await assert.rejects(() => context.handle({ type: 'LOAD_TIMES' }, { url: 'https://example.org' }), /extension|allowed|trusted/i);
 });
 
-test('read-only Activity timer check exposes GitHub-only active without changing local tracking', async () => {
-  const remote = { id: 'remote', taskUrl: 'https://github.com/acme/repo/issues/1', startedAt: '2026-10-27T08:00:00.000Z', timezone: 'Europe/Warsaw', description: 'private' };
-  let localActive = null, remoteRead = remote;
-  const context = vm.createContext({ assertMessageAllowed, taskUrlOf,
-    chrome: { runtime: { getURL: path => origin + (path || '') } },
-    configuredSnapshot: async () => ({ registry, auth: {} }),
-    trackerForDestination: async (_id, options) => {
-      assert.equal(options.persistUser, false);
-      return {
-        getState: async ({ refresh } = {}) => {
-          assert.notEqual(refresh, true); // The check must not refresh or mutate local activeCache.
-          return { active: localActive, recent: [], pendingWrites: [] };
-        },
-        readRemoteActive: async () => remoteRead,
-      };
-    },
-    store: { getTrackingSnapshot: async () => ({ activeTimer: localActive ? { destinationId } : null }),
-      getLocalPreferences: async () => ({ projects: [] }), getActivityDisplayPreferences: async () => ({ projects: [] }) },
-  });
-  installWorkerHandler(context);
-  const result = plain(await context.handle({ type: 'GET_REMOTE_TIMER_STATUS' }, sender));
-  assert.deepEqual(result.remoteTimers, [{ destinationId, startedAt: remote.startedAt, timezone: remote.timezone }]);
-  assert.equal(JSON.stringify(result).includes('private'), false);
-  localActive = remote;
-  assert.deepEqual(plain((await context.handle({ type: 'GET_REMOTE_TIMER_STATUS' }, sender)).remoteTimers), []);
-  localActive = null; remoteRead = undefined;
-  assert.deepEqual(plain((await context.handle({ type: 'GET_REMOTE_TIMER_STATUS' }, sender)).remoteTimers), []);
-  await assert.rejects(() => context.handle({ type: 'GET_REMOTE_TIMER_STATUS', payload: {} }, sender), /payload/i);
-  await assert.rejects(() => context.handle({ type: 'GET_REMOTE_TIMER_STATUS' }, { url: 'https://github.com/acme/repo/issues/1', tab: { id: 1 } }), /allowed/i);
+test('remote timer status is not an exposed Activity message', async () => {
+  assert.throws(() => assertMessageAllowed('GET_REMOTE_TIMER_STATUS', sender, origin), /not allowed/);
 });
 
 test('read-only remote timer context does not persist a missing local user', async () => {
