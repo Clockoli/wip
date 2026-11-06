@@ -204,6 +204,7 @@ test('search checks a local unified index first and refreshes all users on a mis
   vm.runInContext(worker.slice(start, end), context);
   const first = await context.searchTasks(sender, 'colleague');
   assert.equal(reads, 1, 'first search builds a complete local snapshot');
+  assert.equal(saved.version, 2, 'the new catalog must not reuse title-enriched snapshots from the old format');
   assert.equal(first.tasks[0].title, 'Colleague task');
   const cached = await context.searchTasks(sender, 'colleague');
   assert.equal(reads, 1, 'a hit after a worker restart must not touch GitHub');

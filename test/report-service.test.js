@@ -318,7 +318,7 @@ test('search fallback retains different bodies sharing an ID within a repository
   assert.equal(merged.conflicts[0].code, 'record_id_conflict');
 });
 
-test('task catalog fills missing old titles from completed history without writing to colleagues branches', async () => {
+test('task catalog keeps untitled index IDs without reading monthly history', async () => {
   const primary = new FakeGitHub(), personal = new FakeGitHub();
   primary.forBranch = branch => branch === 'main' ? primary : personal;
   primary.listBranches = async () => ['clockoli/users/123'];
@@ -337,20 +337,23 @@ test('task catalog fills missing old titles from completed history without writi
   const cache = new MemoryReportCache();
   const result = await new ReportService({ github: primary, cache })
     .loadRepositoryTaskCatalog({ defaultBranch: 'main' });
-  assert.deepEqual(result.tasks.map(item => [item.taskUrl, item.title]), [[url, 'Old task title']]);
-  assert.deepEqual(personal.reads, [TASK_INDEX_PATH, 'times/2025-01/alice.jsonl']);
+  assert.deepEqual(result.tasks.map(item => [item.taskUrl, item.title]), [[url, '']]);
+  assert.deepEqual(result.recordIds, [record.id], 'untitled tasks keep their IDs for conflict and pending-write checks');
+  assert.deepEqual(personal.reads, [TASK_INDEX_PATH]);
+  cache.value.catalog.titles = { [url]: 'Stale reconstructed title' };
   personal.notModified = true;
   const warm = await new ReportService({ github: primary, cache }).loadRepositoryTaskCatalog({ defaultBranch: 'main' });
-  assert.deepEqual(warm.tasks, result.tasks);
-  assert.equal(personal.reads.length, 2, 'unchanged old index reuses locally reconstructed names');
+  assert.deepEqual(warm.tasks, result.tasks, 'a legacy report cache cannot supply titles missing from the Git index');
+  assert.deepEqual(personal.reads, [TASK_INDEX_PATH], 'a worker restart never reads history for an untitled index entry');
   personal.notModified = false; personal.etag = '"two"';
   const revised = structuredClone(record); revised.work_item.title = 'Renamed old task';
   personal.files.set('times/2025-01/alice.jsonl', { sha: C, text: monthly(JSON.stringify(revised)) });
   const refreshed = await new ReportService({ github: primary, cache }).loadRepositoryTaskCatalog({ defaultBranch: 'main' });
-  assert.equal(refreshed.tasks[0].title, 'Renamed old task');
+  assert.equal(refreshed.tasks[0].title, '', 'monthly-only title changes are not part of the searchable index');
+  assert.deepEqual(personal.reads, [TASK_INDEX_PATH], 'even a changed branch skips history when the index is unchanged');
 });
 
-test('legacy title reconstruction rejects a repeated record ID across monthly files', async () => {
+test('task catalog does not scan monthly files for legacy untitled entries', async () => {
   const primary = new FakeGitHub(), personal = new FakeGitHub();
   primary.forBranch = branch => branch === 'main' ? primary : personal;
   primary.listBranches = async () => ['clockoli/users/123'];
@@ -370,8 +373,10 @@ test('legacy title reconstruction rejects a repeated record ID across monthly fi
   personal.getText = async path => path === '.clockoli/user.json'
     ? { text: JSON.stringify({ version: 1, githubUserId: 123, storageLogin: 'alice' }) }
     : getText(path);
-  await assert.rejects(() => new ReportService({ github: primary, cache: new MemoryReportCache() })
-    .loadRepositoryTaskCatalog({ defaultBranch: 'main' }), /duplicate|match completed records/i);
+  const result = await new ReportService({ github: primary, cache: new MemoryReportCache() })
+    .loadRepositoryTaskCatalog({ defaultBranch: 'main' });
+  assert.deepEqual(result.tasks.map(item => item.title), ['']);
+  assert.deepEqual(personal.reads, [TASK_INDEX_PATH]);
 });
 
 test('task catalog refuses understated index bytes before persisting a cache entry', async () => {
