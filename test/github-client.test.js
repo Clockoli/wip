@@ -15,6 +15,30 @@ function response(status, body = null, headers = {}) {
   return { ok: status >= 200 && status < 300, status, headers: new Headers(headers), json: async () => body };
 }
 
+test('GitHub request distinguishes network failure and times out a stalled fetch', async () => {
+  const offline = new GitHubClient({ token: 'secret', fetchImpl: async () => { throw new TypeError('Failed to fetch'); } });
+  await assert.rejects(offline.request('/user'), error => error.code === 'network_error' && !error.message.includes('secret'));
+
+  let aborted = false;
+  const stalled = new GitHubClient({ token: 'secret', requestTimeoutMs: 10, fetchImpl: async (_url, { signal }) => new Promise((_resolve, reject) => {
+    signal.addEventListener('abort', () => { aborted = true; reject(signal.reason); }, { once: true });
+  }) });
+  await assert.rejects(stalled.request('/user'), error => error.code === 'network_timeout');
+  assert.equal(aborted, true);
+
+  const controller = new AbortController();
+  let fetched;
+  const started = new Promise(resolve => { fetched = resolve; });
+  const cancelled = new GitHubClient({ token: 'secret', requestTimeoutMs: 100, fetchImpl: async (_url, { signal }) => new Promise((_resolve, reject) => {
+    signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    fetched();
+  }) });
+  const request = cancelled.request('/user', { signal: controller.signal });
+  await started;
+  controller.abort(new DOMException('cancelled', 'AbortError'));
+  await assert.rejects(request, error => error.name === 'AbortError');
+});
+
 test('repository collaborator previews use verified identities and safe avatar URLs', async () => {
   const requests = [];
   const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'time-data', fetchImpl: async url => {

@@ -141,6 +141,16 @@ test('destination loads isolate ordinary failures, reject all failures, and prop
   assert.deepEqual(partial.readStatus.map(item => [item.destinationId, item.status]), [['github:1', 'ok'], ['github:2', 'error']]);
   assert.doesNotMatch(JSON.stringify(partial.readStatus), /private/);
   await assert.rejects(() => loadDestinationRecords(destinations, async () => { throw new Error('down'); }), error => error?.code === 'all_destinations_failed');
+  await assert.rejects(() => loadDestinationRecords(destinations, async () => {
+    throw Object.assign(new Error('token=private'), { code: 'network_error' });
+  }), error => error?.code === 'network_error' && !error.message.includes('private')
+    && error.readStatus.every(item => item.error.code === 'network_error'));
+  await assert.rejects(() => loadDestinationRecords(destinations, async () => {
+    throw Object.assign(new Error('token=private'), { code: 'network_timeout' });
+  }), error => error?.code === 'network_timeout' && !error.message.includes('private'));
+  await assert.rejects(() => loadDestinationRecords(destinations, async destination => {
+    throw Object.assign(new Error('private'), { code: destination.id === 'github:1' ? 'network_error' : 'permission' });
+  }), error => error?.code === 'all_destinations_failed');
   const controller = new AbortController(); let settled = 0;
   const loading = loadDestinationRecords(destinations, (_destination, signal) => new Promise((resolve, reject) => {
     signal.addEventListener('abort', () => { settled += 1; reject(signal.reason); }, { once: true });

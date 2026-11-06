@@ -2063,9 +2063,9 @@ test('a failed Activity load offers a retry without mentioning deletion', async 
     manifest.background = { service_worker: 'test-worker.js' };
     await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
     await writeFile(join(extension, 'test-worker.js'), workerSource.replace(
-      'globalThis.failEdit = false;', 'globalThis.failEdit = false; globalThis.failTimesLoad = true;').replace(
+      'globalThis.failEdit = false;', "globalThis.failEdit = false; globalThis.failTimesLoad = 'network_error';").replace(
       "if (message.type === 'LOAD_TIMES' && globalThis.deferOverlapRecent)",
-      "if (message.type === 'LOAD_TIMES' && globalThis.failTimesLoad) { respond({ ok: false, error: { message: 'History temporarily unavailable' } }); return; }\n  if (message.type === 'LOAD_TIMES' && globalThis.deferOverlapRecent)"));
+      "if (message.type === 'LOAD_TIMES' && globalThis.failTimesLoad) { respond({ ok: false, error: { code: globalThis.failTimesLoad, message: globalThis.failTimesMessage || 'History temporarily unavailable' } }); return; }\n  if (message.type === 'LOAD_TIMES' && globalThis.deferOverlapRecent)"));
     context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
@@ -2073,11 +2073,38 @@ test('a failed Activity load offers a retry without mentioning deletion', async 
     page.on('pageerror', error => errors.push(error.message));
     worker.on('console', event => { if (event.type() === 'error') errors.push(event.text()); });
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
-    const notice = page.getByRole('alert').filter({ hasText: 'Could not update Activity' });
+    const notice = page.locator('.times-load-error');
     await expect(notice).toBeVisible();
-    await expect(notice).toContainText('Try loading Activity again.');
+    await expect(notice).toContainText('Cannot reach GitHub');
+    await expect(notice).toContainText('Check your connection');
     await expect(notice).not.toContainText('deleted');
-    await expect(notice.locator('details')).toContainText('History temporarily unavailable');
+    await expect(notice.locator('details')).toHaveAttribute('open', '');
+    await expect(notice.locator('details pre')).toBeVisible();
+    await expect(notice.locator('details pre')).toHaveText('History temporarily unavailable');
+    const appearance = await notice.evaluate(node => {
+      const style = getComputedStyle(node), rect = node.getBoundingClientRect();
+      const previous = document.querySelector('.activity-overview-layout').getBoundingClientRect();
+      return { height: rect.height, background: style.backgroundColor, borderLeft: style.borderLeftWidth,
+        topGap: rect.top - previous.bottom };
+    });
+    expect(appearance.height).toBeLessThan(140);
+    expect(appearance.background).not.toBe('rgb(255, 235, 233)');
+    expect(Number.parseFloat(appearance.borderLeft)).toBeGreaterThanOrEqual(3);
+    expect(appearance.topGap).toBeGreaterThanOrEqual(12);
+    await page.setViewportSize({ width: 390, height: 700 });
+    await expect.poll(() => notice.evaluate(node => node.getBoundingClientRect().right <= innerWidth)).toBe(true);
+    await worker.evaluate(() => { globalThis.failTimesLoad = 'network_timeout'; });
+    await notice.getByRole('button', { name: 'Retry' }).click();
+    await expect(notice).toContainText('GitHub did not respond in time');
+    await worker.evaluate(() => {
+      globalThis.failTimesLoad = 'all_destinations_failed';
+      globalThis.failTimesMessage = 'All configured time repositories failed to load.';
+    });
+    await notice.getByRole('button', { name: 'Retry' }).click();
+    await expect(notice.locator('.times-load-error-copy strong')).toHaveText('Could not load Activity');
+    await expect(notice.locator('.times-load-error-copy p')).toHaveText('All configured time repositories failed to load.');
+    await expect(notice).not.toContainText('Try loading Activity again');
+    await expect(notice.locator('details')).toHaveCount(0);
     await worker.evaluate(() => { globalThis.failTimesLoad = false; });
     await notice.getByRole('button', { name: 'Retry' }).click();
     await expect(notice).toHaveCount(0);

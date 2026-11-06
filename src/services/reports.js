@@ -133,8 +133,14 @@ export async function loadDestinationRecords(destinations, read, { signal, concu
       else readStatus.push({ ...base, status: 'error', error: sanitizedReadError(result.reason) });
     });
     if (!successful.length) {
-      const error = new Error('All configured time repositories failed to load.');
-      error.code = 'all_destinations_failed'; error.readStatus = readStatus; throw error;
+      const codes = readStatus.map(item => item.error.code);
+      const networkOnly = codes.every(code => code === 'network_error' || code === 'network_timeout');
+      const timedOut = networkOnly && codes.every(code => code === 'network_timeout');
+      const error = new Error(networkOnly
+        ? timedOut ? 'GitHub did not respond in time.' : 'Could not connect to GitHub.'
+        : 'All configured time repositories failed to load.');
+      error.code = networkOnly ? timedOut ? 'network_timeout' : 'network_error' : 'all_destinations_failed';
+      error.readStatus = readStatus; throw error;
     }
     const merged = merge(successful, inputs.map(destination => destination.id));
     return { ...merged, readStatus, partial: successful.length !== inputs.length || merged.conflicts.length > 0 };

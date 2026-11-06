@@ -242,7 +242,7 @@ function taskSnapshot(repository, node, type, capturedAt) {
 }
 
 export class GitHubClient {
-  constructor({ token, credentialProvider = null, owner, repo, branch = 'main', expectedRepositoryId = undefined, branchMode = 'custom', fetchImpl = fetch, now = () => new Date(), validationCache = null, requestDiagnostics = null, rateLimitGate = null }) {
+  constructor({ token, credentialProvider = null, owner, repo, branch = 'main', expectedRepositoryId = undefined, branchMode = 'custom', fetchImpl = fetch, now = () => new Date(), validationCache = null, requestDiagnostics = null, rateLimitGate = null, requestTimeoutMs = 30_000 }) {
     if ((!token || typeof token !== 'string') && !credentialProvider?.getAccessToken) throw new Error('GitHub credentials are required');
     this.token = token || '';
     this.credentialProvider = credentialProvider;
@@ -262,6 +262,7 @@ export class GitHubClient {
     this.validationCache = validationCache;
     this.requestDiagnostics = typeof requestDiagnostics === 'function' ? requestDiagnostics : null;
     this.rateLimitGate = rateLimitGate;
+    this.requestTimeoutMs = requestTimeoutMs;
   }
 
   get repositoryKey() { return `${this.owner}/${this.repo}@${this.branch}`; }
@@ -292,33 +293,54 @@ export class GitHubClient {
     };
     const requestWithToken = async token => {
       await this.rateLimitGate?.ready();
-      return this.fetchImpl(`https://api.github.com${path}`, {
-        ...options,
-        cache: 'no-store',
-        headers: {
-          Accept: 'application/vnd.github+json',
-          Authorization: `Bearer ${token}`,
-          'X-GitHub-Api-Version': '2022-11-28',
-          ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-          ...options.headers,
-        },
-      });
+      const controller = new AbortController();
+      const parent = options.signal;
+      const abortFromParent = () => controller.abort(parent.reason);
+      if (parent?.aborted) abortFromParent();
+      else parent?.addEventListener('abort', abortFromParent, { once: true });
+      const timeout = setTimeout(() => controller.abort(new DOMException('GitHub request timed out', 'TimeoutError')), this.requestTimeoutMs);
+      try {
+        const response = await this.fetchImpl(`https://api.github.com${path}`, {
+          ...options, signal: controller.signal,
+          cache: 'no-store',
+          headers: {
+            Accept: 'application/vnd.github+json',
+            Authorization: `Bearer ${token}`,
+            'X-GitHub-Api-Version': '2022-11-28',
+            ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+            ...options.headers,
+          },
+        });
+        let body = null;
+        if (response.status !== 304) try { body = await response.json(); } catch (error) {
+          if (controller.signal.aborted) throw error;
+          /* Empty response. */
+        }
+        return { response, body };
+      } catch (error) {
+        if (controller.signal.reason?.name === 'TimeoutError') throw new GitHubApiError('GitHub did not respond in time.', 0, 'network_timeout');
+        if (parent?.aborted) throw parent.reason ?? error;
+        if (error instanceof TypeError) throw new GitHubApiError('Could not connect to GitHub.', 0, 'network_error');
+        throw error;
+      } finally {
+        clearTimeout(timeout);
+        parent?.removeEventListener('abort', abortFromParent);
+      }
     };
     let token = this.credentialProvider ? await this.credentialProvider.getAccessToken() : this.token;
-    let response;
-    try { response = await requestWithToken(token); }
+    let response, body;
+    try { ({ response, body } = await requestWithToken(token)); }
     catch (error) { report('network_error'); throw error; }
     if (response.status === 401 && this.credentialProvider) {
       token = await this.credentialProvider.getAccessToken({ forceRefresh: true, rejectedToken: token });
-      try { response = await requestWithToken(token); }
+      try { ({ response, body } = await requestWithToken(token)); }
       catch (error) { report('network_error'); throw error; }
     }
     if (allowNotModified && response.status === 304) {
       report(response.status);
       return { body: null, status: response.status, headers: response.headers, notModified: true };
     }
-    let body = null;
-    try { body = await response.json(); } catch { /* empty response */ }
+
     if (!response.ok) {
       report(response.status);
       if (response.status === 401) throw new GitHubAuthenticationError();
@@ -489,7 +511,7 @@ export class GitHubClient {
       token: this.token, credentialProvider: this.credentialProvider,
       owner: this.owner, repo: this.repo, branch,
       expectedRepositoryId: this.expectedRepositoryId,
-      branchMode, fetchImpl: this.fetchImpl, rateLimitGate: this.rateLimitGate,
+      branchMode, fetchImpl: this.fetchImpl, rateLimitGate: this.rateLimitGate, requestTimeoutMs: this.requestTimeoutMs,
     });
   }
 
