@@ -5382,10 +5382,10 @@
     }
 
     function positionEmptyCalendarDays() {
-      const viewport = timeline.calendarViewport;
       const canvas = timeline.calendarCanvas;
-      if (!viewport || !canvas) return;
-      const top = Math.min(canvas.offsetHeight - 90, Math.max(100, viewport.scrollTop + viewport.clientHeight * .42));
+      if (!canvas) return;
+      const metrics = timeline._calendarMetrics ?? timeline._calendarMetricsForRender();
+      const top = Math.min(metrics.height - 90, metrics.headerHeight + metrics.verticalMap.toY(10 * 60));
       for (const marker of canvas.querySelectorAll('.clockoli-calendar-empty')) marker.style.top = `${top}px`;
     }
 
@@ -5746,7 +5746,6 @@
     host.addEventListener('timeline:viewmodechange', () => props.onViewModeChange?.(timeline.getViewMode()));
     styleObserver = new MutationObserver(styleTasks);
     styleObserver.observe(timeline.shadow, { childList: true, subtree: true });
-    timeline.calendarViewport?.addEventListener('scroll', positionEmptyCalendarDays, { passive: true });
     detailsObserver = new MutationObserver(renderActions);
     detailsObserver.observe(timeline.detailsInfo, { childList: true, subtree: true });
     hydrateExternalState();
@@ -5866,7 +5865,6 @@
         if (destroyed) return;
         destroyed = true;
         styleObserver?.disconnect();
-        timeline.calendarViewport?.removeEventListener('scroll', positionEmptyCalendarDays);
         detailsObserver?.disconnect();
         clearTimeout(hoverExitTimer);
         cancelAnimationFrame(tooltipFrame);

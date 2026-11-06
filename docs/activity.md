@@ -25,7 +25,7 @@ Activity shows three compact metrics in a summary panel headed by the selected w
 - **Today** shows tracked time for the current local day, regardless of the selected week. On Activity and both popup surfaces, Today appears here instead of in the running-timer strip.
 - **Total tracked** and **Tasks worked on** cover the selected Monday–Sunday week. Running time counts only on the current week; totals update when browsing weeks. List search filters entries without changing this week-wide total.
 
-Statistics reflect locally accepted records, including edits still waiting to sync to GitHub. No comparison with the previous week is implied. Calendar days without any entries show **No time entries** on weekdays and weekends alike.
+Statistics reflect locally accepted records, including edits still waiting to sync to GitHub. No comparison with the previous week is implied. Calendar days without any entries show **No time entries** on weekdays and weekends alike. The label stays at a fixed point in the day's grid rather than following the vertical scroll.
 
 In Activity and both popup surfaces, the summary panel replaces a duplicate Total above List, Timeline, and Calendar. The Timeline, Calendar, and List icon switcher sits beside the light/dark theme button in the page navigation; each icon has an accessible name.
 

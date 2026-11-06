@@ -157,15 +157,15 @@ Clockoli warns before saving an entry longer than 12 hours. This catches forgott
 
 ### A stopped entry is still waiting to sync
 
-Clockoli has preserved the Stop operation in extension-local storage but could not finish the GitHub write yet. Until it does, a new Start can report that the previous timer was saved locally but must sync first.
+Clockoli has preserved the Stop operation in extension-local storage but could not finish the GitHub write yet. You can start another timer locally while the previous Stop waits in the queue; dependent GitHub writes follow it in order.
 
-Activity shows **Stop waiting to sync** instead of **Not tracking** while a completion is queued, or **Stop needs attention** if it has a conflict. The Stop has already been accepted locally: do not press Stop again or delete the extension to clear it. A separate GitHub timer warning appears in Timeline, Calendar, and List when the remote active record differs from local tracking; it does not turn a completed historical row into a running timer.
+Activity shows **Not tracking** after a locally accepted Stop, even while its GitHub write is queued. Only an actionable conflict changes this to **Stop needs attention** and offers review in Activity. The Stop has already been accepted locally: do not press Stop again or delete the extension to clear it.
 
 - Keep the extension installed and do not clear its data.
 - Restore network/repository access.
 - Wait: queued writes are pushed after 15 seconds without new changes, and Clockoli also retries at startup and approximately once per minute. There is no manual Sync button.
 - If the panel shows **Retry** or another recovery action, follow it.
-- In **Activity → List**, pending local changes are identified separately from queued conflicts. If a conflict appears, review its recovery action there; never discard an unsaved completion until you have verified the time is recorded elsewhere.
+- If a conflict appears, review it in Activity from any view; never discard an unsaved completion until you have verified the time is recorded elsewhere.
 
 See [Sync and offline work](sync.md) for the full model.
 

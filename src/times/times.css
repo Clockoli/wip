@@ -95,7 +95,7 @@ html[data-clockoli-width="full"] #activity-sync-status:not(:empty){width:calc(10
   background-color:var(--bgColor-default);
   box-shadow:none
 }
-#activity-running-status.running-status.is-pending-stop .running-status-row{
+#activity-running-status.running-status.is-conflicted-stop .running-status-row{
   border-left:4px solid var(--borderColor-attention-emphasis);
   background:linear-gradient(100deg,var(--bgColor-attention-muted),var(--bgColor-default) 65%)
 }

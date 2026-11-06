@@ -1974,6 +1974,37 @@ test('Calendar opens at the first record when there is no group, including befor
   expect(position.top).toBeLessThan(180);
 });
 
+test('empty Calendar labels stay at a fixed grid time instead of following vertical scroll', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(2026, 9, 14, 18));
+  for (const width of [1000, 420]) {
+    await page.setViewportSize({ width, height: 600 });
+    await mount(page, { weeklyCalendar: true, items: [] });
+    const result = await page.evaluate(async width => {
+      document.querySelector('#timeline').style.width = `${width - 16}px`;
+      window.__timeline.setViewMode('calendar');
+      const shadow = document.querySelector('#timeline').shadowRoot;
+      const viewport = shadow.querySelector('.calendar-viewport');
+      const label = shadow.querySelector('.clockoli-calendar-empty');
+      const canvas = shadow.querySelector('.calendar-canvas');
+      const initial = { top: Number.parseFloat(label.style.top), screen: label.getBoundingClientRect().top,
+        canvas: canvas.getBoundingClientRect().top, viewport: viewport.getBoundingClientRect(), scroll: viewport.scrollTop };
+      viewport.scrollTop += 180;
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const current = shadow.querySelector('.clockoli-calendar-empty');
+      const after = { top: Number.parseFloat(current.style.top), screen: current.getBoundingClientRect().top,
+        canvas: canvas.getBoundingClientRect().top, scroll: viewport.scrollTop };
+      return { initial, after, viewportWidth: viewport.clientWidth };
+    }, width);
+    expect(result.viewportWidth).toBeLessThanOrEqual(width);
+    expect(result.initial.screen).toBeGreaterThanOrEqual(result.initial.viewport.top);
+    expect(result.initial.screen).toBeLessThan(result.initial.viewport.bottom);
+    expect(result.after.scroll - result.initial.scroll).toBeGreaterThan(100);
+    expect(result.after.top).toBe(result.initial.top);
+    expect(result.after.screen - result.initial.screen).toBeCloseTo(result.after.canvas - result.initial.canvas, 0);
+    expect(result.after.screen).toBeLessThan(result.initial.screen - 100);
+  }
+});
+
 test('Calendar refocuses when a previously empty week loads, but keeps manual scroll on later updates', async ({ page }) => {
   await page.clock.setFixedTime(new Date(2026, 9, 14, 18));
   const day = new Date(2026, 9, 14).getTime();
