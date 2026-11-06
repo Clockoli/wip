@@ -155,6 +155,10 @@ Clockoli warns before saving an entry longer than 12 hours. This catches forgott
 
 ## Synchronization and conflicts
 
+### Activity cannot reach GitHub
+
+Check your connection to GitHub and choose **Retry** in Activity when access returns. GitHub API requests have a 30-second timeout per attempt; a timeout is reported separately from a refused network connection. A read failure does not clear locally accepted timers or queued work. Other Activity load errors show technical details instead of assuming the network is offline.
+
 ### A stopped entry is still waiting to sync
 
 Clockoli has preserved the Stop operation in extension-local storage but could not finish the GitHub write yet. You can start another timer locally while the previous Stop waits in the queue; dependent GitHub writes follow it in order.

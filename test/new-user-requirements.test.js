@@ -85,7 +85,7 @@ test('Activity state and loading UI are independent of client billing settings',
   assert.match(worker, /const preferences = await store\.getActivityDisplayPreferences\(\)/);
   assert.match(chromeStore, /async getActivityDisplayPreferences\(\)/);
   assert.match(activity, /times-loading-placeholder/);
-  assert.match(activity, /Could not update Activity/);
+  assert.match(activity, /Could not load Activity/);
   assert.match(times, /activity-initial-loading/);
 });
 

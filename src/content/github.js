@@ -2900,17 +2900,28 @@
       if (activityErrorAction === 'edit') {
         notice.append(el('strong', 'Could not change the time entry'), el('p', errorText));
       } else {
-        notice.append(el('strong', 'Could not update Activity'),
-          el('p', 'Try loading Activity again.'));
+        const networkFailure = ['network_error', 'network_timeout'].includes(errorCode);
+        const copy = el('div', undefined, 'times-load-error-copy');
+        if (networkFailure) {
+          copy.append(el('strong', 'Cannot reach GitHub'),
+            el('p', errorCode === 'network_timeout'
+              ? 'GitHub did not respond in time. Check your connection and retry.'
+              : 'Check your connection to GitHub and retry.'));
+        } else copy.append(el('strong', 'Could not load Activity'), el('p', errorText));
+        notice.append(copy);
         const actions = el('div', undefined, 'times-load-error-actions');
         actions.append(button('Retry', 'secondary', async () => {
           errorText = ''; errorCode = ''; connectionError = null; renderUi();
           try { await refreshActivityState(true); await loadSelectedTimes(); }
           catch (cause) { setError(cause); }
         }));
-        const details = el('details', undefined, 'times-error-details');
-        details.append(el('summary', 'Technical details'), el('pre', errorText));
-        notice.append(actions, details);
+        notice.append(actions);
+        if (networkFailure) {
+          const details = el('details', undefined, 'times-error-details');
+          details.open = true;
+          details.append(el('summary', 'Technical details'), el('pre', errorText));
+          notice.append(details);
+        }
       }
       body.prepend(notice);
     }
@@ -4729,13 +4740,16 @@
       :host(.times-surface) .times-loading-placeholder {display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;min-height:240px;padding:88px 16px 28px;border:1px solid var(--borderColor-muted,var(--ck-border-muted));border-radius:12px;background:var(--bgColor-muted,var(--ck-bg-muted));color:var(--fgColor-muted,var(--ck-fg-muted))}
       :host(.times-surface) .times-loading-spinner {width:23px;height:23px;border:2px solid var(--borderColor-muted,var(--ck-border-muted));border-top-color:var(--fgColor-accent,var(--ck-accent));border-radius:50%;animation:activity-loading-spin .9s linear infinite}
       @keyframes activity-loading-spin {to{transform:rotate(360deg)}}
-      :host(.times-surface) .times-load-error {display:grid;gap:9px;margin:0 0 16px;padding:16px 18px;border:1px solid var(--borderColor-danger-muted,var(--ck-border-danger));border-radius:10px;background:var(--bgColor-danger-muted,var(--ck-bg-danger))}
-      :host(.times-surface) .times-load-error strong {font-size:15px}
-      :host(.times-surface) .times-load-error p {margin:0;color:var(--fgColor-default,var(--ck-fg))}
-      :host(.times-surface) .times-load-error-actions {display:flex;gap:8px}
-      :host(.times-surface) .times-error-details {font-size:12px;color:var(--fgColor-muted,var(--ck-fg-muted))}
+      :host(.times-surface) .times-load-error {display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:2px 14px;margin:16px 0;padding:10px 14px;border:1px solid var(--borderColor-muted,var(--ck-border-muted));border-left:4px solid var(--fgColor-attention,var(--ck-accent));border-radius:8px;background:var(--bgColor-muted,var(--ck-bg-muted))}
+      :host(.times-surface) .times-load-error-copy {display:grid;gap:2px;min-width:0}
+      :host(.times-surface) .times-load-error strong {font-size:14px}
+      :host(.times-surface) .times-load-error p {margin:0;color:var(--fgColor-muted,var(--ck-fg-muted));font-size:13px}
+      :host(.times-surface) .times-load-error-actions {display:flex;gap:8px;grid-column:2;grid-row:1}
+      :host(.times-surface) .times-load-error-actions button {min-height:32px;padding:4px 10px}
+      :host(.times-surface) .times-error-details {grid-column:1/-1;font-size:12px;color:var(--fgColor-muted,var(--ck-fg-muted))}
       :host(.times-surface) .times-error-details summary {cursor:pointer}
       :host(.times-surface) .times-error-details pre {white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0 0}
+      @media(max-width:460px){:host(.times-surface) .times-load-error-actions{grid-column:1/-1;grid-row:auto}}
       @media(prefers-reduced-motion:reduce){:host(.times-surface) .times-loading-spinner{animation:none}}
       :host(.times-surface) .week-navigation {min-height:50px;margin:0 0 4px;border-bottom:0}
       :host(.times-surface) .week-navigation {grid-template-columns:1fr 1fr}

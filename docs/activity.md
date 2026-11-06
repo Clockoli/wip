@@ -50,6 +50,8 @@ On opening Calendar and on each week change, it scrolls to the start of the larg
 
 On both Activity and the toolbar panel, Calendar displays a large in-place loading indicator while a selected week's records are being read. It starts when navigating to another week and disappears after the read completes or fails; an incomplete read reports its warning instead of spinning indefinitely. Refreshing data preserves the mounted timeline and its position.
 
+If a GitHub read fails, Activity shows a compact notice with Retry. A connection failure says GitHub cannot be reached; a request that times out says GitHub did not respond in time, with technical details visible immediately. Other load failures show **Could not load Activity** followed directly by the actual error reason, without a generic retry sentence or a false network diagnosis. A local timer and queued work remain available while a read fails.
+
 ## Select an entry
 
 Hovering over or focusing a Timeline or Calendar block shows its details in a compact floating card; clicking selects it without keeping the card open after the mouse leaves. A touchscreen tap also reveals the card. Neither single nor double click starts or stops a timer; use **Track time** or **Stop and save** in the details to change tracking. The selected entry's Start and End details show only the local time (HH:MM), without a date.
