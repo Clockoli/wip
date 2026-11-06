@@ -678,7 +678,7 @@ test('a block clipped at Monday cannot be moved with a shortened duration', asyn
 });
 
 for (const mode of ['timeline', 'calendar']) {
-  test(`restores a completed entry after dragging it into the future in ${mode}`, async ({ page }) => {
+  test(`clamps a completed entry before the future while dragging in ${mode}`, async ({ page }) => {
     await page.clock.install({ time: new Date('2026-10-16T16:00:00Z') });
     const now = await page.evaluate(() => Date.now());
     const start = now - 2 * HOUR;
@@ -719,15 +719,79 @@ for (const mode of ['timeline', 'calendar']) {
         end: timeline._findTask('entry:a').end };
     });
     expect(duringDrag.mutated).toBe(true);
-    expect(duringDrag.end).toBeGreaterThan(now);
+    expect(duringDrag.end).toBeLessThanOrEqual(await page.evaluate(() => Date.now()));
     await page.mouse.up();
     await expect.poll(() => page.evaluate(() => {
       const timeline = window.__timeline.__timeline;
       return { start: timeline._findTask('entry:a').start, end: timeline._findTask('entry:a').end,
         neighborStart: timeline._findTask('entry:neighbor').start, edits: window.__calls.filter(call => call[0] === 'edit').length,
         errors: window.__calls.filter(call => call[0] === 'error').map(call => call[2]), undo: timeline.undoStack.length };
-    })).toEqual({ start, end: start + HOUR, neighborStart, edits: 0,
-      errors: ['Time entries cannot end in the future.'], undo: 0 });
+    })).toEqual({ start: expect.any(Number), end: expect.any(Number), neighborStart, edits: 1,
+      errors: [], undo: 1 });
+    const final = await page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').end);
+    expect(final).toBeLessThanOrEqual(await page.evaluate(() => Date.now()));
+    expect(final).toBeGreaterThan(start + HOUR);
+  });
+
+  test(`clamps the end handle at now during ${mode} resizing`, async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-10-16T16:00:00Z') });
+    const now = await page.evaluate(() => Date.now());
+    const start = now - 2 * HOUR;
+    await mount(page, { items: [
+      { id: 'entry:a', url: 'https://example.com/a', title: 'Past', startedAt: start, endedAt: start + HOUR, isEditable: true },
+    ], view: { start: now - 4 * HOUR, end: now + 4 * HOUR, focusedAt: now } });
+    await page.clock.pauseAt(new Date('2026-10-16T16:00:01Z'));
+    if (mode === 'calendar') await page.evaluate(() => {
+      const timeline = window.__timeline.__timeline;
+      timeline.setViewMode('calendar');
+      const day = new Date(Date.now()); day.setHours(0, 0, 0, 0);
+      const nextDay = new Date(day); nextDay.setDate(nextDay.getDate() + 1);
+      timeline.setCalendarRange({ start: day.getTime(), end: nextDay.getTime() });
+    });
+    const handle = page.locator(`#timeline ${mode === 'calendar'
+      ? '.calendar-task[data-task-key="entry:a"] .calendar-resize-handle.end'
+      : '.task[data-task-key="entry:a"] .resize-handle.right'}`).first();
+    await handle.scrollIntoViewIfNeeded();
+    const box = await handle.boundingBox();
+    const x = box.x + box.width / 2, y = box.y + box.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    if (mode === 'calendar') await page.mouse.move(x, y + 4 * 60, { steps: 8 });
+    else await page.mouse.move(x + 3 * HOUR * await page.evaluate(() => window.__timeline.__timeline.scalePxPerMs), y, { steps: 8 });
+    const during = await page.evaluate(() => window.__timeline.__timeline._findTask('entry:a').end);
+    expect(during).toBeLessThanOrEqual(await page.evaluate(() => Date.now()));
+    await page.mouse.up();
+    await expect.poll(() => page.evaluate(() => window.__calls.filter(call => call[0] === 'edit').length)).toBe(1);
+    expect(await page.evaluate(() => window.__calls.filter(call => call[0] === 'error'))).toEqual([]);
+  });
+
+  test(`a future-only ${mode} end drag at the boundary does not submit an unchanged edit`, async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-10-16T16:00:00Z') });
+    await page.clock.pauseAt(new Date('2026-10-16T16:00:01Z'));
+    const now = await page.evaluate(() => Date.now());
+    await mount(page, { items: [
+      { id: 'entry:a', url: 'https://example.com/a', title: 'Past', startedAt: now - HOUR, endedAt: now, isEditable: true },
+    ], view: { start: now - 3 * HOUR, end: now + 4 * HOUR, focusedAt: now } });
+    if (mode === 'calendar') await page.evaluate(() => {
+      const timeline = window.__timeline.__timeline;
+      timeline.setViewMode('calendar');
+      const day = new Date(Date.now()); day.setHours(0, 0, 0, 0);
+      const nextDay = new Date(day); nextDay.setDate(nextDay.getDate() + 1);
+      timeline.setCalendarRange({ start: day.getTime(), end: nextDay.getTime() });
+    });
+    const handle = page.locator(`#timeline ${mode === 'calendar'
+      ? '.calendar-task[data-task-key="entry:a"] .calendar-resize-handle.end'
+      : '.task[data-task-key="entry:a"] .resize-handle.right'}`).first();
+    await handle.scrollIntoViewIfNeeded();
+    const box = await handle.boundingBox();
+    const x = box.x + box.width / 2, y = box.y + box.height / 2;
+    await page.mouse.move(x, y); await page.mouse.down();
+    if (mode === 'calendar') await page.mouse.move(x, y + 120, { steps: 8 });
+    else await page.mouse.move(x + HOUR * await page.evaluate(() => window.__timeline.__timeline.scalePxPerMs), y, { steps: 8 });
+    await page.mouse.up();
+    expect(await page.evaluate(() => ({ end: window.__timeline.__timeline._findTask('entry:a').end,
+      edits: window.__calls.filter(call => call[0] === 'edit').length,
+      history: window.__timeline.__timeline.undoStack.length }))).toEqual({ end: now, edits: 0, history: 0 });
   });
 
   test(`rejects a move into the future in ${mode} without sending an edit`, async ({ page }) => {

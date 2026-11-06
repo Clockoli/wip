@@ -157,6 +157,7 @@
   const inlineBoundaryLinks = new Map();
   const inlineGroupSaves = new Map();
   let errorText = '';
+  let activityErrorAction = null;
   let errorCode = '';
   let todayReportDate = '';
   let summaryUpdatedAt = 0;
@@ -1555,7 +1556,7 @@
     return save;
   }
 
-  function setError(error = '') { if (isExtensionContextInvalidated(error)) { deactivateExtensionContext(); return; } if (error?.name === 'AbortError' || error?.code === 'aborted') return; errorText = error?.message || String(error || ''); errorCode = error?.code || ''; connectionError = errorText ? { ...error, message: errorText, code: errorCode } : null; renderUi(); }
+  function setError(error = '', action = null) { if (isExtensionContextInvalidated(error)) { deactivateExtensionContext(); return; } if (error?.name === 'AbortError' || error?.code === 'aborted') return; errorText = error?.message || String(error || ''); activityErrorAction = action; errorCode = error?.code || ''; connectionError = errorText ? { ...error, message: errorText, code: errorCode } : null; renderUi(); }
 
   function closeMenu() { menuOpen = false; menuScrollTop = 0; cancelActiveInlineDraft(); if (pageState.configured != null) { errorText = ''; errorCode = ''; } renderUi(); }
 
@@ -2896,17 +2897,21 @@
     if (errorText) {
       const notice = el('section', undefined, 'times-load-error');
       notice.setAttribute('role', 'alert');
-      notice.append(el('strong', 'Could not update Activity'),
-        el('p', 'Your recorded time has not been deleted. Try loading it again.'));
-      const actions = el('div', undefined, 'times-load-error-actions');
-      actions.append(button('Retry', 'secondary', async () => {
-        errorText = ''; errorCode = ''; connectionError = null; renderUi();
-        try { await refreshActivityState(true); await loadSelectedTimes(); }
-        catch (cause) { setError(cause); }
-      }));
-      const details = el('details', undefined, 'times-error-details');
-      details.append(el('summary', 'Technical details'), el('pre', errorText));
-      notice.append(actions, details);
+      if (activityErrorAction === 'edit') {
+        notice.append(el('strong', 'Could not change the time entry'), el('p', errorText));
+      } else {
+        notice.append(el('strong', 'Could not update Activity'),
+          el('p', 'Try loading Activity again.'));
+        const actions = el('div', undefined, 'times-load-error-actions');
+        actions.append(button('Retry', 'secondary', async () => {
+          errorText = ''; errorCode = ''; connectionError = null; renderUi();
+          try { await refreshActivityState(true); await loadSelectedTimes(); }
+          catch (cause) { setError(cause); }
+        }));
+        const details = el('details', undefined, 'times-error-details');
+        details.append(el('summary', 'Technical details'), el('pre', errorText));
+        notice.append(actions, details);
+      }
       body.prepend(notice);
     }
     page.append(body); return page;
@@ -3565,7 +3570,8 @@
         onError: (error, context) => {
           if (!host.isConnected) return;
           if (context?.action === 'edit' && showTimelineEditConflict(error)) return;
-          if (!showTimelineWeekError(error)) setError(error);
+          if (!showTimelineWeekError(error)) setError(error,
+            context?.action === 'edit' || ['move', 'resize-start', 'resize-end'].includes(context?.event?.action) ? 'edit' : null);
         },
         onStop: item => {
           const entry = timelineEntriesById.get(item.id);
@@ -3630,7 +3636,7 @@
             if (edit.kind !== 'resize-left') return;
             try {
               await queueActiveStartEdit(entry, edit.startedAt);
-            } catch (error) { setError(error); throw error; }
+            } catch (error) { setError(error, 'edit'); throw error; }
             return;
           }
           const edits = edit.kind === 'move'
@@ -3639,7 +3645,7 @@
               ? { startedAt: new Date(edit.startedAt).toISOString() }
               : { endedAt: new Date(edit.endedAt).toISOString() };
           try { await queueCalendarEntry(entry, edits); }
-          catch (error) { setError(error); throw error; }
+          catch (error) { setError(error, 'edit'); throw error; }
         },
         });
         if ((!timesMode || focusCurrentActivityWeek) && periodStart === weekWindow(Date.now()).start) timelineInstance.scrollToEnd();

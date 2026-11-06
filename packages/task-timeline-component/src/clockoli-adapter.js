@@ -533,6 +533,7 @@
       magneticSnap: true,
       magnetStepsMinutes: [5],
       calendarMagnetStepMinutes: 1,
+      maxEditEnd: () => Date.now(),
       magnetScaleThresholdDays: [7],
       canChange: canRun,
       onStart(task, event) {

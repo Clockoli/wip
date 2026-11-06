@@ -88,7 +88,7 @@ test('calendar tracking uses the stored identity in both the GitHub panel and Ac
 
 test('extension-context interruption stops stale content timers without rendering an error', () => {
   assert.match(source, /function deactivateExtensionContext\(\) \{[\s\S]*?clearInterval\(tick\)/);
-  assert.match(source, /function setError\(error = ''\) \{ if \(isExtensionContextInvalidated\(error\)\) \{ deactivateExtensionContext\(\); return; \}/);
+  assert.match(source, /function setError\(error = '', action = null\) \{ if \(isExtensionContextInvalidated\(error\)\) \{ deactivateExtensionContext\(\); return; \}/);
   assert.match(source, /function send\(message\) \{[\s\S]*?catch \(cause\) \{[\s\S]*?isExtensionContextInvalidated\(error\)[\s\S]*?deactivateExtensionContext\(\)/);
   assert.match(source, /function extensionResourceUrl\(path\) \{[\s\S]*?globalThis\.chrome\?\.runtime\?\.getURL\?\.\(path\)[\s\S]*?isExtensionContextInvalidated\(error\)[\s\S]*?deactivateExtensionContext\(\)/);
   assert.doesNotMatch(source, /timelineEditorStylesheet|elastic-timeline-editor\.css/);
