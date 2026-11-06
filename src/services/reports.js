@@ -2,7 +2,6 @@ import { recordDate } from '../domain/reporting.js';
 import { normalizeReportingUtc } from '../domain/local-settings.js';
 import { parseMonthlyRecords, parseMonthlyRecordsPath } from '../domain/work-records.js';
 import { parseTaskIndex, taskIndexRecord, TASK_INDEX_PATH } from '../domain/task-index.js';
-import { normalizeTaskTitle } from '../domain/records.js';
 import { entryDateParts, normalizeStoredTaskIdentity, taskUrlOf, validatePathSegment } from '../domain/values.js';
 import { discoverUserStorageBranches } from './user-storage-branch.js';
 
@@ -181,11 +180,9 @@ function normalizeCache(value, repositoryKey) {
     && (value.snapshotReady === true || (!hasSnapshotMarker && files.length > 0));
   const catalog = value.catalog;
   const validCatalog = catalog && typeof catalog.etag === 'string' && /^[0-9a-f]{40}$/i.test(catalog.indexSha)
-    && typeof catalog.indexText === 'string' && catalog.titles && typeof catalog.titles === 'object'
-    && !Array.isArray(catalog.titles);
+    && typeof catalog.indexText === 'string';
   return { version: CACHE_VERSION, repositoryKey, etag: typeof value.etag === 'string' ? value.etag : '', snapshotReady, files, blobs,
-    ...(validCatalog ? { catalog: { etag: catalog.etag, indexSha: catalog.indexSha, indexText: catalog.indexText,
-      titles: catalog.titles } } : {}),
+    ...(validCatalog ? { catalog: { etag: catalog.etag, indexSha: catalog.indexSha, indexText: catalog.indexText } } : {}),
   };
 }
 
@@ -395,40 +392,17 @@ export class ReportService {
         consumeTaskScanBudget(budget, 'bytes', Math.max(0, indexBytes - knownBytes));
         const index = parseTaskIndex(indexText, { user: user.login });
         const summaries = Object.entries(index.tasks);
-        const needsHistory = summaries.some(([, summary]) => !Object.hasOwn(summary, 'title'));
-        let titles = snapshot.notModified ? previous?.titles : null;
-        if (needsHistory && !titles) {
-          const remaining = { ...budgets,
-            maxFiles: budgetValue(budgets.maxFiles, Number.MAX_SAFE_INTEGER, 'file') - 1,
-            maxBytes: budgetValue(budgets.maxBytes, Number.MAX_SAFE_INTEGER, 'byte') - indexBytes };
-          const records = await service.loadUserRange({ startDate: '0001-01-01', endDate: '9999-12-31' }, user.login,
-            { signal: branchSignal, resourceBudget: budget }, remaining);
-          const owners = new Map(summaries.flatMap(([taskUrl, summary]) => summary.recordIds.map(id => [id, taskUrl])));
-          const found = new Set(), latest = new Map();
-          for (const record of records) {
-            if (found.has(record.id)) throw new Error(`Duplicate completed record ID for ${user.login}`);
-            if (owners.get(record.id) !== record.taskUrl) {
-              throw new Error(`Clockoli task index does not match completed records for ${user.login}`);
-            }
-            found.add(record.id);
-            const title = normalizeTaskTitle(record.taskTitle || record.issueTitle);
-            if (title) latest.set(record.taskUrl, title);
-          }
-          if (found.size !== owners.size) throw new Error(`Clockoli task index does not match completed records for ${user.login}`);
-          titles = Object.fromEntries(latest);
-        } else {
-          const count = summaries.reduce((total, [, item]) => total + item.recordIds.length, 0);
-          if (count > budgetValue(budgets.maxRecords, Number.MAX_SAFE_INTEGER, 'record')) {
-            throw taskScanBudgetError('records', count, budgets.maxRecords);
-          }
-          consumeTaskScanBudget(budget, 'records', count);
+        const count = summaries.reduce((total, [, item]) => total + item.recordIds.length, 0);
+        if (count > budgetValue(budgets.maxRecords, Number.MAX_SAFE_INTEGER, 'record')) {
+          throw taskScanBudgetError('records', count, budgets.maxRecords);
         }
+        consumeTaskScanBudget(budget, 'records', count);
         branchSignal?.throwIfAborted();
         const fresh = await service.readCache(key);
-        fresh.catalog = { etag: snapshot.etag || '', indexSha, indexText, titles: titles || {} };
+        fresh.catalog = { etag: snapshot.etag || '', indexSha, indexText };
         await service.saveCache(fresh);
         return { tasks: summaries.map(([taskUrl, summary]) => ({ taskUrl,
-          title: summary.title ?? (typeof titles?.[taskUrl] === 'string' ? normalizeTaskTitle(titles[taskUrl]) : ''),
+          title: summary.title ?? '',
           user: user.login, recordIds: summary.recordIds, titleSourceId: summary.titleSourceId })),
         recordIds: summaries.flatMap(([, summary]) => summary.recordIds) };
       });
