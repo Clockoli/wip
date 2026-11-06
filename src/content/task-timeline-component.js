@@ -3802,6 +3802,7 @@
 
     _freeMoveRange(task, rawStart, duration) {
       const others = this.tasks.filter(candidate => candidate !== task);
+      const maxEditEnd = Number(this.options.maxEditEnd?.());
       let best = null;
       for (let index = 0; index <= others.length; index++) {
         const prev = others[index - 1] || null;
@@ -3812,6 +3813,7 @@
           earliest = prev ? prev.end : this.domainStart;
           latest = next ? next.start - duration : this.domainEnd - duration;
         }
+        if (Number.isFinite(maxEditEnd)) latest = Math.min(latest, maxEditEnd - duration);
         const map = this.viewMode === 'calendar' ? this._calendarPinnedVerticalMap?.map : null;
         if (map && prev && this._floorDay(earliest) === this._floorDay(prev.end - 1)) {
           const day = this._floorDay(prev.end - 1);
@@ -3901,9 +3903,11 @@
           prev ? [{ time: earliest, side: 'prev' }] : []);
       } else if (state.mode === 'resize-right') {
         const earliest = task.start + MIN_TASK_DURATION;
-        const latest = next ? next.start - DIRECT_GAP : this.domainEnd;
-        task.end = this._magnetizeTime(state.originalEnd + delta, earliest, latest, state,
-          next ? [{ time: latest, side: 'next' }] : []);
+        const neighborEnd = next ? next.start - DIRECT_GAP : this.domainEnd;
+        const maxEditEnd = Number(this.options.maxEditEnd?.());
+        const latest = Number.isFinite(maxEditEnd) ? Math.min(neighborEnd, maxEditEnd) : neighborEnd;
+        if (latest >= earliest) task.end = this._magnetizeTime(state.originalEnd + delta, earliest, latest, state,
+          next ? [{ time: neighborEnd, side: 'next' }] : []);
       }
 
       if (state.mode === 'move' && this.viewMode === 'timeline') this._renderTimelineMovePreview(task, state);
@@ -3929,7 +3933,7 @@
         this._showTaskDetails(task);
         const action = state.mode === 'move' ? 'move' : state.mode === 'resize-left' ? 'resize-start' : 'resize-end';
         const edge = state.mode === 'resize-left' ? 'start' : state.mode === 'resize-right' ? 'end' : null;
-        this._commitMutation({
+        if (afterTask.start !== state.beforeTask.start || afterTask.end !== state.beforeTask.end) this._commitMutation({
           action,
           beforeState: state.beforeState,
           afterState,
@@ -4317,10 +4321,12 @@
         task.start = this._calendarMagnetizeTime(rawStart, earliest, task.end - MIN_TASK_DURATION, state,
           prev ? [{ time: earliest, side: 'prev' }] : []);
       } else if (state.mode === 'resize-right') {
-        const latest = next ? next.start - DIRECT_GAP : this.domainEnd;
+        const neighborEnd = next ? next.start - DIRECT_GAP : this.domainEnd;
+        const maxEditEnd = Number(this.options.maxEditEnd?.());
+        const latest = Number.isFinite(maxEditEnd) ? Math.min(neighborEnd, maxEditEnd) : neighborEnd;
         const rawEnd = shiftedBoundary(state.originalEnd);
-        task.end = this._calendarMagnetizeTime(rawEnd, task.start + MIN_TASK_DURATION, latest, state,
-          next ? [{ time: latest, side: 'next' }] : []);
+        if (latest >= task.start + MIN_TASK_DURATION) task.end = this._calendarMagnetizeTime(rawEnd, task.start + MIN_TASK_DURATION, latest, state,
+          next ? [{ time: neighborEnd, side: 'next' }] : []);
       }
       this._renderCalendar();
       this._showTaskDetails(task);
@@ -4341,7 +4347,7 @@
         this._renderCalendar();
         const action = state.mode === 'move' ? 'move' : state.mode === 'resize-left' ? 'resize-start' : 'resize-end';
         const edge = state.mode === 'resize-left' ? 'start' : state.mode === 'resize-right' ? 'end' : null;
-        this._commitMutation({
+        if (afterTask.start !== state.beforeTask.start || afterTask.end !== state.beforeTask.end) this._commitMutation({
           action,
           beforeState: state.beforeState,
           afterState,
@@ -5111,6 +5117,7 @@
       magneticSnap: true,
       magnetStepsMinutes: [5],
       calendarMagnetStepMinutes: 1,
+      maxEditEnd: () => Date.now(),
       magnetScaleThresholdDays: [7],
       canChange: canRun,
       onStart(task, event) {

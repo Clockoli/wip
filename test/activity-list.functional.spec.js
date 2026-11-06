@@ -2004,6 +2004,91 @@ test('Activity moves completed entries before a neighbor in Timeline and Calenda
   }
 });
 
+test('a rejected timeline edit shows its validation reason without a reload action', async () => {
+  test.setTimeout(15000);
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-edit-error-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-edit-error-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const rendererPath = join(extension, 'src/content/github.js');
+    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest));
+    await writeFile(join(extension, 'test-worker.js'), workerSource.replace(
+      'This edit would overlap another entry. Choose a free time range before moving it.',
+      'Time entries cannot end in the future.'));
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage(), errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', event => { if (event.type() === 'error') errors.push(event.text()); });
+    await worker.evaluate(() => { globalThis.failEdit = true; });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+    await page.getByRole('button', { name: 'List', exact: true }).click();
+    await page.getByRole('button', { name: 'Timeline', exact: true }).click();
+    await page.getByRole('button', { name: 'Previous week' }).click();
+    const record = page.locator('.task-timeline-host .task[data-task-key="entry:record"]');
+    await record.evaluate(element => element.scrollIntoView({ inline: 'center' }));
+    const box = await record.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2, { steps: 8 });
+    await page.mouse.up();
+    await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(1);
+    const notice = page.getByRole('alert').filter({ hasText: 'Time entries cannot end in the future.' });
+    await expect(notice).toBeVisible();
+    await expect(notice).not.toContainText('deleted');
+    await expect(notice.getByRole('button', { name: 'Retry' })).toHaveCount(0);
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test('a failed Activity load offers a retry without mentioning deletion', async () => {
+  test.setTimeout(15000);
+  const extension = await mkdtemp(join(tmpdir(), 'clockoli-load-error-extension-'));
+  const profile = await mkdtemp(join(tmpdir(), 'clockoli-load-error-profile-'));
+  let context;
+  try {
+    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
+    const rendererPath = join(extension, 'src/content/github.js');
+    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+    manifest.background = { service_worker: 'test-worker.js' };
+    await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
+    await writeFile(join(extension, 'test-worker.js'), workerSource.replace(
+      'globalThis.failEdit = false;', 'globalThis.failEdit = false; globalThis.failTimesLoad = true;').replace(
+      "if (message.type === 'LOAD_TIMES' && globalThis.deferOverlapRecent)",
+      "if (message.type === 'LOAD_TIMES' && globalThis.failTimesLoad) { respond({ ok: false, error: { message: 'History temporarily unavailable' } }); return; }\n  if (message.type === 'LOAD_TIMES' && globalThis.deferOverlapRecent)"));
+    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const page = await context.newPage(), errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    worker.on('console', event => { if (event.type() === 'error') errors.push(event.text()); });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
+    const notice = page.getByRole('alert').filter({ hasText: 'Could not update Activity' });
+    await expect(notice).toBeVisible();
+    await expect(notice).toContainText('Try loading Activity again.');
+    await expect(notice).not.toContainText('deleted');
+    await expect(notice.locator('details')).toContainText('History temporarily unavailable');
+    await worker.evaluate(() => { globalThis.failTimesLoad = false; });
+    await notice.getByRole('button', { name: 'Retry' }).click();
+    await expect(notice).toHaveCount(0);
+    expect(errors).toEqual([]);
+  } finally {
+    await context?.close();
+    await rm(extension, { recursive: true, force: true });
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
 test('toolbar popup loads the full week before moving an entry past its neighbor', async () => {
   test.setTimeout(30000);
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-popup-reorder-extension-'));
