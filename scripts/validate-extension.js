@@ -20,7 +20,7 @@ for (const target of values.target ? [values.target] : TARGETS) {
   if (target === 'chrome' && Number.parseInt(manifest.minimum_chrome_version, 10) < 102) fail('Chrome 102+ is the supported browser baseline');
   if (manifest.background?.type !== 'module') fail('Background worker must be an ES module');
   if (JSON.stringify(manifest.host_permissions) !== JSON.stringify(['https://api.github.com/*', 'https://github.com/login/*', 'https://api.frankfurter.dev/*'])) fail('Host permissions must be limited to the GitHub API, OAuth login, and Frankfurter exchange-rate endpoints');
-  const permissions = target === 'chrome' ? ['alarms', 'activeTab', 'favicon', 'scripting'] : ['alarms', 'activeTab', 'scripting'];
+  const permissions = target === 'chrome' ? ['alarms', 'activeTab', 'favicon', 'scripting', 'tabs'] : ['alarms', 'activeTab', 'scripting', 'tabs'];
   for (const permission of manifest.permissions || []) if (!permissions.includes(permission)) fail(`Unexpected permission: ${permission}`);
   if ((manifest.permissions || []).includes('storage')) fail('chrome.storage permission would expose persistent state to content scripts');
 

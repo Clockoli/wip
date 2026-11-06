@@ -19,7 +19,7 @@ test('target packages preserve Chrome bytes and generate constrained Firefox and
       if (target === 'chrome') {
         assert.deepEqual(bytes, await readFile(path.join(root, 'manifest.json')));
       } else {
-        assert.deepEqual(manifest.permissions, ['alarms', 'activeTab', 'scripting']);
+        assert.deepEqual(manifest.permissions, ['alarms', 'activeTab', 'scripting', 'tabs']);
         assert.equal('minimum_chrome_version' in manifest, false);
         assert.equal(manifest.web_accessible_resources.flatMap(item => item.resources).includes('_favicon/*'), false);
         assert.deepEqual(manifest.host_permissions, chrome.host_permissions);

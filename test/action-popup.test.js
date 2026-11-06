@@ -15,6 +15,7 @@ test('toolbar opens the same full-width tracking surface on GitHub and other HTT
   assert.equal(manifest.action?.default_popup, undefined);
   assert.ok(manifest.permissions.includes('activeTab'));
   assert.ok(manifest.permissions.includes('scripting'));
+  assert.ok(manifest.permissions.includes('tabs'));
 
   assert.match(worker, /async function toggleActionSurface\(tab\)/);
   assert.match(worker, /chrome\.scripting\.executeScript\(\{[\s\S]*target: \{ tabId: tab\.id \}[\s\S]*globalThis\.__CLOCKOLI_ACTION_SURFACE__ = true/);
@@ -75,22 +76,41 @@ test('compact popup loads the shared timeline component before its tracking cont
   assert.ok(popup.indexOf('task-timeline-component.js') < popup.indexOf('github.js'));
 });
 
-async function actionHarness({ delivered = false, failure = 0 } = {}) {
+async function actionHarness({ delivered = false, failure = 0, existingTabs = [], queryGate = null, closeOnActivate = false, moveOnActivate = null, navigateOnActivate = null } = {}) {
   const { default: vm } = await import('node:vm');
   const calls = [];
   const context = vm.createContext({ URL, chrome: {
     runtime: { getURL: path => `chrome-extension://clockoli/${path}` },
     tabs: {
       sendMessage: async (...args) => { calls.push(['message', ...args]); if (!delivered) throw new Error('No receiver'); },
-      create: async options => { calls.push(['tab', options]); },
+      query: async options => {
+        calls.push(['query', options]);
+        if (queryGate) await queryGate;
+        return existingTabs.filter(tab => !options.url || tab.url === options.url).map(tab => ({ ...tab }));
+      },
+      update: async (id, options) => {
+        calls.push(['activate', id, options]);
+        if (closeOnActivate) { existingTabs.splice(existingTabs.findIndex(tab => tab.id === id), 1); throw new Error('No tab with id'); }
+        const tab = existingTabs.find(item => item.id === id);
+        if (moveOnActivate) tab.windowId = moveOnActivate;
+        if (navigateOnActivate) tab.pendingUrl = navigateOnActivate;
+        return { ...tab };
+      },
+      get: async id => {
+        const tab = existingTabs.find(item => item.id === id);
+        if (!tab) throw new Error('No tab with id');
+        return tab;
+      },
+      create: async options => { calls.push(['tab', options]); existingTabs.push({ id: 100, windowId: 1, pendingUrl: options.url }); },
     },
+    windows: { update: async (id, options) => { calls.push(['focus', id, options]); } },
     scripting: { executeScript: async options => {
       calls.push(['inject', options]);
       if (calls.filter(([kind]) => kind === 'inject').length === failure) throw new Error('Cannot access this page');
     } },
   } });
   const helper = worker.match(/async function openTimesPage\(\) \{[\s\S]*?\n\}/)?.[0] || '';
-  vm.runInContext(`${helper}\n${worker.slice(worker.indexOf('async function toggleActionSurface('), worker.indexOf("void chrome.action.setPopup({ popup: '' })"))}`, context);
+  vm.runInContext(`let openingTimesPage = null;\n${helper}\n${worker.slice(worker.indexOf('async function toggleActionSurface('), worker.indexOf("void chrome.action.setPopup({ popup: '' })"))}`, context);
   return { calls, toggle: tab => context.toggleActionSurface(tab) };
 }
 
@@ -105,6 +125,96 @@ test('toolbar falls back to Activity for restricted, missing, and invalid tab UR
   const harness = await actionHarness();
   await harness.toggle({});
   assert.equal(harness.calls.at(-1)[0], 'tab');
+});
+
+test('toolbar reuses an existing Activity tab across windows without navigating it', async () => {
+  const activityUrl = 'chrome-extension://clockoli/src/times/times.html';
+  const harness = await actionHarness({ existingTabs: [
+    { id: 8, windowId: 2, url: 'chrome-extension://clockoli/src/options/options.html' },
+    { id: 9, windowId: 3, url: activityUrl },
+  ] });
+  await harness.toggle({ id: 1, url: 'chrome://extensions' });
+  await harness.toggle({ id: 1, url: 'chrome://newtab/' });
+  assert.deepEqual(JSON.parse(JSON.stringify(harness.calls.filter(([kind]) => ['query', 'activate', 'focus', 'tab'].includes(kind)))), [
+    ['query', { url: activityUrl }], ['activate', 9, { active: true }], ['focus', 3, { focused: true }],
+    ['query', { url: activityUrl }], ['activate', 9, { active: true }], ['focus', 3, { focused: true }],
+  ]);
+});
+
+test('toolbar focuses the new window if Activity moves there during activation', async () => {
+  const harness = await actionHarness({
+    existingTabs: [{ id: 9, windowId: 3, url: 'chrome-extension://clockoli/src/times/times.html' }],
+    moveOnActivate: 4,
+  });
+  await harness.toggle({ id: 1, url: 'chrome://extensions' });
+  assert.deepEqual(JSON.parse(JSON.stringify(harness.calls.at(-1))), ['focus', 4, { focused: true }]);
+});
+
+test('toolbar rediscovers Activity after the service worker restarts', async () => {
+  const activityUrl = 'chrome-extension://clockoli/src/times/times.html';
+  const restarted = await actionHarness({ existingTabs: [{ id: 21, windowId: 4, url: activityUrl }] });
+  await restarted.toggle({ id: 7, url: 'about:blank' });
+  assert.deepEqual(restarted.calls.map(([kind]) => kind), ['message', 'query', 'activate', 'focus']);
+  assert.equal(restarted.calls.some(([kind]) => kind === 'tab'), false);
+});
+
+test('concurrent toolbar clicks create only one Activity tab', async () => {
+  let release;
+  const queryGate = new Promise(resolve => { release = resolve; });
+  const harness = await actionHarness({ queryGate });
+  const first = harness.toggle({ id: 1, url: 'chrome://settings' });
+  const second = harness.toggle({ id: 1, url: 'chrome://extensions' });
+  release();
+  await Promise.all([first, second]);
+  assert.equal(harness.calls.filter(([kind]) => kind === 'tab').length, 1);
+});
+
+test('a closed Activity tab falls back to creating a new one', async () => {
+  const harness = await actionHarness({
+    existingTabs: [{ id: 9, windowId: 3, url: 'chrome-extension://clockoli/src/times/times.html' }],
+    closeOnActivate: true,
+  });
+  await harness.toggle({ id: 1, url: 'chrome://extensions' });
+  assert.deepEqual(harness.calls.map(([kind]) => kind), ['message', 'query', 'activate', 'tab']);
+});
+
+test('a still-loading Activity tab is reused on the next click', async () => {
+  const harness = await actionHarness({ existingTabs: [
+    { id: 9, windowId: 3, pendingUrl: 'chrome-extension://clockoli/src/times/times.html' },
+  ] });
+  await harness.toggle({ id: 1, url: 'chrome://extensions' });
+  assert.equal(harness.calls.filter(([kind]) => kind === 'tab').length, 0);
+  assert.equal(harness.calls.filter(([kind]) => kind === 'activate')[0][1], 9);
+});
+
+test('a tab navigating to Activity is reused despite its old committed URL', async () => {
+  const activityUrl = 'chrome-extension://clockoli/src/times/times.html';
+  const harness = await actionHarness({ existingTabs: [
+    { id: 9, windowId: 3, url: 'chrome-extension://clockoli/src/options/options.html', pendingUrl: activityUrl },
+  ] });
+  await harness.toggle({ id: 1, url: 'chrome://settings' });
+  assert.equal(harness.calls.filter(([kind]) => kind === 'tab').length, 0);
+  assert.equal(harness.calls.filter(([kind]) => kind === 'activate')[0][1], 9);
+});
+
+test('a tab navigating away from Activity is not reused', async () => {
+  const activityUrl = 'chrome-extension://clockoli/src/times/times.html';
+  const harness = await actionHarness({ existingTabs: [
+    { id: 9, windowId: 3, url: activityUrl, pendingUrl: 'chrome-extension://clockoli/src/options/options.html' },
+  ] });
+  await harness.toggle({ id: 1, url: 'chrome://settings' });
+  assert.equal(harness.calls.filter(([kind]) => kind === 'tab').length, 1);
+  assert.equal(harness.calls.filter(([kind]) => kind === 'activate').length, 0);
+});
+
+test('a tab beginning to navigate away during activation is not reused', async () => {
+  const activityUrl = 'chrome-extension://clockoli/src/times/times.html';
+  const harness = await actionHarness({
+    existingTabs: [{ id: 9, windowId: 3, url: activityUrl }],
+    navigateOnActivate: 'chrome-extension://clockoli/src/options/options.html',
+  });
+  await harness.toggle({ id: 1, url: 'chrome://settings' });
+  assert.equal(harness.calls.filter(([kind]) => kind === 'tab').length, 1);
 });
 
 test('toolbar preserves delivery and HTTP injection order and falls back on either injection failure', async () => {

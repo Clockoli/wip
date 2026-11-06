@@ -6,7 +6,7 @@ Activity shows your completed and running time one Monday–Sunday week at a tim
 
 ## Open Activity
 
-Open **Activity** from the toolbar panel navigation or the GitHub split-menu arrow. The toolbar also opens Activity on pages that cannot be tracked, such as `chrome://` pages.
+Open **Activity** from the toolbar panel navigation or the GitHub split-menu arrow. The toolbar also opens Activity on pages that cannot be tracked, such as `chrome://` pages. If Activity is already open, the toolbar switches to its existing tab (and window) instead of opening another one. This uses the browser's `tabs` permission to find an existing Activity tab; tab URLs are not sent to GitHub.
 
 Activity loads the current user's completed entries from the selected time repositories. Each edit or delete is sent back to the record's original time repository.
 
