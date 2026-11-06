@@ -813,7 +813,7 @@ export class ChromeStore {
     const { taskSearchCache } = values;
     return generationValue(values[CONFIGURATION_GENERATION]) === scope.generation
       && generationValue(values[AUTH_GENERATION]) === scope.authGeneration
-      && taskSearchCache?.version === 1 && JSON.stringify(taskSearchCache.scope) === JSON.stringify(scope)
+      && taskSearchCache?.version === 2 && JSON.stringify(taskSearchCache.scope) === JSON.stringify(scope)
       && Array.isArray(taskSearchCache.indexTasks) && Array.isArray(taskSearchCache.readStatus)
       ? taskSearchCache : null;
   }
@@ -836,7 +836,7 @@ export class ChromeStore {
 
   async saveTaskSearchCache(value, scope = value?.scope, expectedRevision = undefined) {
     if (!scope || !Number.isSafeInteger(scope.generation) || !Number.isSafeInteger(scope.authGeneration)
-        || !Array.isArray(scope.repositories) || (value && (value.version !== 1 || !Array.isArray(value.indexTasks)
+        || !Array.isArray(scope.repositories) || (value && (value.version !== 2 || !Array.isArray(value.indexTasks)
           || !Array.isArray(value.readStatus) || JSON.stringify(value.scope) !== JSON.stringify(scope)))) {
       throw new Error('Invalid task search cache');
     }

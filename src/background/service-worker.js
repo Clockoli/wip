@@ -609,7 +609,7 @@ async function searchTasks(sender, query = '', { refresh = false } = {}) {
       loadCoordinator.assertCurrent(loadEpoch);
       if (!hit && !hasPending && !directCompletedWrites && (!cacheDirty || refresh)
           && !indexed.partial && !indexed.conflicts.length) {
-        const saved = await store.saveTaskSearchCache?.({ version: 1, scope, refreshedAt: requestedAt, indexTasks: indexed.indexTasks,
+        const saved = await store.saveTaskSearchCache?.({ version: 2, scope, refreshedAt: requestedAt, indexTasks: indexed.indexTasks,
           readStatus: indexed.readStatus }, scope, cacheRevision);
         if (saved === false) throw new DOMException('Task search configuration changed.', 'AbortError');
         loadCoordinator.assertCurrent(loadEpoch);

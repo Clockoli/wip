@@ -98,7 +98,7 @@ test('report cache is repository-scoped, persisted separately, and cleared with 
 test('unified task search cache survives restart but never crosses auth or configuration changes', async () => {
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   const scope = { generation: 0, authGeneration: 0, repositories: ['github:1@acme/time'] };
-  const value = { version: 1, scope, indexTasks: [{ taskUrl: 'https://example.org/one', title: 'One',
+  const value = { version: 2, scope, indexTasks: [{ taskUrl: 'https://example.org/one', title: 'One',
     destinationId: 'github:1', recordIds: ['record-1'] }], readStatus: [{ destinationId: 'github:1', status: 'ok' }] };
   assert.equal(await store.saveTaskSearchCache(value), true);
   assert.deepEqual(await new ChromeStore(backend).getTaskSearchCache(scope), value);
@@ -112,10 +112,22 @@ test('unified task search cache survives restart but never crosses auth or confi
   assert.equal(backend.values.has('taskSearchCache'), false);
 });
 
+test('old task search snapshots cannot retain titles reconstructed from monthly history', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  const scope = { generation: 0, authGeneration: 0, repositories: ['github:1@acme/time'] };
+  const old = { version: 1, scope, indexTasks: [{ taskUrl: 'https://example.org/untitled',
+    title: 'Stale reconstructed title', recordIds: ['record-1'], destinationId: 'github:1' }], readStatus: [] };
+  backend.values.set('taskSearchCache', old);
+  assert.equal(await store.getTaskSearchCache(scope), null);
+  const current = { ...old, version: 2, indexTasks: [{ ...old.indexTasks[0], title: '' }] };
+  assert.equal(await store.saveTaskSearchCache(current), true);
+  assert.deepEqual(await new ChromeStore(backend).getTaskSearchCache(scope), current);
+});
+
 test('invalidation survives restart and rejects a refresh started before a completed write', async () => {
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   const scope = { generation: 0, authGeneration: 0, repositories: ['github:1@acme/time'] };
-  const value = { version: 1, scope, indexTasks: [], readStatus: [] };
+  const value = { version: 2, scope, indexTasks: [], readStatus: [] };
   const epoch = await store.getTaskSearchRevision();
   assert.equal(await store.saveTaskSearchCache(value, scope, epoch), true);
   await store.invalidateTaskSearchCache();
