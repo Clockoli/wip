@@ -48,6 +48,8 @@ Clockoli uses extension-origin IndexedDB for:
 
 GitHub page JavaScript and content scripts do not receive credentials or raw local billing settings. Durable local data remains in extension-origin IndexedDB, and the extension does not request the `storage` permission.
 
+The browser's `tabs` permission lets the toolbar identify an already-open Clockoli Activity tab and focus it instead of opening duplicates. Tab URLs are checked locally for that exact extension page and are not sent to GitHub.
+
 ## Time-repository and branch layout
 
 Each time repository's default branch owns its shared marker:

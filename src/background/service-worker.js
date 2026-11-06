@@ -1867,8 +1867,34 @@ function scheduleSync() {
   return alarm;
 }
 
+let openingTimesPage = null;
 async function openTimesPage() {
-  await chrome.tabs.create({ url: chrome.runtime.getURL('src/times/times.html') });
+  if (openingTimesPage) return openingTimesPage;
+  const open = async () => {
+    const url = chrome.runtime.getURL('src/times/times.html');
+    const loaded = (await chrome.tabs.query({ url }))
+      .find(tab => !tab.pendingUrl || tab.pendingUrl === url);
+    const existing = loaded ?? (await chrome.tabs.query({})).find(tab => tab.pendingUrl === url);
+    if (Number.isInteger(existing?.id)) {
+      try {
+        const activated = await chrome.tabs.update(existing.id, { active: true });
+        if (activated.pendingUrl ? activated.pendingUrl !== url : activated.url && activated.url !== url) {
+          await chrome.tabs.create({ url });
+          return;
+        }
+        await chrome.windows.update(activated.windowId, { focused: true });
+        return;
+      } catch (error) {
+        // A closed tab cannot be activated. Keep other API failures visible.
+        let stillOpen = false;
+        try { await chrome.tabs.get(existing.id); stillOpen = true; } catch {}
+        if (stillOpen) throw error;
+      }
+    }
+    await chrome.tabs.create({ url });
+  };
+  openingTimesPage = open();
+  try { await openingTimesPage; } finally { openingTimesPage = null; }
 }
 
 async function toggleActionSurface(tab) {

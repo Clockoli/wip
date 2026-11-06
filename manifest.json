@@ -3,7 +3,7 @@
   "name": "Clockoli",
   "version": "0.3.0",
   "description": "Track time on any task URL and store records in private GitHub repositories you control.",
-  "permissions": ["alarms", "activeTab", "favicon", "scripting"],
+  "permissions": ["alarms", "activeTab", "favicon", "scripting", "tabs"],
   "host_permissions": ["https://api.github.com/*", "https://github.com/login/*", "https://api.frankfurter.dev/*"],
   "optional_host_permissions": ["https://app.clockify.me/*"],
   "content_security_policy": {"extension_pages": "script-src 'self'; object-src 'none'"},
