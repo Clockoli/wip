@@ -147,6 +147,36 @@ function stoppedOverlapFixture() {
   return { github, store, tracker, path, previous, timer, edit };
 }
 
+test('local Start and Stop remain usable while GitHub is offline and drain in order after restart', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  let now = '2026-08-18T09:00:00.000Z';
+  const options = { github, store, timezone: 'UTC', clock: () => new Date(now),
+    idFactory: timestamp => deterministicRecordId(new Date(timestamp).toISOString()) };
+  const tracker = service(options);
+  const first = await tracker.start(issue.url, 'First', '', { background: true });
+  now = '2026-08-18T10:00:00.000Z';
+  const stopped = await tracker.stop('Locally saved', { background: true });
+  assert.equal(stopped.pending, true);
+  assert.equal((await tracker.getState()).active, null);
+  assert.equal((await tracker.getState()).recent[0].id, first.id);
+  const second = await tracker.start(pull.url, 'Second', '', { background: true });
+  assert.notEqual(second.id, first.id);
+  assert.deepEqual(store.value.pendingWrites.map(item => item.operation), ['startTimer', 'completeTimer', 'startTimer']);
+  assert.equal(github.writes.length + github.atomicWrites.length, 0, 'local acceptance must not contact GitHub');
+
+  const restarted = service(options);
+  assert.equal((await restarted.getState()).active.id, second.id);
+  assert.equal((await restarted.getState()).recent[0].id, first.id);
+  await restarted.syncPending();
+  assert.deepEqual(store.value.pendingWrites, []);
+  assert.equal(parseActiveRecord(github.files.get('active/alice.json').text, { user: 'alice' }).id, second.id);
+  const path = 'times/2026-08/alice.jsonl';
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08', path });
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].id, first.id);
+  assert.equal(saved[0].description, 'Locally saved');
+});
+
 test('deleting the stopped local overlap atomically retains its independent saved edit', async () => {
   const { github, store, tracker, path, previous, timer, edit } = stoppedOverlapFixture();
   assert.deepEqual(await tracker.deleteStoppedOverlap(timer.id, { side: 'local' }), { deleted: true });

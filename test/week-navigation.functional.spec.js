@@ -481,6 +481,9 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await expect.poll(() => activity.evaluate(() => document.scrollingElement.scrollHeight - innerHeight)).toBeGreaterThan(30);
     await activity.evaluate(() => window.scrollTo(0, 0));
     await calendarViewport.evaluate(element => { element.scrollTop = 0; });
+    const emptyDay = activityRoot.locator('.task-timeline-host .clockoli-calendar-empty').first();
+    await expect(emptyDay).toBeVisible();
+    const emptyDayTop = await emptyDay.evaluate(element => element.style.top);
     const calendarBounds = await calendarViewport.boundingBox();
     expect(calendarBounds.y).toBeLessThan(520);
     await activity.mouse.move(calendarBounds.x + calendarBounds.width / 2, (Math.max(0, calendarBounds.y) + Math.min(520, calendarBounds.y + calendarBounds.height)) / 2);
@@ -489,6 +492,7 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     expect(await activity.evaluate(() => window.scrollY)).toBe(0);
     await activity.waitForTimeout(1200);
     expect(await calendarViewport.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+    expect(await emptyDay.evaluate(element => element.style.top)).toBe(emptyDayTop);
     await activity.mouse.wheel(0, -120);
     await expect.poll(() => calendarViewport.evaluate(element => element.scrollTop)).toBe(0);
     await calendarViewport.evaluate(element => { element.scrollTop = element.scrollHeight; });

@@ -1105,6 +1105,8 @@ test('Activity List requires confirmation before discarding an unsaved completio
     const review = page.getByRole('dialog', { name: 'Sync issues' });
     await expect(review.getByText('Completion was not saved')).toBeVisible();
     await expect(page.locator('#activity-running-status .running-status-idle')).toHaveText('Stop needs attention');
+    await expect(page.locator('#activity-running-status')).toHaveClass(/is-conflicted-stop/);
+    await expect(page.locator('#activity-running-status .running-status-idle-hint')).toHaveText('Review sync issues in Activity');
     page.once('dialog', dialog => dialog.dismiss());
     await review.getByRole('button', { name: 'Discard unsaved completion' }).click();
     await expect(review.getByText('Completion was not saved')).toBeVisible();
@@ -1151,7 +1153,7 @@ test('Activity does not request remote timer status or warn without an actionabl
   });
 });
 
-test('Activity shows an unsynced Stop beside idle status in every view without offering a second Stop', async () => {
+test('Activity treats a queued Stop as idle in every view, including after reload', async () => {
   const source = workerSource.replace('let pendingWrites = [];',
     "let pendingWrites = [{ id: 'stop-1', operation: 'completeTimer', status: 'pending', stage: 'commitCompletion', destinationId: 'github:1' }];");
   await withActivityWorker(source, async ({ context, worker, extensionId }) => {
@@ -1161,23 +1163,22 @@ test('Activity shows an unsynced Stop beside idle status in every view without o
     worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.goto(`chrome-extension://${extensionId}/src/times/times.html`);
     const status = page.locator('#activity-running-status');
-    await expect(status.locator('.running-status-idle')).toHaveText('Stop waiting to sync');
-    await expect(status.locator('.running-status-idle-hint')).toHaveText('Do not stop this timer again');
+    await expect(status.locator('.running-status-idle')).toHaveText('Not tracking');
+    await expect(status.locator('.running-status-idle-hint')).toHaveText('Start a task to begin');
     await expect(status.locator('.running-status-stop')).toBeHidden();
-    await expect(status).toHaveClass(/is-pending-stop/);
-    expect(await status.evaluate(node => {
-      const probe = document.createElement('span');
-      probe.style.color = 'var(--borderColor-attention-emphasis)';
-      node.append(probe);
-      const expected = getComputedStyle(probe).color;
-      probe.remove();
-      return getComputedStyle(node.querySelector('.running-status-row')).borderLeftColor === expected;
-    })).toBe(true);
+    await expect(status.locator('.running-status-quick-start')).toBeVisible();
+    await expect(status).not.toHaveClass(/is-pending-stop/);
     for (const view of ['Timeline', 'Calendar', 'List']) {
       await page.locator('#activity-view-switcher').getByRole('button', { name: view }).click();
       await expect(page.locator('#clockoli-times-root .remote-timer-warning')).toHaveCount(0);
-      await expect(status.locator('.running-status-idle')).toHaveText('Stop waiting to sync');
+      await expect(status.locator('.running-status-idle')).toHaveText('Not tracking');
     }
+    await page.reload();
+    await expect(status.locator('.running-status-idle')).toHaveText('Not tracking');
+    await expect(status.locator('.running-status-stop')).toBeHidden();
+    await expect(status.locator('.running-status-quick-start')).toBeVisible();
+    await expect(page.locator('#activity-sync-status')).toBeEmpty();
+    expect(await worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'STOP'))).toEqual([]);
     expect(errors).toEqual([]);
   });
 });
