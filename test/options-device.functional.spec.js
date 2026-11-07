@@ -29,7 +29,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
 });
 `;
 
-test('device code is copied before GitHub opens, with actionable clipboard guidance and safe fallback', async () => {
+test('device handoff explains the countdown, handles manual opening and clipboard failure', async () => {
   test.setTimeout(80000);
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-device-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-device-profile-'));
@@ -62,7 +62,14 @@ test('device code is copied before GitHub opens, with actionable clipboard guida
     await page.locator('#authorize').click();
     await expect(page.locator('#device-copy-status')).toHaveText('✓ Code copied to your clipboard.');
     const instruction = page.locator('#device-handoff-status');
-    await expect(instruction).toHaveText(`Next: When GitHub opens, press ${pasteShortcut} to paste the code.`);
+    const countdown = page.locator('#device-handoff-countdown');
+    const code = page.locator('#device-code');
+    await expect(code).toHaveValue('ABCD-1234');
+    await expect(instruction).toHaveText('When GitHub opens, paste the code with ' + pasteShortcut + ' and authorize Clockoli.');
+    await expect(countdown).toBeVisible();
+    await expect(countdown).toContainText('Opening GitHub automatically in 3 seconds');
+    await expect(page.locator('#open-device-page')).toHaveText('Open GitHub now');
+    await expect(page.locator('#device-done')).toHaveCount(0);
     const style = await instruction.evaluate(node => {
       const css = getComputedStyle(node);
       return { fontWeight: Number(css.fontWeight), leftBorder: parseFloat(css.borderLeftWidth),
@@ -72,58 +79,66 @@ test('device code is copied before GitHub opens, with actionable clipboard guida
     expect(style.leftBorder).toBeGreaterThanOrEqual(3);
     expect(style.background).not.toBe('rgba(0, 0, 0, 0)');
     expect(await page.evaluate(() => window.testCopiedCode)).toBe('ABCD-1234');
-    const code = page.locator('#device-code');
-    await expect.poll(() => code.inputValue(), { timeout: 1000 }).toMatch(/^A.{0,5}$/);
-    expect(await worker.evaluate(() => globalThis.openedAt)).toBeNull();
-    const fullCode = await page.waitForFunction(() => {
-      if (document.querySelector('#device-code').value === 'ABCD-1234') return Date.now();
-      return false;
-    }, null, { polling: 'raf' });
-    await expect(code).toHaveClass(/code-reveal/);
-    const visibleAt = await fullCode.jsonValue();
-    expect(visibleAt - await worker.evaluate(() => globalThis.startedAt)).toBeGreaterThanOrEqual(1800);
     expect(await code.evaluate(el => { const box = el.getBoundingClientRect(); return box.top >= 0 && box.bottom <= window.innerHeight; })).toBe(true);
-    expect(await code.evaluate(el => getComputedStyle(el).animationName)).toBe('device-code-reveal');
-    expect(await worker.evaluate(() => globalThis.openedAt)).toBeNull();
+    expect(await page.locator('.device-handoff-track span').evaluate(el => getComputedStyle(el).animationName)).toBe('device-handoff-shrink');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-    await expect.poll(() => worker.evaluate(() => globalThis.openedAt), { timeout: 6000 }).toBeGreaterThan(0);
-    await expect(instruction).toHaveText(`Next: On GitHub, press ${pasteShortcut} to paste the code.`);
-    expect((await worker.evaluate(() => globalThis.openedAt)) - visibleAt).toBeGreaterThanOrEqual(3900);
+    expect(await worker.evaluate(() => globalThis.openedAt)).toBeNull();
+    await expect.poll(() => worker.evaluate(() => globalThis.openedAt), { timeout: 6500 }).toBeGreaterThan(0);
+    expect((await worker.evaluate(() => globalThis.openedAt)) - (await worker.evaluate(() => globalThis.startedAt))).toBeGreaterThanOrEqual(2800);
+    await expect(countdown).toBeHidden();
+    await expect(instruction).toHaveText('On GitHub, paste the code with ' + pasteShortcut + ' and authorize Clockoli.');
+    await expect(page.locator('#device-wait')).toContainText('Waiting for GitHub authorization');
+    await expect(page.locator('#open-device-page')).toHaveText('Reopen GitHub');
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    expect(await code.evaluate(el => getComputedStyle(el).animationName)).toBe('none');
     await worker.evaluate(() => { globalThis.openedAt = null; globalThis.startedAt = null; });
     await page.reload();
     await page.locator('#authorize').click();
-    await expect(page.locator('#device-code')).toHaveValue('ABCD-1234');
-    await expect(page.locator('#device-copy-status')).toHaveText('✓ Code copied to your clipboard.');
+    await expect(countdown).toBeVisible();
+    expect(await page.locator('.device-handoff-track span').evaluate(el => getComputedStyle(el).animationName)).toBe('none');
+    await expect(code).toHaveValue('ABCD-1234');
+    await expect.poll(() => worker.evaluate(() => globalThis.openedAt), { timeout: 6500 }).toBeGreaterThan(0);
+
+    // Using the link during the countdown must cancel the scheduled automatic tab.
+    await worker.evaluate(() => { globalThis.openedAt = null; globalThis.startedAt = null; });
+    await page.reload();
+    await page.evaluate(() => document.getElementById('open-device-page').addEventListener('click', event => event.preventDefault()));
+    await page.locator('#authorize').click();
+    await expect(countdown).toBeVisible();
+    await page.locator('#open-device-page').click();
+    await expect(countdown).toBeHidden();
+    await expect(page.locator('#open-device-page')).toHaveText('Reopen GitHub');
+    await expect(page.locator('#device-wait')).toContainText('Waiting for GitHub authorization');
+    await page.waitForTimeout(3300);
     expect(await worker.evaluate(() => globalThis.openedAt)).toBeNull();
-    await expect.poll(() => worker.evaluate(() => globalThis.openedAt), { timeout: 6000 }).toBeGreaterThan(0);
-    expect((await worker.evaluate(() => globalThis.openedAt)) - (await worker.evaluate(() => globalThis.startedAt))).toBeGreaterThanOrEqual(3900);
+
     await worker.evaluate(() => { globalThis.openedAt = null; globalThis.startedAt = null; });
     await page.reload();
     await page.evaluate(() => { navigator.clipboard.writeText = async () => { throw new Error('Clipboard denied'); }; });
     await page.locator('#authorize').click();
     await expect(page.locator('#device-code')).toHaveValue('ABCD-1234');
     await expect(page.locator('#device-copy-status')).toContainText('Code not copied yet');
-    await expect(page.locator('#device-handoff-status')).toHaveText('Next: Copy the code, then open GitHub.');
-    await page.waitForTimeout(4400);
+    await expect(page.locator('#device-handoff-status')).toHaveText('Copy the code, then open GitHub.');
+    await page.waitForTimeout(3300);
     expect(await worker.evaluate(() => globalThis.openedAt)).toBeNull();
     await expect(page.locator('#open-device-page')).toBeVisible();
     await page.locator('#copy-code').click();
     await expect(page.locator('#device-copy-status')).toContainText(copyShortcut);
-    await expect(page.locator('#device-handoff-status')).toHaveText('Next: Copy the selected code, then open GitHub.');
+    await expect(page.locator('#device-handoff-status')).toHaveText('Copy the selected code, then open GitHub.');
     const selection = await page.locator('#device-code').evaluate(node => ({ value: node.value, start: node.selectionStart, end: node.selectionEnd }));
     expect(selection.end - selection.start).toBe(selection.value.length);
     await page.evaluate(() => { navigator.clipboard.writeText = async text => { window.testCopiedCode = text; }; });
     await page.locator('#copy-code').click();
     await expect(page.locator('#device-copy-status')).toHaveText('✓ Code copied to your clipboard.');
-    await expect(page.locator('#device-handoff-status')).toHaveText(`Next: Open GitHub, then press ${pasteShortcut} to paste the code.`);
+    await expect(page.locator('#device-handoff-status')).toHaveText('Open GitHub below, then paste the code with ' + pasteShortcut + ' and authorize Clockoli.');
     expect(await worker.evaluate(() => globalThis.openedAt)).toBeNull();
 
     await worker.evaluate(() => { globalThis.openedAt = null; globalThis.rejectOpen = true; });
     await page.reload();
     await page.locator('#authorize').click();
-    await expect(page.locator('#device-handoff-status')).toContainText('Could not open GitHub automatically', { timeout: 7000 });
+    await expect(page.locator('#device-handoff-status')).toContainText('GitHub could not open automatically', { timeout: 7000 });
+    await expect(countdown).toBeHidden();
+    await expect(page.locator('#open-device-page')).toHaveText('Open GitHub to enter code');
+    await expect(page.locator('#device-wait')).not.toContainText('Waiting for GitHub authorization');
     await expect(page.locator('#open-device-page')).toBeVisible();
     expect(await worker.evaluate(() => globalThis.openedAt)).toBeNull();
 
@@ -131,11 +146,12 @@ test('device code is copied before GitHub opens, with actionable clipboard guida
       Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true });
       Object.defineProperty(navigator, 'userAgentData', { value: { platform: 'macOS' }, configurable: true });
     });
+    await worker.evaluate(() => { globalThis.rejectOpen = false; });
     await page.reload();
     await expect(page.locator('#device-initial-paste-shortcut')).toHaveText('⌘V');
     await page.locator('#authorize').click();
     await expect(page.locator('#device-copy-status')).toHaveText('✓ Code copied to your clipboard.');
-    await expect(page.locator('#device-handoff-status')).toHaveText('Next: When GitHub opens, press ⌘V to paste the code.');
+    await expect(page.locator('#device-handoff-status')).toHaveText('When GitHub opens, paste the code with ⌘V and authorize Clockoli.');
     expect(errors).toEqual([]);
   } finally {
     await context?.close();
