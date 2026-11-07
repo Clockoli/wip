@@ -8,7 +8,7 @@ import { getAddon } from '../addons/registry.js';
 
 const $ = id => document.getElementById(id);
 const SAVE_CONFIRMATION_MS = 2000;
-const DEVICE_HANDOFF_PAUSE_MS = 3000;
+const DEVICE_HANDOFF_PAUSE_MS = 5000;
 const saveButtonStates = new WeakMap();
 let state = null;
 let repositories = [];
@@ -2347,6 +2347,7 @@ $('add-time-repository').addEventListener('click', async event => {
   try {
     await rememberRepositoryTarget('');
     renderState();
+    $('repository-step-title').scrollIntoView({ block: 'start' });
     if (state?.candidateAuth) await discoverRepositories();
   } catch (error) { message(error.message, 'error'); }
 });
