@@ -55,6 +55,20 @@ test('device handoff explains the countdown, handles manual opening and clipboar
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/options/options.html`);
     await page.setViewportSize({ width: 320, height: 700 });
     await expect(page.locator('#authorize')).toBeVisible();
+    await expect(page.locator('html')).toHaveAttribute('data-clockoli-onboarding', 'welcome');
+    await expect(page.locator('#connection-title')).toHaveText('Welcome to Clockoli!');
+    await expect(page.locator('#connection-description')).toContainText('Track your time');
+    await expect(page.locator('#authorize')).toHaveText('Connect GitHub');
+    await expect(page.locator('.page-tab-list')).toBeHidden();
+    await expect(page.locator('#running-status')).toBeHidden();
+    await expect(page.locator('#interface-width')).toBeHidden();
+    await expect(page.locator('#connection-status')).toBeHidden();
+    await expect(page.locator('#onboarding-why')).toBeVisible();
+    await expect(page.locator('#onboarding-why .trust-list')).toBeHidden();
+    await page.locator('#onboarding-why > summary').click();
+    await expect(page.locator('#onboarding-why .trust-list')).toBeVisible();
+    await page.locator('#onboarding-why > summary').click();
+    await expect(page.locator('#onboarding-why .trust-list')).toBeHidden();
     const isMac = await page.evaluate(() => /mac|iphone|ipad|ipod/i.test(navigator.userAgentData?.platform || navigator.platform));
     const pasteShortcut = isMac ? '⌘V' : 'Ctrl+V';
     const copyShortcut = isMac ? '⌘C' : 'Ctrl+C';
@@ -65,6 +79,7 @@ test('device handoff explains the countdown, handles manual opening and clipboar
     const countdown = page.locator('#device-handoff-countdown');
     const code = page.locator('#device-code');
     await expect(code).toHaveValue('ABCD-1234');
+    await expect(page.locator('#onboarding-why')).toBeHidden();
     await expect(instruction).toHaveText('When GitHub opens, paste the code with ' + pasteShortcut + ' and authorize Clockoli.');
     await expect(countdown).toBeVisible();
     await expect(countdown).toContainText('Opening GitHub automatically in 3 seconds');
