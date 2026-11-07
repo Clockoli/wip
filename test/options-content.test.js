@@ -52,7 +52,7 @@ test('onboarding names and explains Device activation without hiding GitHub safe
 
 test('Device activation copies the code before opening GitHub and keeps manual recovery available', () => {
   assert.match(source, /id="authorize"[^>]*>Connect GitHub<\/button>/i);
-  assert.match(source, /try to copy it before opening GitHub/i);
+  assert.match(source, /show and copy a one-time code before opening GitHub/i);
   assert.match(source, /id="device-initial-paste-shortcut"/i);
   assert.match(source, /id="device-copy-status"[^>]*aria-live="polite"/i);
   assert.match(source, /id="open-device-page"[^>]*>Open GitHub to enter code/i);
