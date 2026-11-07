@@ -22,7 +22,7 @@ Each connected repository has a card with its status, a **Default** badge for th
 - **Make default** makes it the destination for tasks that match no project.
 - **Remove from Clockoli** removes the repository from this browser. Repository data, GitHub App access, and Git history are not deleted. Removal is blocked while it would strand active or pending work.
 
-**Add time repository** adds another destination regardless of who owns it; adding never deletes records in existing repositories. See [Time repositories](time-data-repository.md) for requirements and [Work as a team](teams.md) for invitations and avatars.
+**Add time repository** opens the connection form and scrolls **Connect time repositories** to the top of the page. It adds another destination regardless of who owns it; adding never deletes records in existing repositories. See [Time repositories](time-data-repository.md) for requirements and [Work as a team](teams.md) for invitations and avatars.
 
 ## Interface width
 
