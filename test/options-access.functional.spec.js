@@ -142,6 +142,21 @@ async function returnFromGitHub(page) {
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
 }
 
+test('Add time repository scrolls to the repository setup heading', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, browserErrors } = fixture;
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await expect(page.locator('#repository-step')).toBeHidden();
+    await page.locator('#add-time-repository').click();
+    await expect(page.locator('#repository-step-title')).toBeVisible();
+    const top = await page.locator('#repository-step-title').evaluate(node => node.getBoundingClientRect().top);
+    expect(top).toBeGreaterThanOrEqual(-1);
+    expect(top).toBeLessThan(12);
+    expect(browserErrors).toEqual([]);
+  } finally { await closeOptions(fixture); }
+});
+
 test('connected account can reauthorize without signing out or losing its repositories', async () => {
   const fixture = await openOptions();
   try {
