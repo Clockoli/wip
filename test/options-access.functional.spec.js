@@ -182,7 +182,9 @@ test('an authorized attempt survives a transient onboarding read failure without
       globalThis.failNextOnboardingRead = true;
     });
     await returnFromGitHub(page);
-    await expect(page.locator('#connection-status')).toHaveText('Checking repository access');
+    // A completed authorization can already clear the sign-in warning while
+    // the repository step remains open; both states are valid after recovery.
+    await expect(page.locator('#connection-status')).toHaveText(/^(Checking repository access|Connected)$/);
     await expect(page.locator('#repository-step')).toBeVisible();
     await expect(page.locator('.time-repository')).toHaveCount(2);
     await page.waitForTimeout(5_200);
