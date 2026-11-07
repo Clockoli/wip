@@ -430,10 +430,12 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await expect(activityRoot.locator('.activity-list .section-head button')).toHaveCount(0);
     await expect(listToolbar.getByRole('searchbox', { name: 'Search activity' })).toHaveAttribute('placeholder', 'Search entries');
     await expect(listNavigation.locator('.week-navigation-label')).toHaveText(await activity.locator('#activity-summary .activity-weekly-range').innerText());
-    const weekLabel = listNavigation.getByRole('button', { name: 'Pick a week' });
+    const weekLabel = listNavigation.locator('.week-navigation-label');
+    await expect(weekLabel).toHaveAttribute('data-clockoli-tooltip', 'Pick a week');
     const weekPicker = listNavigation.locator('.week-navigation-picker');
     const currentWeekLabel = await weekLabel.innerText();
     await weekLabel.click();
+    await expect.poll(() => weekPicker.evaluate(input => input.matches(':open'))).toBe(true);
     await activity.keyboard.press('Escape');
     const currentWeek = await weekPicker.inputValue();
     expect(currentWeek).toMatch(/^\d{4}-W\d{2}$/);

@@ -94,6 +94,10 @@ html[data-clockoli-width="full"] #activity-sync-status:not(:empty){width:calc(10
   border-left:4px solid var(--borderColor-attention-emphasis);
   background:linear-gradient(100deg,var(--bgColor-attention-muted),var(--bgColor-default) 65%)
 }
+#activity-running-status.running-status.is-idle .running-status-row{flex-flow:column nowrap;align-items:stretch;justify-content:center;gap:8px;padding:16px}
+#activity-running-status .running-status-idle-group{flex-direction:row;align-items:center;gap:8px;padding-right:0;border-right:0}
+#activity-running-status .running-status-quick-start{flex:none;flex-flow:column nowrap;align-items:stretch;gap:8px}
+#activity-running-status .running-status-recent{flex:none}
 #activity-running-status.running-status.is-active .running-status-row{display:grid;grid-template-columns:minmax(0,1fr) max-content;grid-template-rows:auto auto 1fr;align-items:start;gap:8px 22px}
 #activity-running-status.is-active .running-status-live{grid-column:1;grid-row:1;justify-self:start}
 #activity-running-status.is-active .running-status-task{grid-column:1;grid-row:2;max-width:100%}
@@ -101,7 +105,7 @@ html[data-clockoli-width="full"] #activity-sync-status:not(:empty){width:calc(10
 #activity-running-status.is-active .running-status-stats{grid-column:2;grid-row:1/span 2;justify-self:end;margin:0}
 #activity-running-status.is-active .running-status-stop{box-sizing:border-box;grid-column:2;grid-row:3;justify-self:stretch;align-self:start;width:100%;min-height:32px}
 @media(max-width:1299px){.activity-overview-layout{grid-template-columns:minmax(190px,1fr) minmax(0,3fr)}}
-@media(max-width:900px){.activity-overview-layout{grid-template-columns:1fr}}
+@media(max-width:900px){.activity-overview-layout{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:700px){.activity-overview-layout,html[data-clockoli-width="full"] .activity-overview-layout,#activity-sync-status:not(:empty),html[data-clockoli-width="full"] #activity-sync-status:not(:empty){width:calc(100% - 24px)}}
 @media(max-width:640px){.sync-status-banner{align-items:stretch;flex-direction:column}.sync-issues-content{grid-template-columns:1fr;max-height:calc(85dvh - 150px);overflow:auto}.sync-issue-list{max-height:180px;border-right:0;border-bottom:1px solid var(--borderColor-muted)}.sync-issue-detail{overflow:visible}.sync-issues-dialog{max-height:85dvh}}
 @media(max-width:900px){.sync-overlap-pair{grid-template-columns:1fr}}

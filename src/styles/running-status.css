@@ -32,8 +32,9 @@
 .running-status-task:hover{text-decoration:underline}
 .running-status-description-field{position:relative;flex:1 1 260px;min-width:180px;max-width:420px}
 .running-status-description{box-sizing:border-box;display:block;width:100%;min-height:32px;max-height:180px;margin:0;padding:5px 95px 5px 12px;border:1px solid var(--control-borderColor-rest);border-radius:6px;background:var(--control-bgColor-rest);color:var(--control-fgColor-rest);font:400 14px/20px var(--fontStack-sansSerif);resize:vertical;white-space:pre-wrap}
-.running-status-description::placeholder{color:var(--control-fgColor-placeholder)}
 .running-status-description:hover{background:var(--control-bgColor-hover)}
+.running-status-description::placeholder{color:var(--control-fgColor-placeholder)}
+
 .running-status-description-save{position:absolute;top:4px;right:4px;display:inline-grid;width:24px;height:24px;place-items:center;padding:0;border:0;border-radius:6px;background:transparent;color:var(--fgColor-success);cursor:pointer}
 .running-status-description-save:hover:not(:disabled){background:var(--bgColor-success-muted)}
 .running-status-description-saved{position:absolute;top:6px;right:32px;display:inline-flex;align-items:center;gap:4px;color:var(--fgColor-success);font-size:12px;font-weight:500;line-height:20px;white-space:nowrap}
@@ -45,7 +46,7 @@
 .running-status .running-status-stop{flex:none;margin:0;padding:5px 12px;border:1px solid var(--button-danger-borderColor-rest);border-radius:6px;background:var(--button-danger-bgColor-rest);color:var(--button-danger-fgColor-rest);font:500 14px/20px var(--fontStack-sansSerif);white-space:nowrap;cursor:pointer}
 .running-status .running-status-stop:hover{border-color:var(--button-danger-borderColor-hover);background:var(--button-danger-bgColor-hover);color:var(--button-danger-fgColor-hover)}
 .running-status .running-status-stop:disabled{border-color:var(--button-danger-borderColor-rest);background:var(--button-danger-bgColor-disabled);color:var(--button-danger-fgColor-disabled);cursor:default}
-.running-status-task:focus-visible,.running-status-description:focus-visible,.running-status-description-save:focus-visible,.running-status-stop:focus-visible,.running-status-recent-task:focus-visible{outline:2px solid var(--focus-outlineColor);outline-offset:2px}
+.running-status-task:focus-visible,.running-status-description:focus-visible,.running-status-description-save:focus-visible,.running-status-stop:focus-visible,.running-status-recent-task:focus-visible{outline:2px solid var(--focus-outlineColor);outline-offset:2px}.running-status-description:focus-visible{outline-offset:-1px}
 .running-status-error{padding-top:0;color:var(--fgColor-danger);overflow-wrap:anywhere}
 .running-status-reconnect{min-height:32px;margin-left:12px;padding:5px 12px;border:1px solid var(--button-default-borderColor-rest);border-radius:6px;background:var(--button-default-bgColor-rest);color:var(--button-default-fgColor-rest);font:500 14px/20px var(--fontStack-sansSerif);cursor:pointer}
 .running-status-reconnect:hover{background:var(--button-default-bgColor-hover)}

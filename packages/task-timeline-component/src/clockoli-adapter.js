@@ -169,7 +169,7 @@
     .calendar-task.selected, .calendar-task.focused:not(.selected) { outline-color: var(--focus-outlineColor, var(--ck-focus, #0969da)); }
     /* The vendored component is hash-pinned, so Primer type and shape are applied here. */
     .domain-start, .domain-end, .calendar-toolbar-title, .day-band, .history-button, .calendar-task-name, .task-name, .edit-clock .kind, .calendar-edit-clock .kind { font-weight: 600; }
-    .calendar-nav button, .calendar-day-header, .calendar-day-tracked, .calendar-row-name, .calendar-edit-clock, .tracked, .edit-guide-label, .row-label, .day-tracked, .edit-clock, .details-label { font-size: 12px; font-weight: 600; }
+    .calendar-nav button, .calendar-day-header, .calendar-row-name, .calendar-edit-clock, .tracked, .edit-guide-label, .row-label, .day-tracked, .edit-clock, .details-label { font-size: 12px; font-weight: 600; }
     .calendar-time-label, .calendar-task, .calendar-task-time, .ruler-cell, .details, .details-project { font-size: 12px; }
     .details-title { font-size: 14px; font-weight: 600; }
     .details-label { letter-spacing: normal; text-transform: none; }
@@ -182,14 +182,19 @@
     /* A 12px description only fits blocks taller than the title and time lines. */
     .calendar-task { container-type: size; }
     @container (max-height: 63px) { .clockoli-calendar-description { display:none !important; } }
+    @container (max-height: 35px) { .calendar-task-time { display:none; } }
+    .calendar-day-tracked { font-size: 12px; font-weight: 400; }
+    .calendar-sticky-header { box-shadow: none; }
+    .calendar-day-line { background: var(--tt-grid); }
     .clockoli-calendar-description { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; margin-top:2px; overflow:hidden; color:var(--tt-muted); font-size:12px; line-height:16px; white-space:pre-line; }
     
     /* Shared task actions, with accessible text labels kept intact. */
     .clockoli-timeline-action { display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:32px;border-radius:6px;white-space:nowrap }
     .clockoli-timeline-icon { flex:none;width:16px;height:16px;fill:currentColor }
     /* The same empty-state copy is used on weekdays and weekends. */
-    .clockoli-calendar-empty { position:absolute;z-index:2;display:flex;flex-direction:column;align-items:center;gap:5px;box-sizing:border-box;padding:6px 8px;pointer-events:none;text-align:center;color:var(--tt-muted);font-size:12px;line-height:1.4 }
-    .clockoli-calendar-empty-icon { width:16px;height:16px;margin-bottom:4px;fill:currentColor;opacity:.7 }
+    .clockoli-calendar-empty { position:absolute;z-index:2;display:flex;flex-direction:column;align-items:center;box-sizing:border-box;padding:8px;pointer-events:none;text-align:center;color:var(--tt-muted);font-size:12px;line-height:1.4 }
+    .clockoli-calendar-empty > * { background:var(--bgColor-default,var(--ck-bg,#fff)) }
+    .clockoli-calendar-empty-icon { width:16px;height:16px;fill:currentColor;opacity:.7 }
     .clockoli-calendar-empty-title { color:var(--tt-text);font-weight:600 }
     .clockoli-calendar-empty-help { font-size:12px;max-width:140px }
 

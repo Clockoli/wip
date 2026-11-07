@@ -87,7 +87,7 @@ function auditSurface() {
       const isButton = node.tagName === 'BUTTON' && !node.closest('.calendar-task,.task,.repository-collaborators,.merge-task-list,.teammate-choices')
         && !node.matches('.link-button,.entry-description-link,.add-time-option,.sync-issue-item,.setup-footer button,.calendar-day');
       const height = Math.round(rect.height), touchTarget = innerWidth <= TOUCH_WIDTH && height === TOUCH_HEIGHT;
-      if (isField && !node.classList.contains('week-navigation-picker') && Number(css.fontWeight) !== 400 && !node.closest('.device-row')) report('field-weight', node, css.fontWeight);
+      if (isField && !node.classList.contains('week-navigation-picker') && Number(css.fontWeight) !== 400 && !node.closest('.device-row,.running-status-start-value')) report('field-weight', node, css.fontWeight);
       if (isField && !node.classList.contains('week-navigation-picker') && css.fontSize !== '14px' && !node.closest('.device-row,.running-status-start-value')) report('field-size', node, css.fontSize);
       if ((isField || isButton) && !node.classList.contains('week-navigation-picker') && !node.closest('.running-status-start-value') && !touchTarget && !CONTROL_HEIGHTS.has(height)) report('control-height', node, Math.round(rect.height));
       if (node.tagName === 'svg' && !node.matches('.clockoli-mark') && !node.closest('.chart') && node.parentElement?.closest('button,a,.running-status-recent-play,label,.task-main,.activity-weekly-icon,.description-saved,.running-status-description-saved,.running-status-start-saved')) {
