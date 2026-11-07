@@ -111,6 +111,22 @@ test('device handoff explains the countdown, handles manual opening and clipboar
     await page.waitForTimeout(3300);
     expect(await worker.evaluate(() => globalThis.openedAt)).toBeNull();
 
+    // If the user opens GitHub while copying is still pending, do not open a duplicate tab.
+    await worker.evaluate(() => { globalThis.openedAt = null; globalThis.startedAt = null; });
+    await page.reload();
+    await page.evaluate(() => {
+      navigator.clipboard.writeText = () => new Promise(resolve => { window.finishDeviceCopy = resolve; });
+      document.getElementById('open-device-page').addEventListener('click', event => event.preventDefault());
+    });
+    await page.locator('#authorize').click();
+    await expect(code).toHaveValue('ABCD-1234');
+    await page.locator('#open-device-page').click();
+    await page.evaluate(() => window.finishDeviceCopy());
+    await expect(page.locator('#device-copy-status')).toHaveText('✓ Code copied to your clipboard.');
+    await expect(countdown).toBeHidden();
+    await page.waitForTimeout(3300);
+    expect(await worker.evaluate(() => globalThis.openedAt)).toBeNull();
+
     await worker.evaluate(() => { globalThis.openedAt = null; globalThis.startedAt = null; });
     await page.reload();
     await page.evaluate(() => { navigator.clipboard.writeText = async () => { throw new Error('Clipboard denied'); }; });
