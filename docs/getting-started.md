@@ -17,7 +17,7 @@ The welcome screen opens automatically after installation. Until you connect a t
 ## Step 1: Sign in with GitHub
 
 1. Select **Connect GitHub** on the welcome screen. You can expand **Why GitHub?** to read about access and privacy. If the browser asks for permission to contact GitHub, allow it. Clockoli shows the one-time code immediately and **tries to copy it to the clipboard**. It tells you whether copying succeeded.
-2. If copying succeeded, a three-second countdown appears before GitHub opens automatically. You can select **Open GitHub now** to skip the pause. On GitHub, paste the code with **⌘V on macOS or Ctrl+V on Windows/Linux**. Confirm that you are on **github.com** and authorizing **Clockoli**, then approve.
+2. If copying succeeded, a five-second countdown appears before GitHub opens automatically. You can select **Open GitHub now** to skip the pause. On GitHub, paste the code with **⌘V on macOS or Ctrl+V on Windows/Linux**. Confirm that you are on **github.com** and authorizing **Clockoli**, then approve.
 3. If copying failed, **GitHub does not open automatically**. Select **Copy**, then **Open GitHub to enter code**. If clipboard access is blocked, select the displayed code and copy it with ⌘C (macOS) or Ctrl+C (Windows/Linux).
 4. Return to Clockoli. It shows **Waiting for GitHub authorization** and checks automatically; no manual confirmation is needed. If you closed or missed the GitHub tab, select **Reopen GitHub**. If the tab could not open automatically, select **Open GitHub to enter code** instead.
 
