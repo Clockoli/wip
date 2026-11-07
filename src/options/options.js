@@ -827,6 +827,8 @@ function renderState() {
 function renderDeviceAttempt(attempt) {
   if (deviceClipboardAttemptId && deviceClipboardAttemptId !== attempt.attemptId) {
     cancelScheduledDeviceOpen();
+    deviceClipboardAttemptId = attempt.attemptId;
+    deviceClipboardState = 'unknown';
     deviceGitHubOpened = false;
     deviceAutoOpenFailed = false;
   }
