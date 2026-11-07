@@ -1869,6 +1869,7 @@ function scheduleSync() {
 
 let openingTimesPage = null;
 async function openTimesPage() {
+  if (await shouldOpenOnboarding()) return chrome.runtime.openOptionsPage();
   if (openingTimesPage) return openingTimesPage;
   const open = async () => {
     const url = chrome.runtime.getURL('src/times/times.html');
