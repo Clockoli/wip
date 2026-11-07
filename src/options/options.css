@@ -14,6 +14,7 @@ html:is([data-clockoli-onboarding="welcome"],[data-clockoli-onboarding="setup"])
 html:is([data-clockoli-onboarding="welcome"],[data-clockoli-onboarding="setup"]) main.settings-main > :not(.connection-card){display:none}
 html:is([data-clockoli-onboarding="welcome"],[data-clockoli-onboarding="setup"]) main.settings-main{max-width:680px;margin:clamp(36px,8vh,88px) auto 40px}
 html:is([data-clockoli-onboarding="welcome"],[data-clockoli-onboarding="setup"]) .setup-progress .progress-track{display:none}
+html[data-clockoli-onboarding="setup"] #connected{display:none}
 html[data-clockoli-onboarding="welcome"] .connection-card{padding:clamp(24px,4vw,40px)}
 html[data-clockoli-onboarding="welcome"] .connection-card .card-heading{display:block;text-align:center}
 html[data-clockoli-onboarding="welcome"] #connection-title{font-size:clamp(23px,3vw,28px);line-height:1.25}
