@@ -91,7 +91,7 @@ test('device handoff explains the countdown, handles manual opening and clipboar
     await expect(page.locator('#onboarding-why')).toBeHidden();
     await expect(instruction).toHaveText('When GitHub opens, paste the code with ' + pasteShortcut + ' and authorize Clockoli.');
     await expect(countdown).toBeVisible();
-    await expect(countdown).toContainText('Opening GitHub automatically in 3 seconds');
+    await expect(countdown).toContainText('Opening GitHub automatically in 5 seconds');
     await expect(page.locator('#open-device-page')).toHaveText('Open GitHub now');
     await expect(page.locator('#device-done')).toHaveCount(0);
     const style = await instruction.evaluate(node => {
@@ -107,8 +107,8 @@ test('device handoff explains the countdown, handles manual opening and clipboar
     expect(await page.locator('.device-handoff-track span').evaluate(el => getComputedStyle(el).animationName)).toBe('device-handoff-shrink');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     expect(await worker.evaluate(() => globalThis.openedAt)).toBeNull();
-    await expect.poll(() => worker.evaluate(() => globalThis.openedAt), { timeout: 6500 }).toBeGreaterThan(0);
-    expect((await worker.evaluate(() => globalThis.openedAt)) - (await worker.evaluate(() => globalThis.startedAt))).toBeGreaterThanOrEqual(2800);
+    await expect.poll(() => worker.evaluate(() => globalThis.openedAt), { timeout: 8500 }).toBeGreaterThan(0);
+    expect((await worker.evaluate(() => globalThis.openedAt)) - (await worker.evaluate(() => globalThis.startedAt))).toBeGreaterThanOrEqual(4800);
     await expect(countdown).toBeHidden();
     await expect(instruction).toHaveText('On GitHub, paste the code with ' + pasteShortcut + ' and authorize Clockoli.');
     await expect(page.locator('#device-wait')).toContainText('Waiting for GitHub authorization');
@@ -120,7 +120,7 @@ test('device handoff explains the countdown, handles manual opening and clipboar
     await expect(countdown).toBeVisible();
     expect(await page.locator('.device-handoff-track span').evaluate(el => getComputedStyle(el).animationName)).toBe('none');
     await expect(code).toHaveValue('ABCD-1234');
-    await expect.poll(() => worker.evaluate(() => globalThis.openedAt), { timeout: 6500 }).toBeGreaterThan(0);
+    await expect.poll(() => worker.evaluate(() => globalThis.openedAt), { timeout: 8500 }).toBeGreaterThan(0);
 
     // Using the link during the countdown must cancel the scheduled automatic tab.
     await worker.evaluate(() => { globalThis.openedAt = null; globalThis.startedAt = null; });
@@ -132,7 +132,7 @@ test('device handoff explains the countdown, handles manual opening and clipboar
     await expect(countdown).toBeHidden();
     await expect(page.locator('#open-device-page')).toHaveText('Reopen GitHub');
     await expect(page.locator('#device-wait')).toContainText('Waiting for GitHub authorization');
-    await page.waitForTimeout(3300);
+    await page.waitForTimeout(5300);
     expect(await worker.evaluate(() => globalThis.openedAt)).toBeNull();
 
     // If the user opens GitHub while copying is still pending, do not open a duplicate tab.
@@ -149,7 +149,7 @@ test('device handoff explains the countdown, handles manual opening and clipboar
     await page.evaluate(() => window.finishDeviceCopy());
     await expect(page.locator('#device-copy-status')).toHaveText('✓ Code copied to your clipboard.');
     await expect(countdown).toBeHidden();
-    await page.waitForTimeout(3300);
+    await page.waitForTimeout(5300);
     expect(await worker.evaluate(() => globalThis.openedAt)).toBeNull();
 
     await worker.evaluate(() => { globalThis.openedAt = null; globalThis.startedAt = null; });
@@ -159,7 +159,7 @@ test('device handoff explains the countdown, handles manual opening and clipboar
     await expect(page.locator('#device-code')).toHaveValue('ABCD-1234');
     await expect(page.locator('#device-copy-status')).toContainText('Code not copied yet');
     await expect(page.locator('#device-handoff-status')).toHaveText('Copy the code, then open GitHub.');
-    await page.waitForTimeout(3300);
+    await page.waitForTimeout(5300);
     expect(await worker.evaluate(() => globalThis.openedAt)).toBeNull();
     await expect(page.locator('#open-device-page')).toBeVisible();
     await page.locator('#copy-code').click();
