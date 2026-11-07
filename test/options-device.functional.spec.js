@@ -120,6 +120,7 @@ test('device handoff explains the countdown, handles manual opening and clipboar
     });
     await page.locator('#authorize').click();
     await expect(code).toHaveValue('ABCD-1234');
+    await page.waitForFunction(() => typeof window.finishDeviceCopy === 'function');
     await page.locator('#open-device-page').click();
     await page.evaluate(() => window.finishDeviceCopy());
     await expect(page.locator('#device-copy-status')).toHaveText('✓ Code copied to your clipboard.');
