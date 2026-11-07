@@ -89,6 +89,21 @@ function harness({ reply = () => ({}), confirm = () => false, savedChoices = new
   };
 }
 
+test('initial onboarding is focused until a default repository is connected', () => {
+  const page = harness();
+  page.render({ appConfigured: true, auth: null, config: null, destinations: [] });
+  assert.equal(page.context.document.documentElement.dataset.clockoliOnboarding, 'welcome');
+  assert.equal(page.nodes.get('connection-title').textContent, 'Welcome to Clockoli!');
+  assert.equal(page.nodes.get('authorize').textContent, 'Connect GitHub');
+
+  page.render({ ...connectedState, config: null, destinations: [] });
+  assert.equal(page.context.document.documentElement.dataset.clockoliOnboarding, 'setup');
+  assert.equal(page.nodes.get('connection-title').textContent, 'GitHub account');
+
+  page.render(connectedState);
+  assert.equal(page.context.document.documentElement.dataset.clockoliOnboarding, '');
+});
+
 function billingSaveResult(request, current = preferences) {
   return {
     clientRates: request.payload.clientRates ?? current.clientRates,
