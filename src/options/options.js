@@ -21,6 +21,7 @@ let deviceGitHubOpened = false;
 let deviceAutoOpenTimer = null;
 let deviceAutoOpenFailed = false;
 let showOnboarding = false;
+let showAdvancedSetup = false;
 let reconnectingGitHub = false;
 let authExpired = false;
 let refreshRunningStatus = null;
@@ -771,7 +772,7 @@ function renderState() {
   const accountConnected = Boolean(state?.auth);
   const destinations = configuredDestinations();
   const initialSetup = !state.config && destinations.length === 0 && state.appConfigured
-    && !setupCancelled && !authExpired && (!state.auth || state.auth.mode === 'github_app');
+    && !setupCancelled && !authExpired && !showAdvancedSetup && (!state.auth || state.auth.mode === 'github_app');
   const welcome = initialSetup && !accountConnected && !state.candidateAuth;
   document.documentElement.dataset.clockoliOnboarding = initialSetup ? (welcome ? 'welcome' : 'setup') : '';
   const repositoryFlowOpen = Boolean(state?.candidateAuth || authExpired || reconnectingGitHub || state?.deviceAttempt)
@@ -1963,6 +1964,15 @@ async function refreshState() {
     await discoverRepositories().catch(() => {});
   }
 }
+
+$('use-pat-instead').addEventListener('click', () => {
+  showAdvancedSetup = true;
+  renderState();
+  $('more-settings').open = true;
+  $('advanced-settings').open = true;
+  $('advanced-pat').open = true;
+  $('advanced-pat').scrollIntoView({ block: 'start' });
+});
 
 $('authorize').addEventListener('click', async () => {
   setupCancelled = false; $('authorize').disabled = true; message('Requesting a one-time device code from GitHub…');
