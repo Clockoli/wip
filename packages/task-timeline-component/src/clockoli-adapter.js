@@ -81,7 +81,7 @@
       height: 40px !important;
       border: 1px solid color-mix(in srgb, var(--clockoli-task-color, #64748b) 44%, transparent);
       border-left: 3px solid var(--clockoli-task-color, #64748b);
-      border-radius: 7px !important;
+      border-radius: 6px !important;
       background: var(--clockoli-task-background) !important;
       color: var(--tt-text) !important;
       box-shadow: none;
@@ -120,8 +120,8 @@
       background-position: calc(50% - 2px) center, calc(50% + 2px) center;
       background-repeat: no-repeat;
     }
-    .resize-handle.left::after { left: 0; border-radius: 4px 0 0 4px; }
-    .resize-handle.right::after { right: 0; border-radius: 0 4px 4px 0; }
+    .resize-handle.left::after { left: 0; border-radius: 6px 0 0 6px; }
+    .resize-handle.right::after { right: 0; border-radius: 0 6px 6px 0; }
     .calendar-task .calendar-resize-handle { left: 0; right: 0; }
     .calendar-resize-handle::after {
       left: 0; width: 100%; height: 6px;
@@ -161,28 +161,37 @@
     .calendar-task {
       border: 1px solid color-mix(in srgb, var(--clockoli-task-color, #64748b) 44%, transparent) !important;
       border-left: 3px solid var(--clockoli-task-color, #64748b) !important;
-      border-radius: 7px !important;
+      border-radius: 6px !important;
       background: color-mix(in srgb, var(--clockoli-task-color, #64748b) 34%, var(--tt-panel)) !important;
       color: var(--tt-text) !important;
       box-shadow: none !important;
     }
     .calendar-task.selected, .calendar-task.focused:not(.selected) { outline-color: var(--focus-outlineColor, var(--ck-focus, #0969da)); }
+    /* The vendored component is hash-pinned, so Primer type and shape are applied here. */
+    .domain-start, .domain-end, .calendar-toolbar-title, .day-band, .history-button, .calendar-task-name, .task-name, .edit-clock .kind, .calendar-edit-clock .kind { font-weight: 600; }
+    .calendar-nav button, .calendar-day-header, .calendar-day-tracked, .calendar-row-name, .calendar-edit-clock, .tracked, .edit-guide-label, .row-label, .day-tracked, .edit-clock, .details-label { font-size: 12px; font-weight: 600; }
+    .calendar-time-label, .calendar-task, .calendar-task-time, .ruler-cell, .details, .details-project { font-size: 12px; }
+    .details-title { font-size: 14px; font-weight: 600; }
+    .details-label { letter-spacing: normal; text-transform: none; }
+    .calendar-nav button, .calendar-edit-clock, .edit-guide-label, .task, .task.short, .edit-clock, .history-button { border-radius: 6px; }
     .clockoli-calendar-favicon { width: 16px; height: 16px; margin: 0 5px 2px 0; border-radius: 3px; object-fit: contain; vertical-align: middle; }
     .clockoli-calendar-monogram { display: inline-grid; place-items: center; background: var(--tt-panel); color: var(--tt-text); font-size: 12px; font-weight: 600; line-height: 1; }
     .clockoli-calendar-favicon.clockoli-fallback-icon { display:inline-block; background:var(--tt-text); mask-size:contain; mask-position:center; mask-repeat:no-repeat; }
     .clockoli-github-favicon { filter:var(--clockoli-github-favicon-filter,none) }
     @media(prefers-color-scheme:dark) { .clockoli-github-favicon { filter:var(--clockoli-github-favicon-filter,brightness(0) invert(1)) } }
-    .clockoli-calendar-description { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; margin-top:2px; overflow:hidden; color:var(--tt-muted); font-size:9px; line-height:12px; white-space:pre-line; }
+    /* A 12px description only fits blocks taller than the title and time lines. */
+    .calendar-task { container-type: size; }
+    @container (max-height: 63px) { .clockoli-calendar-description { display:none !important; } }
+    .clockoli-calendar-description { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; margin-top:2px; overflow:hidden; color:var(--tt-muted); font-size:12px; line-height:16px; white-space:pre-line; }
     
     /* Shared task actions, with accessible text labels kept intact. */
-    .clockoli-timeline-action { display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:34px;border-radius:8px;white-space:nowrap }
-    .clockoli-timeline-icon { flex:none;width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round }
-    .clockoli-timeline-icon[data-action="play"] { fill:currentColor;stroke:none }
+    .clockoli-timeline-action { display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:32px;border-radius:6px;white-space:nowrap }
+    .clockoli-timeline-icon { flex:none;width:16px;height:16px;fill:currentColor }
     /* The same empty-state copy is used on weekdays and weekends. */
-    .clockoli-calendar-empty { position:absolute;z-index:2;display:flex;flex-direction:column;align-items:center;gap:5px;box-sizing:border-box;padding:6px 8px;pointer-events:none;text-align:center;color:var(--tt-muted);font-size:11px;line-height:1.4 }
-    .clockoli-calendar-empty-icon { width:23px;height:23px;margin-bottom:5px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;opacity:.7 }
-    .clockoli-calendar-empty-title { color:var(--tt-text);font-weight:700 }
-    .clockoli-calendar-empty-help { font-size:10px;max-width:140px }
+    .clockoli-calendar-empty { position:absolute;z-index:2;display:flex;flex-direction:column;align-items:center;gap:5px;box-sizing:border-box;padding:6px 8px;pointer-events:none;text-align:center;color:var(--tt-muted);font-size:12px;line-height:1.4 }
+    .clockoli-calendar-empty-icon { width:16px;height:16px;margin-bottom:4px;fill:currentColor;opacity:.7 }
+    .clockoli-calendar-empty-title { color:var(--tt-text);font-weight:600 }
+    .clockoli-calendar-empty-help { font-size:12px;max-width:140px }
 
     .history-controls { display: none; }
     .details {
@@ -197,25 +206,25 @@
     }
     .details[hidden], .details-pointer { display: none !important; }
     .details-info { flex: 0 0 auto; width: 100%; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-    .details-primary { grid-column: 1 / -1; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--fgColor-accent, #0969da) 7%, var(--tt-panel)); }
+    .details-primary { grid-column: 1 / -1; padding: 8px 10px; border-radius: 6px; background: color-mix(in srgb, var(--fgColor-accent, #0969da) 7%, var(--tt-panel)); }
     .details-title { white-space: normal; overflow-wrap: anywhere; }
-    .details-value { padding: 7px 8px; border-radius: 8px; background: color-mix(in srgb, var(--fgColor-accent, #0969da) 5%, var(--tt-panel)); }
+    .details-value { padding: 7px 8px; border-radius: 6px; background: color-mix(in srgb, var(--fgColor-accent, #0969da) 5%, var(--tt-panel)); }
     .clockoli-timeline-actions { margin-left: auto; display: flex; flex: 0 0 auto; min-width: 0; align-items: center; gap: 8px; }
     .clockoli-timeline-actions.has-description { flex: 1 1 340px; }
     .clockoli-description-field { position: relative; flex: 1 1 0; min-width: 0; }
-    .clockoli-timeline-description { box-sizing: border-box; width: 100%; min-width: 0; min-height: 32px; max-height: 180px; resize: vertical; white-space: pre-wrap; margin: 0; padding: 6px 94px 6px 8px; border: 1px solid var(--control-borderColor-rest, var(--tt-border)); border-radius: 6px; background: var(--control-bgColor-rest, var(--tt-panel)); color: var(--control-fgColor-rest, var(--tt-text)); font: inherit; }
-    .clockoli-description-save { position: absolute; top: 50%; right: 4px; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; transform: translateY(-50%); border: 0; border-radius: 5px; background: transparent; color: #1f883d; font: 800 18px/1 sans-serif; cursor: pointer; }
+    .clockoli-timeline-description { box-sizing: border-box; width: 100%; min-width: 0; min-height: 32px; max-height: 180px; resize: vertical; white-space: pre-wrap; margin: 0; padding: 5px 94px 5px 12px; border: 1px solid var(--control-borderColor-rest, var(--tt-border)); border-radius: 6px; background: var(--control-bgColor-rest, var(--tt-panel)); color: var(--control-fgColor-rest, var(--tt-text)); font: inherit; }
+    .clockoli-description-save { position: absolute; top: 50%; right: 4px; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; transform: translateY(-50%); border: 0; border-radius: 6px; background: transparent; color: #1f883d; cursor: pointer; }
     .clockoli-description-save:hover:not(:disabled) { background: color-mix(in srgb, #1f883d 12%, transparent); }
     .clockoli-description-save[hidden] { display: none; }
-    .clockoli-description-saved { position: absolute; top: 50%; right: 36px; transform: translateY(-50%); padding: 2px 4px; border-radius: 3px; background: var(--tt-panel); color: #1f883d; font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .clockoli-description-saved { position: absolute; top: 50%; right: 36px; transform: translateY(-50%); padding: 2px 4px; border-radius: 3px; background: var(--tt-panel); display: inline-flex; align-items: center; gap: 4px; color: #1f883d; font-size: 12px; font-weight: 500; white-space: nowrap; }
     .clockoli-description-saved[hidden] { display: none; }
-    .clockoli-description-more { display: block; margin-top: 3px; color: var(--tt-muted); font-size: 11px; line-height: 1.3; }
+    .clockoli-description-more { display: block; margin-top: 3px; color: var(--tt-muted); font-size: 12px; line-height: 1.3; }
     .clockoli-description-more[hidden] { display: none; }
     .clockoli-timeline-action {
       flex: 0 0 auto; white-space: nowrap;
-      min-height: 30px; padding: 5px 10px; border: 1px solid var(--button-default-borderColor-rest, var(--tt-border));
+      min-height: 32px; padding: 5px 12px; border: 1px solid var(--button-default-borderColor-rest, var(--tt-border));
       border-radius: 6px; background: var(--button-default-bgColor-rest, var(--tt-panel));
-      color: var(--button-default-fgColor-rest, var(--tt-text)); font: inherit; font-weight: 600; cursor: pointer;
+      color: var(--button-default-fgColor-rest, var(--tt-text)); font: inherit; font-weight: 500; line-height: 20px; cursor: pointer;
     }
     .details .clockoli-timeline-action { border-color: color-mix(in srgb, var(--fgColor-accent, #0969da) 19%, var(--tt-border)); background: color-mix(in srgb, var(--fgColor-accent, #0969da) 9%, var(--tt-panel)); color: var(--fgColor-accent, #0969da); }
     .details .clockoli-timeline-action:hover:not(:disabled):not(.primary):not(.danger) { background: color-mix(in srgb, var(--fgColor-accent, #0969da) 16%, var(--tt-panel)); }
@@ -288,14 +297,14 @@
         ? `
           .shell:has(.calendar-view:not([hidden])) .meta,
           .shell:has(.calendar-view:not([hidden])) .details:has(.details-info .hint) { display:none }
-          .calendar-day-header { font-size:13px }
+          .calendar-day-header { font-size:12px }
           .calendar-day-tracked, .calendar-time-label { font-size:12px }
-          .calendar-task { font-size:11px }
-          .clockoli-calendar-empty { font-size:13px }
+          .calendar-task { font-size:12px }
+          .clockoli-calendar-empty { font-size:12px }
           .clockoli-calendar-empty-help { font-size:12px;max-width:none }
           .details.clockoli-compact-entry-details {
             box-sizing:border-box;width:min(360px,calc(100vw - 16px));gap:12px;padding:12px;
-            border:1px solid var(--tt-border) !important;border-radius:14px;
+            border:1px solid var(--tt-border) !important;border-radius:12px;
             background:var(--tt-panel);backdrop-filter:none;-webkit-backdrop-filter:none;
             box-shadow:0 8px 24px rgba(16,24,40,.12)
           }
@@ -303,7 +312,7 @@
           .clockoli-compact-entry-details .clockoli-details-task-icon {
             position:relative;display:grid;grid-column:1;grid-row:1;place-items:center;width:36px;height:36px;
             border-radius:50%;background:var(--tt-empty);color:var(--tt-text);
-            font-size:16px;font-weight:700;object-fit:contain
+            font-size:16px;font-weight:600;object-fit:contain
           }
           .clockoli-compact-entry-details .clockoli-details-task-icon img {
             position:absolute;inset:6px;width:24px;height:24px;object-fit:contain;background:var(--tt-empty)
@@ -320,7 +329,7 @@
           .clockoli-compact-entry-details .details-title {
             display:block;overflow:hidden;max-width:100%;white-space:nowrap;
             text-overflow:ellipsis;color:var(--tt-text);font-size:14px;
-            line-height:20px;font-weight:650;overflow-wrap:normal
+            line-height:20px;font-weight:600;overflow-wrap:normal
           }
           .clockoli-compact-entry-details .clockoli-details-time {
             display:block;overflow:hidden;color:var(--tt-muted);font-size:12px;
@@ -330,13 +339,13 @@
           .clockoli-compact-entry-details .clockoli-timeline-actions { width:100%;gap:8px;flex-wrap:wrap;justify-content:flex-start }
           .clockoli-compact-entry-details .clockoli-description-field { flex:1 1 100% }
           .clockoli-compact-entry-details .clockoli-timeline-action {
-            box-sizing:border-box;min-width:42px;height:38px;padding:0 10px;border:0;border-radius:10px
+            box-sizing:border-box;min-width:32px;height:32px;padding:0 12px;border:0;border-radius:6px
           }
           .clockoli-compact-entry-details .clockoli-timeline-action.danger,
           .clockoli-compact-entry-details .clockoli-timeline-action.clockoli-entry-edit {
-            width:42px;padding:0;gap:0;font-size:0
+            width:32px;padding:0;gap:0;font-size:0
           }
-          .clockoli-compact-entry-details .clockoli-timeline-icon { width:18px;height:18px }
+          .clockoli-compact-entry-details .clockoli-timeline-icon { width:16px;height:16px }
           .clockoli-compact-entry-details .clockoli-timeline-action.clockoli-entry-edit {
             background:color-mix(in srgb,var(--tt-muted) 8%,var(--tt-panel));color:var(--tt-muted)
           }
@@ -838,13 +847,11 @@
           marker.dataset.start = key;
           const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
           icon.classList.add('clockoli-calendar-empty-icon');
-          icon.setAttribute('viewBox', '0 0 24 24');
+          icon.setAttribute('viewBox', '0 0 16 16');
           icon.setAttribute('aria-hidden', 'true');
-          for (const pathData of ['M4 5h16v16H4z', 'M8 3v4', 'M16 3v4', 'M4 10h16']) {
-            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-            path.setAttribute('d', pathData);
-            icon.append(path);
-          }
+          const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          path.setAttribute('d', 'M4.75 0a.75.75 0 0 1 .75.75V2h5V.75a.75.75 0 0 1 1.5 0V2h1.25c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 13.25 16H2.75A1.75 1.75 0 0 1 1 14.25V3.75C1 2.784 1.784 2 2.75 2H4V.75A.75.75 0 0 1 4.75 0ZM2.5 7.5v6.75c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25V7.5Zm10.75-4H2.75a.25.25 0 0 0-.25.25V6h11V3.75a.25.25 0 0 0-.25-.25Z');
+          icon.append(path);
           const title = document.createElement('span');
           title.className = 'clockoli-calendar-empty-title';
           title.textContent = 'No time entries';
@@ -862,17 +869,25 @@
       positionEmptyCalendarDays();
     }
 
+    function checkIcon() {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.classList.add('clockoli-timeline-icon');
+      svg.setAttribute('viewBox', '0 0 16 16');
+      svg.setAttribute('aria-hidden', 'true');
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', 'M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z');
+      svg.append(path);
+      return svg;
+    }
+
     function actionIcon(kind) {
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       svg.classList.add('clockoli-timeline-icon');
       svg.setAttribute('data-action', kind);
-      svg.setAttribute('viewBox', '0 0 24 24');
+      svg.setAttribute('viewBox', '0 0 16 16');
       svg.setAttribute('aria-hidden', 'true');
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      path.setAttribute('d', kind === 'delete'
-        ? 'M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15M10 10v8m4-8v8'
-        : kind === 'edit' ? 'M4 20l4.5-1 11-11a2.12 2.12 0 0 0-3-3l-11 11L4 20zM14 6l4 4'
-          : kind === 'stop' ? 'M6 6h12v12H6z' : 'M8 5v14l11-7z');
+      path.setAttribute('d', { delete: 'M11 1.75V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75ZM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.748 1.748 0 0 1 10.595 15h-5.19a1.75 1.75 0 0 1-1.741-1.575l-.66-6.6a.75.75 0 1 1 1.492-.15ZM6.5 1.75V3h3V1.75a.25.25 0 0 0-.25-.25h-2.5a.25.25 0 0 0-.25.25Z', edit: 'M11.013 1.427a1.75 1.75 0 0 1 2.474 0l1.086 1.086a1.75 1.75 0 0 1 0 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 0 1-.927-.928l.929-3.25c.081-.286.235-.547.445-.758l8.61-8.61Zm.176 4.823L9.75 4.81l-6.286 6.287a.253.253 0 0 0-.064.108l-.558 1.953 1.953-.558a.253.253 0 0 0 .108-.064Zm1.238-3.763a.25.25 0 0 0-.354 0L10.811 3.75l1.439 1.44 1.263-1.263a.25.25 0 0 0 0-.354Z', stop: 'M5.75 4h4.5c.966 0 1.75.784 1.75 1.75v4.5A1.75 1.75 0 0 1 10.25 12h-4.5A1.75 1.75 0 0 1 4 10.25v-4.5C4 4.784 4.784 4 5.75 4Z', play: 'M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm4.879-2.773 4.264 2.559a.25.25 0 0 1 0 .428l-4.264 2.559A.25.25 0 0 1 6 10.559V5.442a.25.25 0 0 1 .379-.215Z' }[kind]);
       svg.append(path);
       return svg;
     }
@@ -1035,11 +1050,11 @@
         description.setAttribute('aria-label', 'Task description');
         for (const type of ['keydown', 'keypress', 'keyup']) description.addEventListener(type, event => event.stopPropagation());
         const save = document.createElement('button');
-        save.type = 'button'; save.className = 'clockoli-description-save'; save.textContent = '✓';
+        save.type = 'button'; save.className = 'clockoli-description-save'; save.append(checkIcon());
         save.hidden = description.value.trim() === String(savedDescription).trim();
         save.title = 'Save description'; save.setAttribute('aria-label', 'Save description');
         const saved = document.createElement('span');
-        saved.className = 'clockoli-description-saved'; saved.textContent = '✓ Saved'; saved.hidden = true;
+        saved.className = 'clockoli-description-saved'; saved.append(checkIcon(), 'Saved'); saved.hidden = true;
         saved.setAttribute('role', 'status');
         const more = document.createElement('span');
         more.className = 'clockoli-description-more'; more.textContent = '↓ More lines — scroll'; more.hidden = true;

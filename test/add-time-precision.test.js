@@ -27,6 +27,7 @@ test('precise local time rejects nonexistent DST wall times in browser timezone'
 class Element {
   constructor(tag = 'div') { this.tag = tag; this.children = []; this.listeners = {}; this.hidden = false; this.value = ''; this.dataset = {}; this.style = {}; this.attributes = {}; this.open = false; }
   append(...children) { for (const child of children) { this.children.push(child); child.parentElement = this; } }
+  prepend(...children) { for (const child of children) { this.children.unshift(child); child.parentElement = this; } }
   after(...siblings) {
     for (const sibling of siblings) sibling.remove();
     const index = this.parentElement.children.indexOf(this);
@@ -53,7 +54,7 @@ class Element {
 function setup() {
   const previous = { document: globalThis.document, ClockoliTaskSearch: globalThis.ClockoliTaskSearch };
   const body = new Element();
-  globalThis.document = { body, createElement: tag => new Element(tag), createTextNode: text => Object.assign(new Element('#text'), { textContent: text }) };
+  globalThis.document = { body, createElement: tag => new Element(tag), createElementNS: (_namespace, tag) => new Element(tag), createTextNode: text => Object.assign(new Element('#text'), { textContent: text }) };
   globalThis.ClockoliTaskSearch = { mount: () => ({ query: '', matches: () => [] }) };
   const button = new Element('button'); body.append(button);
   const dialog = mountAddTime(button, { send: async () => { throw Error('unexpected send'); }, container: body });

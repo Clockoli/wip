@@ -155,7 +155,7 @@ function updateTimerButton(button, active) {
     const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     icon.setAttribute('viewBox', '0 0 16 16'); icon.setAttribute('aria-hidden', 'true');
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('d', 'M4 2.5a.75.75 0 0 1 1.14-.64l9 5.5a.75.75 0 0 1 0 1.28l-9 5.5A.75.75 0 0 1 4 13.5v-11Z');
+    path.setAttribute('d', 'M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm4.879-2.773 4.264 2.559a.25.25 0 0 1 0 .428l-4.264 2.559A.25.25 0 0 1 6 10.559V5.442a.25.25 0 0 1 .379-.215Z');
     icon.append(path); button.textContent = ''; button.replaceChildren(icon);
   }
 }
@@ -317,9 +317,7 @@ function rebuildList(tasks) {
     const plus = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     plus.setAttribute('viewBox', '0 0 16 16'); plus.setAttribute('aria-hidden', 'true');
     const plusPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    plusPath.setAttribute('d', 'M8 2.5v11M2.5 8h11');
-    plusPath.setAttribute('fill', 'none'); plusPath.setAttribute('stroke', 'currentColor');
-    plusPath.setAttribute('stroke-width', '1.5'); plusPath.setAttribute('stroke-linecap', 'round');
+    plusPath.setAttribute('d', 'M7.75 2a.75.75 0 0 1 .75.75V7h4.25a.75.75 0 0 1 0 1.5H8.5v4.25a.75.75 0 0 1-1.5 0V8.5H2.75a.75.75 0 0 1 0-1.5H7V2.75A.75.75 0 0 1 7.75 2Z');
     plus.append(plusPath); addTime.append(plus);
     addTime.addEventListener('click', () => {
       const current = visibleTasks().find(item => trackedTaskKey(item) === trackedTaskKey(task));

@@ -1009,12 +1009,12 @@ test('Activity calendar metrics and view switcher fit the desktop and mobile lay
     });
     expect(listControls.searchRight).toBeLessThan(listControls.navigationLeft);
     expect(listControls.navigationRight).toBeLessThan(listControls.refreshLeft);
-    expect(listControls.previousWidth).toBe(46);
-    expect(listControls.previousHeight).toBe(50);
-    expect(listControls.nextWidth).toBe(46);
-    expect(listControls.nextHeight).toBe(50);
-    expect(listControls.previousGap).toBe(12);
-    expect(listControls.nextGap).toBe(12);
+    expect(listControls.previousWidth).toBe(32);
+    expect(listControls.previousHeight).toBe(32);
+    expect(listControls.nextWidth).toBe(32);
+    expect(listControls.nextHeight).toBe(32);
+    expect(listControls.previousGap).toBe(8);
+    expect(listControls.nextGap).toBe(8);
     await quickStartPage.setViewportSize({ width: 420, height: 720 });
     const narrowControls = await panelToolbar.evaluate(toolbar => {
       const nav = toolbar.querySelector('.week-navigation').getBoundingClientRect();
@@ -1030,7 +1030,7 @@ test('Activity calendar metrics and view switcher fit the desktop and mobile lay
     await quickStartPage.setViewportSize({ width: 1774, height: 900 });
     await expect(githubPanel.locator('.popup-list-total')).toBeHidden();
     await expect(githubPanel.locator('.today-list .section-head')).toHaveCount(0);
-    await expect(githubPanel.locator('.today-list .entry-record').first()).toHaveCSS('border-top-left-radius', '10px');
+    await expect(githubPanel.locator('.today-list .entry-record').first()).toHaveCSS('border-top-left-radius', '6px');
     await localSearch.fill('Earlier day task');
     await expect(githubPanel.locator('.today-list .entry-record')).toHaveCount(1);
     await localSearch.fill('Archived task');
@@ -1480,7 +1480,7 @@ test('toolbar popup shares Activity summary, chart navigation, and List controls
     await expect(root.locator('.today-list .section-head')).toHaveCount(0);
     await expect(root.locator('.popup-list-total')).toBeHidden();
     await expect(root.locator('.today-list .entry-record').first()).toHaveCSS('border-top-width', '1px');
-    await expect(root.locator('.today-list .entry-record').first()).toHaveCSS('border-top-left-radius', '10px');
+    await expect(root.locator('.today-list .entry-record').first()).toHaveCSS('border-top-left-radius', '6px');
     const reads = await worker.evaluate(() => globalThis.trackingMessages.length);
     await refresh.click();
     await expect.poll(() => worker.evaluate(() => globalThis.trackingMessages.length)).toBeGreaterThan(reads);
@@ -1708,7 +1708,7 @@ test('Tracking now stacks task details and places Start, Duration and Stop on th
     expect(await worker.evaluate(() => active.startedAt)).toBe(`${day}T12:00:17Z`);
     await strip.getByRole('button', { name: 'Save start' }).click();
     await expect.poll(() => worker.evaluate(() => active.startedAt)).toBe(`${day}T10:00:00.000Z`);
-    await expect(strip.locator('.running-status-start-saved')).toHaveText('✓ Saved');
+    await expect(strip.locator('.running-status-start-saved')).toHaveText('Saved');
     const payloads = await worker.evaluate(() => globalThis.activeEditPayloads);
     expect(payloads.at(-1)).toEqual({ original: { id: 'running', startedAt: `${day}T12:00:17Z` }, startedAt: `${day}T10:00:00.000Z` });
     await start.fill('0900');
@@ -2497,7 +2497,7 @@ test('Activity List icon switches from Start to Stop and back in the extension p
         firstRadius: getComputedStyle(buttons[0]).borderTopLeftRadius,
         adjacent: boxes.every((box, index) => !index || box.left - boxes[index - 1].right <= 4) };
     });
-    expect(tabAppearance.gap).toBe('2px');
+    expect(tabAppearance.gap).toBe('1px');
     expect(tabAppearance.icons).toBe(3);
     expect(tabAppearance.selectedBackground).not.toBe('rgba(0, 0, 0, 0)');
     expect(tabAppearance.firstRadius).not.toBe('0px');
@@ -2581,7 +2581,7 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     await runningDescription.pressSequentially('Second line');
     await expect(runningDescription).toHaveValue('First line\nSecond line');
     await runningDescription.press('Enter');
-    await expect(strip.locator('.running-status-description-saved')).toHaveText('✓ Saved');
+    await expect(strip.locator('.running-status-description-saved')).toHaveText('Saved');
     await expect.poll(() => worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'QUEUE_ACTIVE_START_EDIT').length)).toBe(1);
     await runningDescription.fill('Finished work\nReviewed changes');
     await page.screenshot({ path: join(tmpdir(), 'clockoli-running-status-desktop.png') });

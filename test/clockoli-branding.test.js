@@ -46,7 +46,7 @@ test('visible extension identity is Clockoli with complete logo assets', () => {
 test('GitHub page trigger uses the green Clockoli mark instead of the stopwatch icon', () => {
   const content = read('src/content/github.js');
   assert.match(content, /function clockoliMark\(/);
-  assert.match(content, /main\.append\(clockoliMark\(22\)\)/);
+  assert.match(content, /main\.append\(clockoliMark\(20\)\)/);
   assert.match(content, /\.clockoli-mark/);
   assert.doesNotMatch(content, /main\.append\(icon\('stopwatch', STOPWATCH_PATH\)\)/);
   assert.ok(manifest.web_accessible_resources.some(group => group.resources.includes('src/assets/clockoli-32.png')),

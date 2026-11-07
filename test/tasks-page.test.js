@@ -81,7 +81,7 @@ test('Settings exposes two filtered task lists, people selection, and a queued a
   assert.match(optionsJs, /type:\s*'MERGE_TASKS'/);
   assert.match(optionsJs, /pairs = mergePairs\.map/);
   assert.match(optionsJs, /destinationIds:\s*\[\$\('merge-task-destination'\)\.value\]/);
-  assert.match(optionsJs, /remove\.textContent = '✕'/);
+  assert.match(optionsJs, /remove\.append\(removeIcon\(\)\)/);
   assert.match(optionsJs, /className = 'merge-queue-task-url'/);
   assert.doesNotMatch(optionsJs, /mergeTaskDuration|merge-task-total/);
   assert.match(optionsJs, /className = 'merge-task-title'/);
@@ -232,6 +232,7 @@ async function tasksHarness({ configured = true, tasks = [], active = null, pend
     set disabled(value) { this.isDisabled = value; if (value && document.activeElement === this) document.activeElement = document.body; }
     get classList() { return { add: name => this.classList.toggle(name, true), contains: name => this.className.split(' ').includes(name), toggle: (name, enabled) => { const names = new Set(this.className.split(' ').filter(Boolean)); if (enabled) names.add(name); else names.delete(name); this.className = [...names].join(' '); } }; }
     append(...nodes) { for (const node of nodes) { node.parentElement = this; this.children.push(node); } }
+    prepend(...nodes) { for (const node of nodes) { node.parentElement = this; this.children.unshift(node); } }
     replaceChildren(...nodes) { if (this.children.some(child => child.contains(document.activeElement))) document.activeElement = document.body; for (const node of this.children) node.parentElement = null; this.children = []; this.append(...nodes); }
     contains(node) { return node === this || this.children.some(child => child.contains(node)); }
     matches(selector) { return selector === ':hover' ? Boolean(this.hovered) : selector.startsWith('.') ? selector.slice(1).split('.').every(name => this.classList.contains(name)) : selector === this.tag; }

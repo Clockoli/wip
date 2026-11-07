@@ -1362,7 +1362,7 @@ test('hydrates running and pending entries with Clockoli block styling', async (
   expect(state.running).toBe('active:c');
   expect(state.pending).toEqual(['entry:b']);
   expect(state.blocks.every(block => block.height === '40px')).toBeTruthy();
-  expect(state.blocks.every(block => block.radius === '7px')).toBeTruthy();
+  expect(state.blocks.every(block => block.radius === '6px')).toBeTruthy();
   expect(state.blocks.every(block => block.leftBorder === '3px')).toBeTruthy();
   expect(state.blocks.find(block => block.key === 'entry:b').pending).toBeTruthy();
 });
@@ -1848,7 +1848,7 @@ test('switches Timeline and Calendar without losing running state', async ({ pag
     const style = getComputedStyle(block);
     return { leftBorder: style.borderLeftWidth, radius: style.borderRadius, shadow: style.boxShadow };
   });
-  expect(calendarStyle).toEqual({ leftBorder: '3px', radius: '7px', shadow: 'none' });
+  expect(calendarStyle).toEqual({ leftBorder: '3px', radius: '6px', shadow: 'none' });
   await page.evaluate(() => window.__timeline.setViewMode('timeline'));
   expect(await page.evaluate(() => window.__timeline.getViewMode())).toBe('timeline');
 });
@@ -2785,7 +2785,7 @@ test('Timeline shows darker end grips without top or bottom bands', async ({ pag
   }
   expect(grips[0].marks).toBe(grips[1].marks);
   expect(grips[0].background).toBe(grips[1].background);
-  expect(grips.map(grip => grip.radius)).toEqual(['4px 0px 0px 4px', '0px 4px 4px 0px']);
+  expect(grips.map(grip => grip.radius)).toEqual(['6px 0px 0px 6px', '0px 6px 6px 0px']);
   await block.click();
   await page.mouse.move(0, 0);
   const selectedStyle = await block.evaluate(element => {
@@ -3139,7 +3139,7 @@ test('Timeline and Calendar descriptions save multiline text on Enter with visib
     await input.press('Enter');
     await expect.poll(() => page.evaluate(() => window.__calls.filter(call => call[0] === 'description').length)).toBe(before + 1);
     expect(await page.evaluate(() => window.__calls.filter(call => call[0] === 'description').at(-1)[2])).toBe('First line\nSecond line');
-    await expect(page.locator('#timeline .clockoli-description-saved')).toHaveText('✓ Saved');
+    await expect(page.locator('#timeline .clockoli-description-saved')).toHaveText('Saved');
     await input.press('Tab');
     expect(await page.evaluate(() => window.__calls.filter(call => call[0] === 'description').length)).toBe(before + 1);
     await page.locator('#timeline .clockoli-description-saved').waitFor({ state: 'visible' });
