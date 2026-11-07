@@ -375,7 +375,7 @@ test('setup UI has two steps while docs retain explicit-write safety and multi-r
   const repositoryGuide = await readFile(new URL('../docs/time-data-repository.md', import.meta.url), 'utf8');
   assert.match(source, /Step <span id="current-step">1<\/span> of 2:/);
   assert.doesNotMatch(source, /id="repository-setup-step"|id="repository-access-step"/);
-  for (const label of ['Sign in with GitHub', 'Grant access', 'Finish setup', 'Initialize repository', 'Join repository', 'Set up storage branch', 'More settings', 'Use a personal access token', 'Validate and use PAT']) {
+  for (const label of ['Connect GitHub', 'Grant access', 'Finish setup', 'Initialize repository', 'Join repository', 'Set up storage branch', 'More settings', 'Use a personal access token', 'Validate and use PAT']) {
     assert.ok(gettingStarted.includes(`**${label}**`), label);
   }
   assert.match(gettingStarted, /two guided steps/i);
