@@ -1199,27 +1199,48 @@
     styleTasks();
     requestAnimationFrame(() => { suppressViewportScroll = false; });
 
-    // The component rebuilds every entry after each ResizeObserver report, including the
-    // first report of an unchanged size, and a rebuild replaces the entry being dragged.
-    // Rebuild only for a real size change, and only while no gesture or edit is active.
+    // The component first draws before the page settles (998px, then 1000px) and relied on a
+    // rebuild 50ms after every ResizeObserver report to correct that. The late rebuild replaced
+    // the entry under the pointer mid-gesture. Correct the width now, while mounting, then
+    // rebuild only for a real size change and only while no gesture or edit is active.
     timeline.resizeObserver.disconnect();
     timeline.calendarResizeObserver.disconnect();
-    const renderedSize = { viewport: timeline.viewport.clientWidth, host: hostSize() };
     let resizeTimer = null;
     let resizePending = false;
+    const renderedSize = { viewport: timeline._viewportWidthNow(), host: hostSize() };
+    const mountedWidth = viewportWidth();
+    if (mountedWidth && mountedWidth !== renderedSize.viewport) {
+      timeline._viewportWidth = mountedWidth;
+      rebuildEntries();
+    }
     const sizeObserver = new ResizeObserver(scheduleResize);
     sizeObserver.observe(timeline.viewport);
     sizeObserver.observe(timeline.host);
+
+    function viewportWidth() {
+      const width = timeline.viewport.clientWidth;
+      return width > 0 ? Math.max(320, width) : 0;
+    }
 
     function hostSize() {
       return `${timeline.host.clientWidth}x${timeline.host.clientHeight}`;
     }
 
+    function rebuildEntries() {
+      renderedSize.viewport = timeline._viewportWidth;
+      if (!timeline.segments.length) return;
+      const center = timeline.xToTime(timeline._scrollLeftNow() + timeline._viewportWidthNow() / 2);
+      timeline._renderAll({ invalidateRulerScales: false });
+      timeline._setScrollLeft(timeline.timeToX(center) - timeline._viewportWidthNow() / 2);
+      timeline._updateTimelineMeta();
+      styleTasks();
+    }
+
     function scheduleResize() {
       if (destroyed) return;
       // Like the component, keep the cached width current at once; only the rebuild waits.
-      const viewportWidth = timeline.viewport.clientWidth;
-      if (viewportWidth > 0) timeline._viewportWidth = Math.max(320, viewportWidth);
+      const width = viewportWidth();
+      if (width) timeline._viewportWidth = width;
       timeline._cancelZoomAnimation();
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(applyResize, RESIZE_SETTLE_MS);
@@ -1233,15 +1254,7 @@
         return;
       }
       resizePending = false;
-      const viewportWidth = timeline.viewport.clientWidth;
-      if (viewportWidth !== renderedSize.viewport && timeline.segments.length) {
-        renderedSize.viewport = viewportWidth;
-        const center = timeline.xToTime(timeline._scrollLeftNow() + timeline._viewportWidthNow() / 2);
-        timeline._renderAll({ invalidateRulerScales: false });
-        timeline._setScrollLeft(timeline.timeToX(center) - timeline._viewportWidthNow() / 2);
-        timeline._updateTimelineMeta();
-        styleTasks();
-      }
+      if (timeline._viewportWidth !== renderedSize.viewport) rebuildEntries();
       const size = hostSize();
       if (size !== renderedSize.host) {
         renderedSize.host = size;

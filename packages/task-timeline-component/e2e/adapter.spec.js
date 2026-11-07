@@ -4,6 +4,8 @@ const HOUR = 60 * 60 * 1000;
 const SCROLL_SETTLE_MS = 150;
 // Longer than the 50ms the timeline waits before rebuilding for a new size.
 const RESIZE_SETTLE_WAIT_MS = 200;
+const MINIMUM_TASK_PX = 30;
+const SUBPIXEL_PX = 0.01;
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -1272,8 +1274,9 @@ test('Timeline keeps the original minimum widths and task spacing in a weekly vi
     return timeline.tasks.map(task => ({ width: timeline._taskElementByKey(task._key).getBoundingClientRect().width,
       axisWidth: task.x1 - task.x0 }));
   });
-  expect(geometry[0].width).toBeGreaterThanOrEqual(30);
-  expect(geometry[1].width).toBeGreaterThanOrEqual(30);
+  // Positions are floats thousands of pixels from the origin, so a 30px block measures 29.9999px.
+  expect(geometry[0].width).toBeGreaterThanOrEqual(MINIMUM_TASK_PX - SUBPIXEL_PX);
+  expect(geometry[1].width).toBeGreaterThanOrEqual(MINIMUM_TASK_PX - SUBPIXEL_PX);
   expect(geometry[0].axisWidth).toBeCloseTo(geometry[0].width, 1);
   expect(geometry[1].axisWidth).toBeCloseTo(geometry[1].width, 1);
 });
