@@ -62,7 +62,7 @@ test('Device activation copies the code before opening GitHub and keeps manual r
   assert.doesNotMatch(source, /id="device-done"/);
   const start = script.slice(script.indexOf("$('authorize').addEventListener('click'"), script.indexOf("$('copy-code').addEventListener('click'"));
   assert.match(start, /await navigator\.clipboard\.writeText\(attempt\.userCode\)/);
-  assert.match(start, /if \(deviceClipboardState === 'copied'\) scheduleAutomaticDeviceOpen\(attempt\)/);
+  assert.match(start, /if \(deviceClipboardState === 'copied' && !deviceGitHubOpened\) scheduleAutomaticDeviceOpen\(attempt\)/);
   assert.match(script, /if \(state\?\.deviceAttempt\?\.attemptId !== attempt\.attemptId \|\| !deviceOpeningGitHubAutomatically\) return/);
   assert.match(script, /cancelScheduledDeviceOpen\(\);[\s\S]*deviceGitHubOpened = true/);
   const workerStart = worker.slice(worker.indexOf("if (message.type === 'START_DEVICE_FLOW')"), worker.indexOf("if (message.type === 'OPEN_DEVICE_FLOW_PAGE')"));
