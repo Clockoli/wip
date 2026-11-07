@@ -39,7 +39,7 @@ function element(tagName = 'div') {
     dataset: {}, style: {}, attributes: {}, children: [], listeners: {}, classList: { toggle() {} },
     append(...children) { for (const child of children) { child.parentNode = this; this.children.push(child); } },
     replaceChildren(...children) { this.children = []; this.textContent = ''; this.append(...children); },
-    setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name) { delete this.attributes[name]; }, focus() { this.focused = true; }, scrollIntoView() { this.scrolled = true; },
+    setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name) { delete this.attributes[name]; }, focus() { this.focused = true; }, scrollIntoView(options) { this.scrolled = true; this.scrollOptions = options; },
     showModal() { this.open = true; }, close() { this.open = false; this.listeners.close?.(); },
     querySelectorAll(selector) { const className = selector.startsWith('.') ? selector.slice(1) : ''; const matches = child => className ? child.className.split(' ').includes(className) : child.tagName.toLowerCase() === selector.toLowerCase(); return this.children.flatMap(child => [...(matches(child) ? [child] : []), ...child.querySelectorAll(selector)]); },
     querySelector(selector) { return this.querySelectorAll(selector)[0] || null; },
@@ -1001,7 +1001,11 @@ test('reopening completed setup refreshes the granted catalog before showing sug
   await page.context.discoverRepositories();
   await page.nodes.get('finish-setup').listeners.click();
   granted = [old, added];
+  const heading = page.nodes.get('repository-step-title');
+  assert.equal(heading.scrolled, undefined);
   await page.nodes.get('add-time-repository').listeners.click({ preventDefault() {} });
+  assert.equal(page.nodes.get('repository-step').hidden, false);
+  assert.equal(heading.scrollOptions?.block, 'start', 'the repository heading is aligned with the top of the viewport');
   const input = page.nodes.get('repository-target');
   input.value = 'time'; input.listeners.input();
   await vm.runInContext('discoveryPromise', page.context);
