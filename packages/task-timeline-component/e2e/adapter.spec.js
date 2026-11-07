@@ -2,6 +2,8 @@ import { test, expect } from '@playwright/test';
 
 const HOUR = 60 * 60 * 1000;
 const SCROLL_SETTLE_MS = 150;
+// Longer than the 50ms the timeline waits before rebuilding for a new size.
+const RESIZE_SETTLE_WAIT_MS = 200;
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -1143,6 +1145,35 @@ test('moving an entry with a running timer keeps future day bands visible throug
   await page.mouse.up();
   await expect(futureBand).toHaveCount(1);
   await expect.poll(() => page.evaluate(() => window.__timeline.__timeline._runningTask()?.running)).toBe(true);
+});
+
+test('mounting does not rebuild entries, and a resize during a drag waits for the drop', async ({ page }) => {
+  await mount(page);
+  const source = page.locator('#timeline .task[data-task-key="entry:a"]');
+  await source.evaluate(element => { window.__mountedSource = element; });
+  // Wait past the component's resize settle delay: the first size report must not rebuild entries.
+  await page.waitForTimeout(RESIZE_SETTLE_WAIT_MS);
+  expect(await source.evaluate(element => element === window.__mountedSource)).toBe(true);
+  await source.evaluate(element => element.scrollIntoView({ inline: 'center' }));
+  const box = await source.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 - 18, box.y + box.height / 2);
+  const dragged = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    window.__draggedSource = timeline._taskElementByKey('entry:a');
+    return timeline.editState?.didMutate;
+  });
+  expect(dragged).toBe(true);
+  const widthBefore = await page.evaluate(() => window.__timeline.__timeline._viewportWidthNow());
+  await page.locator('#timeline').evaluate(host => { host.style.width = '800px'; });
+  await page.waitForTimeout(RESIZE_SETTLE_WAIT_MS);
+  expect(await page.evaluate(() => ({
+    connected: window.__draggedSource.isConnected,
+    editing: Boolean(window.__timeline.__timeline.editState),
+  }))).toEqual({ connected: true, editing: true });
+  await page.mouse.up();
+  await expect.poll(() => page.evaluate(() => window.__timeline.__timeline._viewportWidthNow())).toBeLessThan(widthBefore);
 });
 
 test('stopping a timer does not discard future days in the selected Timeline range', async ({ page }) => {

@@ -3,6 +3,8 @@
 
   const DAY_MS = 24 * 60 * 60 * 1000;
   const MINIMUM_ITEM_WIDTH = 30;
+  // Same settle delay the component uses before rebuilding for a new size.
+  const RESIZE_SETTLE_MS = 50;
   const COLOR_PALETTE = Object.freeze([
     '#e76f51', '#2a9d8f', '#e9c46a', '#8ab17d', '#f4a261',
     '#6d9dc5', '#c77dff', '#ff7096', '#43aa8b', '#f8961e',
@@ -606,6 +608,7 @@
             if (!destroyed) {
               styleTasks();
               scheduleDeferredFlush();
+              resumePendingResize();
             }
           });
         return true;
@@ -1196,6 +1199,58 @@
     styleTasks();
     requestAnimationFrame(() => { suppressViewportScroll = false; });
 
+    // The component rebuilds every entry after each ResizeObserver report, including the
+    // first report of an unchanged size, and a rebuild replaces the entry being dragged.
+    // Rebuild only for a real size change, and only while no gesture or edit is active.
+    timeline.resizeObserver.disconnect();
+    timeline.calendarResizeObserver.disconnect();
+    const renderedSize = { viewport: timeline.viewport.clientWidth, host: hostSize() };
+    let resizeTimer = null;
+    let resizePending = false;
+    const sizeObserver = new ResizeObserver(scheduleResize);
+    sizeObserver.observe(timeline.viewport);
+    sizeObserver.observe(timeline.host);
+
+    function hostSize() {
+      return `${timeline.host.clientWidth}x${timeline.host.clientHeight}`;
+    }
+
+    function scheduleResize() {
+      if (destroyed) return;
+      timeline._cancelZoomAnimation();
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(applyResize, RESIZE_SETTLE_MS);
+    }
+
+    function applyResize() {
+      resizeTimer = null;
+      if (destroyed) return;
+      if (hasActiveInteraction()) {
+        resizePending = true;
+        return;
+      }
+      resizePending = false;
+      const viewportWidth = timeline.viewport.clientWidth;
+      if (viewportWidth !== renderedSize.viewport && timeline.segments.length) {
+        renderedSize.viewport = viewportWidth;
+        if (viewportWidth > 0) timeline._viewportWidth = Math.max(320, viewportWidth);
+        const center = timeline.xToTime(timeline._scrollLeftNow() + timeline._viewportWidthNow() / 2);
+        timeline._renderAll({ invalidateRulerScales: false });
+        timeline._setScrollLeft(timeline.timeToX(center) - timeline._viewportWidthNow() / 2);
+        timeline._updateTimelineMeta();
+        styleTasks();
+      }
+      const size = hostSize();
+      if (size !== renderedSize.host) {
+        renderedSize.host = size;
+        if (timeline.viewMode === 'calendar' && timeline.domainEnd > timeline.domainStart) timeline._renderCalendar();
+      }
+    }
+
+    function resumePendingResize() {
+      if (resizePending && resizeTimer === null) scheduleResize();
+    }
+
     function hasActiveInteraction() {
       return Boolean(timeline.editState || timeline.calendarEditState || timeline.dragState || pendingEdits.size);
     }
@@ -1215,7 +1270,7 @@
       }, 0);
     }
 
-    const onGestureEnd = () => scheduleDeferredFlush();
+    const onGestureEnd = () => { scheduleDeferredFlush(); resumePendingResize(); };
     global.addEventListener('pointerup', onGestureEnd);
     global.addEventListener('pointercancel', onGestureEnd);
 
@@ -1316,6 +1371,8 @@
         global.removeEventListener('scroll', onDetailsScroll, true);
         global.removeEventListener('resize', onDetailsScroll);
         if (deferredFlushTimer !== null) clearTimeout(deferredFlushTimer);
+        sizeObserver.disconnect();
+        clearTimeout(resizeTimer);
         global.removeEventListener('pointerup', onGestureEnd);
         global.removeEventListener('pointercancel', onGestureEnd);
         deferredUpdate = null;
