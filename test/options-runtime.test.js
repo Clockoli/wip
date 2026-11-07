@@ -102,6 +102,19 @@ test('initial onboarding is focused until a default repository is connected', ()
 
   page.render(connectedState);
   assert.equal(page.context.document.documentElement.dataset.clockoliOnboarding, '');
+
+  const advanced = harness();
+  advanced.render({ appConfigured: true, auth: null, config: null, destinations: [] });
+  advanced.nodes.get('use-pat-instead').listeners.click();
+  assert.equal(advanced.context.document.documentElement.dataset.clockoliOnboarding, '');
+  for (const id of ['more-settings', 'advanced-settings', 'advanced-pat']) {
+    assert.equal(advanced.nodes.get(id).open, true, `${id} is accessible for advanced setup`);
+  }
+
+  const unavailable = harness();
+  unavailable.render({ appConfigured: false, auth: null, config: null, destinations: [] });
+  assert.equal(unavailable.context.document.documentElement.dataset.clockoliOnboarding, '');
+  assert.equal(unavailable.nodes.get('authorize').disabled, true);
 });
 
 function billingSaveResult(request, current = preferences) {
