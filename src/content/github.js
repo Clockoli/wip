@@ -305,6 +305,12 @@
     const taskUrl = normalizeTaskUrl(value);
     return taskUrl ? { taskUrl, taskTitle: String(title || '').trim().slice(0, 300) } : null;
   }
+  // GitHub tab titles read "Title by author · Pull Request #12 · owner/repo"; keep "Title #12" as GitHub shows it.
+  function githubTabTitle(title) {
+    const text = String(title || '');
+    const match = text.match(/^(.*?)(?: by \S+)? · (?:Pull Request|Issue) #(\d+) · \S+\/\S+$/);
+    return match ? `${match[1]} #${match[2]}` : text.replace(/ · GitHub$/, '');
+  }
   function projectPaneIssueUrl(value) {
     try {
       const url = new URL(value);
@@ -685,7 +691,7 @@
   async function refreshPopupTask() {
     if (!popupMode) return taskFromLocation();
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    popupTask = taskFromUrl(projectPaneIssueUrl(tab?.url) || tab?.url, tab?.title || '');
+    popupTask = taskFromUrl(projectPaneIssueUrl(tab?.url) || tab?.url, githubTabTitle(tab?.title));
     return popupTask;
   }
 
@@ -1525,7 +1531,7 @@
     if (popupMode) return taskTitleOf(popupTask);
     if (timesMode) return '';
     const node = document.querySelector('[data-testid="issue-title"], .js-issue-title, bdi.js-issue-title');
-    const title = (node?.textContent || document.title || '').replace(/ · GitHub$/, '').trim();
+    const title = (node?.textContent || githubTabTitle(document.title)).trim();
     return title.slice(0, 300);
   }
 

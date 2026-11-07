@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const ROOT = new URL('..', import.meta.url);
+const TOP_TASKS_MIN_DESCRIPTION_PX = 340;
 
 test('Reports, Top tasks and Settings stretch the running description without overflowing', async () => {
   test.setTimeout(90000);
@@ -51,7 +52,9 @@ test('Reports, Top tasks and Settings stretch the running description without ov
             overflow: document.documentElement.scrollWidth - innerWidth };
         });
         if (width === 1440) {
-          expect(geometry.width).toBeGreaterThan(geometry.rowWidth * .35);
+          // Top tasks keeps its bar inside the narrower task column, so it needs a fixed floor.
+          if (path.startsWith('tasks')) expect(geometry.width).toBeGreaterThan(TOP_TASKS_MIN_DESCRIPTION_PX);
+          else expect(geometry.width).toBeGreaterThan(geometry.rowWidth * .35);
           expect(geometry.gap).toBeGreaterThanOrEqual(0);
           expect(geometry.gap).toBeLessThan(24);
         } else {

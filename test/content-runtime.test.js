@@ -5171,3 +5171,14 @@ test('Activity does not claim first use when the history lookup fails or trackin
     assert.equal(h.renderActivity().querySelector('.activity-empty').querySelector('p').textContent, 'No time in this range.');
   }
 });
+
+test('GitHub tab titles keep the issue or pull request title and its number', () => {
+  const helper = source.match(/  function githubTabTitle\(title\) \{[\s\S]*?\n  \}\n/)[0];
+  const githubTabTitle = vm.runInNewContext(`(${helper.trim()})`);
+  assert.equal(githubTabTitle('Fix/align UI with GitHub by donhardman · Pull Request #76 · Clockoli/clockoli'), 'Fix/align UI with GitHub #76');
+  assert.equal(githubTabTitle('Written by hand by alice · Pull Request #9 · acme/app'), 'Written by hand #9');
+  assert.equal(githubTabTitle('Crash on save · Issue #12 · acme/app'), 'Crash on save #12');
+  assert.equal(githubTabTitle('acme/app: Example repository · GitHub'), 'acme/app: Example repository');
+  assert.equal(githubTabTitle('Support ticket 2291'), 'Support ticket 2291');
+  assert.equal(githubTabTitle(undefined), '');
+});

@@ -47,6 +47,8 @@
 .running-status .running-status-stop:hover{border-color:var(--button-danger-borderColor-hover);background:var(--button-danger-bgColor-hover);color:var(--button-danger-fgColor-hover)}
 .running-status .running-status-stop:disabled{border-color:var(--button-danger-borderColor-rest);background:var(--button-danger-bgColor-disabled);color:var(--button-danger-fgColor-disabled);cursor:default}
 .running-status-task:focus-visible,.running-status-description:focus-visible,.running-status-description-save:focus-visible,.running-status-stop:focus-visible,.running-status-recent-task:focus-visible{outline:2px solid var(--focus-outlineColor);outline-offset:2px}.running-status-description:focus-visible{outline-offset:-1px}
+/* Keep the tracking bar one control tall; the description grows only while it is being edited. */
+.running-status-description:not(:focus){height:32px!important;overflow:hidden!important;resize:none}
 .running-status-error{padding-top:0;color:var(--fgColor-danger);overflow-wrap:anywhere}
 .running-status-reconnect{min-height:32px;margin-left:12px;padding:5px 12px;border:1px solid var(--button-default-borderColor-rest);border-radius:6px;background:var(--button-default-bgColor-rest);color:var(--button-default-fgColor-rest);font:500 14px/20px var(--fontStack-sansSerif);cursor:pointer}
 .running-status-reconnect:hover{background:var(--button-default-bgColor-hover)}
