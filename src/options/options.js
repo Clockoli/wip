@@ -841,6 +841,11 @@ function renderState() {
 }
 
 function renderDeviceAttempt(attempt) {
+  if (document.documentElement.dataset.clockoliOnboarding === 'welcome') {
+    document.documentElement.dataset.clockoliOnboarding = 'authorization';
+    $('connection-title').textContent = 'Connect to GitHub';
+    $('connection-description').textContent = 'Paste the one-time code on GitHub to authorize Clockoli.';
+  }
   if (deviceClipboardAttemptId && deviceClipboardAttemptId !== attempt.attemptId) {
     cancelScheduledDeviceOpen();
     deviceClipboardAttemptId = attempt.attemptId;
