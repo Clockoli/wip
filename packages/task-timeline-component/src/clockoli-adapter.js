@@ -1217,6 +1217,9 @@
 
     function scheduleResize() {
       if (destroyed) return;
+      // Like the component, keep the cached width current at once; only the rebuild waits.
+      const viewportWidth = timeline.viewport.clientWidth;
+      if (viewportWidth > 0) timeline._viewportWidth = Math.max(320, viewportWidth);
       timeline._cancelZoomAnimation();
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(applyResize, RESIZE_SETTLE_MS);
@@ -1233,7 +1236,6 @@
       const viewportWidth = timeline.viewport.clientWidth;
       if (viewportWidth !== renderedSize.viewport && timeline.segments.length) {
         renderedSize.viewport = viewportWidth;
-        if (viewportWidth > 0) timeline._viewportWidth = Math.max(320, viewportWidth);
         const center = timeline.xToTime(timeline._scrollLeftNow() + timeline._viewportWidthNow() / 2);
         timeline._renderAll({ invalidateRulerScales: false });
         timeline._setScrollLeft(timeline.timeToX(center) - timeline._viewportWidthNow() / 2);

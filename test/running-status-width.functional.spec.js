@@ -27,6 +27,7 @@ test('Reports, Top tasks and Settings stretch the running description without ov
             entryDate: new Date().toISOString().slice(0, 10), timezone: 'UTC' },
           recent: [], pendingWrites: [], pendingCount: 0, todayTrackedMs: 0,
         } });
+        else if (message.type === 'GET_LOCAL_PREFERENCES' && globalThis.savedWidth) respond({ ok: true, data: { interfaceWidth: globalThis.savedWidth } });
         else respond({ ok: false, error: { message: 'Unsupported fixture request' } });
       });
     `);
@@ -114,6 +115,23 @@ test('Reports, Top tasks and Settings stretch the running description without ov
         expect(new Set(frame.controlCenters).size).toBe(1);
       }
     }
+    // A page opens at the last known width before the worker answers, then follows the worker.
+    await page.addInitScript(() => document.addEventListener('DOMContentLoaded', () => {
+      window.widthAtParse = document.documentElement.dataset.clockoliWidth;
+    }));
+    const tasksUrl = `chrome-extension://${new URL(worker.url()).host}/src/tasks/tasks.html`;
+    const fullWidthViewport = 2200;
+    await page.setViewportSize({ width: fullWidthViewport, height: 850 });
+    await page.evaluate(() => localStorage.setItem('clockoli-interface-width', 'full'));
+    await page.goto(tasksUrl);
+    await expect(page.locator('#running-status.is-active .running-status-row')).toBeVisible();
+    expect(await page.evaluate(() => ({ atParse: window.widthAtParse,
+      row: document.querySelector('#running-status .running-status-row').getBoundingClientRect().width })))
+      .toEqual({ atParse: 'full', row: fullWidthViewport - FRAME_GUTTER_PX * 2 });
+    await worker.evaluate(() => { globalThis.savedWidth = 'contained'; });
+    await page.reload();
+    await expect(page.locator('html')).toHaveAttribute('data-clockoli-width', 'contained');
+    expect(await page.evaluate(() => localStorage.getItem('clockoli-interface-width'))).toBe('contained');
     expect(errors).toEqual([]);
   } finally {
     await context?.close();
