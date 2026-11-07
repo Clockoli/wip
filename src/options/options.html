@@ -81,10 +81,13 @@
             <div class="device-row"><input id="device-code" type="text" readonly aria-label="Device activation code"><button id="copy-code" type="button" class="secondary compact" aria-label="Copy device code">Copy</button></div>
             <p id="device-copy-status" class="device-copy-status" role="status" aria-live="polite"></p>
             <p id="device-handoff-status" class="device-handoff-instruction" aria-live="polite"></p>
-            <p id="device-wait" class="help" aria-live="polite">After approving on GitHub, Clockoli checks automatically every few seconds.</p>
+            <div id="device-handoff-countdown" class="device-handoff-countdown" role="status" aria-live="polite" hidden>
+              <p>Opening GitHub automatically in 3 seconds…</p>
+              <div class="device-handoff-track" aria-hidden="true"><span></span></div>
+            </div>
+            <p id="device-wait" class="help" aria-live="polite">Clockoli checks for authorization automatically.</p>
             <div class="actions">
               <a id="open-device-page" class="button-link secondary-link" target="_blank" rel="noreferrer">Open GitHub to enter code</a>
-              <button id="device-done" type="button" class="secondary">Done on GitHub—check now</button>
             </div>
           </div>
           <ul class="trust-list">
