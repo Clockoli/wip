@@ -16,10 +16,10 @@ Settings opens by itself after installation. To reopen it, select the gear butto
 
 ## Step 1: Sign in with GitHub
 
-1. Select **Sign in with GitHub**. If the browser asks for permission to contact GitHub, allow it. Clockoli requests a one-time code and **tries to copy it to the clipboard**. Settings shows either **Code copied to your clipboard** or a clear copying error; it never assumes a copy succeeded.
-2. If copying succeeded, GitHub opens automatically after the code is shown. When GitHub asks for a code, **press ⌘V on macOS or Ctrl+V on Windows/Linux** to paste it; you do not need to retype the code. Confirm that you are on **github.com** and authorizing **Clockoli**, then approve.
-3. If automatic copying failed, **GitHub does not open automatically**. Stay in Settings, choose **Copy**, then **Open GitHub to enter code**. If browser clipboard access is blocked, select the displayed code and copy it with ⌘C (macOS) or Ctrl+C (Windows/Linux), then open GitHub and paste it.
-4. Return to Clockoli. It checks the authorization result automatically; **Done on GitHub—check now** retries immediately. If a tab failed to open, use **Open GitHub to enter code** instead.
+1. Select **Sign in with GitHub**. If the browser asks for permission to contact GitHub, allow it. Clockoli shows the one-time code immediately and **tries to copy it to the clipboard**. It tells you whether copying succeeded.
+2. If copying succeeded, a three-second countdown appears before GitHub opens automatically. You can select **Open GitHub now** to skip the pause. On GitHub, paste the code with **⌘V on macOS or Ctrl+V on Windows/Linux**. Confirm that you are on **github.com** and authorizing **Clockoli**, then approve.
+3. If copying failed, **GitHub does not open automatically**. Select **Copy**, then **Open GitHub to enter code**. If clipboard access is blocked, select the displayed code and copy it with ⌘C (macOS) or Ctrl+C (Windows/Linux).
+4. Return to Clockoli. It shows **Waiting for GitHub authorization** and checks automatically; no manual confirmation is needed. If you closed or missed the GitHub tab, select **Reopen GitHub**. If the tab could not open automatically, select **Open GitHub to enter code** instead.
 
 Sign-in uses GitHub's [device flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow), so you never create or paste a personal access token. Signing in and giving the Clockoli GitHub App access to a repository are separate steps.
 
