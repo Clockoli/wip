@@ -20,6 +20,15 @@ const state = {
   invoiceExtraLines: [], invoiceProjects: new Set(), invoiceProjectOptions: [],
 };
 
+function removeIcon() {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16'); svg.setAttribute('width', '16'); svg.setAttribute('height', '16');
+  svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('fill', 'currentColor');
+  const shape = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  shape.setAttribute('d', 'M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z'); svg.append(shape);
+  return svg;
+}
+
 function send(message) {
   return new Promise((resolve, reject) => chrome.runtime.sendMessage(message, response => {
     if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
@@ -451,7 +460,8 @@ function renderInvoiceExtraLines() {
   const container = $('invoice-extra-lines'); container.replaceChildren();
   for (const line of state.invoiceExtraLines) {
     const row = invoiceNode('div', 'invoice-extra-row'), descriptionLabel = invoiceNode('label', '', 'Description'), amountLabel = invoiceNode('label', '', 'Amount');
-    const description = invoiceNode('textarea'), amount = invoiceNode('input'), remove = invoiceNode('button', 'button secondary', '✕');
+    const description = invoiceNode('textarea'), amount = invoiceNode('input'), remove = invoiceNode('button', 'button secondary');
+    remove.append(removeIcon());
     description.rows = 1; description.maxLength = 200; description.required = true; description.value = line.description;
     const more = invoiceNode('small', 'invoice-description-more', '↓ More lines — scroll'); more.hidden = true;
     const resizeDescription = () => {
@@ -460,7 +470,7 @@ function renderInvoiceExtraLines() {
       description.style.height = 'auto';
       const height = Number(description.scrollHeight) || 0;
       const clipped = count > 8 || height > 180 + 1;
-      if (height) description.style.height = `${Math.min(180, Math.max(40, height))}px`;
+      if (height) description.style.height = `${Math.min(180, Math.max(32, height))}px`;
       description.style.overflowY = clipped ? 'auto' : 'hidden';
       more.hidden = !clipped;
     };

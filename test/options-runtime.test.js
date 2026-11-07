@@ -13,9 +13,9 @@ const widthCss = await readFile(new URL('../src/styles/interface-width.css', imp
 const source = await readFile(new URL('../src/options/options.js', import.meta.url), 'utf8');
 const taskSearchSource = await readFile(new URL('../src/ui/task-search.js', import.meta.url), 'utf8');
 
-test('Settings stays in a centered column regardless of the shared width preference', () => {
+test('Settings shares the page frame of every other page', () => {
   assert.match(html, /<main class="settings-main">/);
-  assert.match(widthCss, /html\[data-clockoli-width="full"\] main:not\(\.settings-main\)\s*\{\s*max-width:none;\s*\}/);
+  assert.match(widthCss, /body > main \{[^}]*width:var\(--clockoli-page-width\)/);
 });
 const preferences = {
   clientRates: { 'client-1': { octocat: [{ amountMinorPerHour: 12500, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] } },
@@ -703,7 +703,7 @@ test('Merge tasks queues selected left-to-right pairs and sends them together', 
   const queued = page.nodes.get('merge-queue-list').children[0];
   assert.deepEqual(queued.children[0].children.map(node => node.textContent), ['Old task', tasks[0].taskUrl]);
   assert.deepEqual(queued.children[2].children.map(node => node.textContent), ['Canonical task', tasks[1].taskUrl]);
-  assert.equal(queued.children[3].textContent, '✕');
+  assert.equal(queued.children[3].children[0].tag ?? queued.children[3].children[0].tagName, 'svg');
   assert.match(queued.children[3].attributes['aria-label'], /Remove merge pair/);
   await page.nodes.get('merge-tasks-submit').listeners.click();
   const request = page.requests.find(item => item.type === 'MERGE_TASKS');
@@ -2290,7 +2290,7 @@ test('fresh preferences create no client and completely empty client cards are o
   assert.equal(page.context.clientsPayload().length, 1);
   assert.equal(page.nodes.get('clients-list').querySelector('.client-projects'), null);
   assert.equal(page.nodes.get('clients-list').querySelector('.save-client').textContent, 'Save');
-  assert.equal(page.nodes.get('clients-list').querySelector('.remove-client').textContent, '✕');
+  assert.equal(page.nodes.get('clients-list').querySelector('.remove-client').children.length, 1);
 });
 
 for (const form of ['billing', 'invoicing', 'display']) test(`${form} rejected save preserves every draft and never refreshes storage`, async () => {
@@ -2592,7 +2592,7 @@ test('each repository disclosure has a decorative chevron that changes direction
     assert.equal(icon.tagName, 'svg');
     assert.equal(icon.attributes.class, 'repository-disclosure-icon');
     assert.equal(icon.attributes['aria-hidden'], 'true');
-    assert.equal(icon.children[0].attributes.d, 'M3 6l5 5 5-5');
+    assert.equal(icon.children[0].attributes.d, 'M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.939l3.72-3.719a.749.749 0 0 1 1.06 0Z');
   }
   const css = await readFile(new URL('../src/options/options.css', import.meta.url), 'utf8');
   assert.match(css, /\.time-repository\[open\] \.repository-disclosure-icon\{[^}]*rotate\(180deg\)/);
