@@ -8,8 +8,6 @@ html[data-clockoli-width="full"] { --clockoli-page-width:calc(100% - 48px); }
   #running-status.is-active .running-status-row,
   body > main { box-sizing:border-box; width:var(--clockoli-page-width); max-width:none; margin-inline:auto; }
   body > main { padding-inline:0; }
-  /* Long settings forms stay readable, left-aligned with the tracking bar. */
-  .settings-main > * { max-width:820px; }
 }
 html[data-clockoli-width="full"] .app-header { padding-inline:24px; }
 html[data-clockoli-width="full"]:has(#clockoli-popup-root),

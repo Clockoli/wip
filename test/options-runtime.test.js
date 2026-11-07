@@ -13,10 +13,9 @@ const widthCss = await readFile(new URL('../src/styles/interface-width.css', imp
 const source = await readFile(new URL('../src/options/options.js', import.meta.url), 'utf8');
 const taskSearchSource = await readFile(new URL('../src/ui/task-search.js', import.meta.url), 'utf8');
 
-test('Settings shares the page frame while its forms keep a readable column', () => {
+test('Settings shares the page frame of every other page', () => {
   assert.match(html, /<main class="settings-main">/);
   assert.match(widthCss, /body > main \{[^}]*width:var\(--clockoli-page-width\)/);
-  assert.match(widthCss, /\.settings-main > \* \{ max-width:820px; \}/);
 });
 const preferences = {
   clientRates: { 'client-1': { octocat: [{ amountMinorPerHour: 12500, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] } },

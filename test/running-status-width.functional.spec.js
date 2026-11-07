@@ -95,16 +95,20 @@ test('Reports, Top tasks and Settings stretch the running description without ov
         frames.push(await page.evaluate(() => {
           const box = selector => document.querySelector(selector).getBoundingClientRect();
           const row = box('#running-status .running-status-row'), main = box('main');
+          // The visible blocks inside main must fill the frame too, not just main itself.
+          const content = [...document.querySelector('main').children].map(node => node.getBoundingClientRect()).filter(rect => rect.width > 0);
           const controls = ['.running-status-description', '.running-status-stats', '.running-status-stop'].map(box);
           return { left: Math.round(row.left), right: Math.round(row.right), height: Math.round(row.height),
             mainLeft: Math.round(main.left), mainRight: Math.round(main.right),
+            contentLeft: Math.round(Math.min(...content.map(rect => rect.left))),
+            contentRight: Math.round(Math.max(...content.map(rect => rect.right))),
             controlHeights: controls.map(control => Math.round(control.height)),
             controlCenters: controls.map(control => Math.round(control.top + control.height / 2)) };
         }));
       }
       const expectedWidth = interfaceWidth === 'full' ? width - FRAME_GUTTER_PX * 2 : Math.min(GITHUB_CONTAINER_PX, width - FRAME_GUTTER_PX * 2);
       for (const frame of frames) {
-        expect(frame).toMatchObject({ ...frames[0], mainLeft: frame.left, mainRight: frame.right });
+        expect(frame).toMatchObject({ ...frames[0], mainLeft: frame.left, mainRight: frame.right, contentLeft: frame.left, contentRight: frame.right });
         expect(frame.right - frame.left).toBe(expectedWidth);
         expect(frame.controlHeights).toEqual([CONTROL_PX, CONTROL_PX, CONTROL_PX]);
         expect(new Set(frame.controlCenters).size).toBe(1);
