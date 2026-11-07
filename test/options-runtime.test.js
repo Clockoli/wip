@@ -95,6 +95,14 @@ test('initial onboarding is focused until a default repository is connected', ()
   assert.equal(page.context.document.documentElement.dataset.clockoliOnboarding, 'welcome');
   assert.equal(page.nodes.get('connection-title').textContent, 'Welcome to Clockoli!');
   assert.equal(page.nodes.get('authorize').textContent, 'Connect GitHub');
+  assert.match(page.nodes.get('connection-description').textContent, /private GitHub repository you control/);
+
+  page.render({ appConfigured: true, auth: null, config: null, destinations: [],
+    deviceAttempt: { attemptId: 'attempt', status: 'pending', userCode: 'ABCD-1234',
+      verificationUri: 'https://github.com/login/device', expiresAt: Date.now() + 600000,
+      nextPollAt: Date.now() + 300000 } });
+  assert.equal(page.context.document.documentElement.dataset.clockoliOnboarding, 'authorization');
+  assert.equal(page.nodes.get('connection-title').textContent, 'Connect to GitHub');
 
   page.render({ ...connectedState, config: null, destinations: [] });
   assert.equal(page.context.document.documentElement.dataset.clockoliOnboarding, 'setup');
