@@ -10,8 +10,9 @@ const [optionsHtml, optionsJs, contentJs, tasksHtml, reportsHtml, reportsJs, rea
 ]);
 
 test('first run presents sign-in then an owner-neutral repository autocomplete and manual target', () => {
-  assert.match(optionsHtml, /id="connection-title"[^>]*>Set up Clockoli</);
-  assert.match(optionsHtml, /id="authorize"[^>]*>Sign in with GitHub<\/button>/);
+  assert.match(optionsHtml, /id="connection-title"[^>]*>Welcome to Clockoli!</);
+  assert.match(optionsHtml, /id="authorize"[^>]*>Connect GitHub<\/button>/);
+  assert.match(optionsHtml, /id="onboarding-why"[\s\S]*Why GitHub\?/);
   assert.match(optionsHtml, /Step <span id="current-step">1<\/span> of 2/);
   assert.match(optionsHtml, /for="repository-target">Enter a repository URL or owner\/name<\/label>[\s\S]*<input id="repository-target"/);
   assert.match(optionsHtml, /id="repository-target-form"[\s\S]*id="repository-target"/);
