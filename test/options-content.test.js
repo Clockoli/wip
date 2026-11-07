@@ -37,7 +37,7 @@ test('settings no longer exposes the repository data convention', () => {
 
 test('normal settings route is GitHub App onboarding with resumable authorization and repository selection', () => {
   assert.match(source, /Step <span id="current-step">1<\/span> of 2/i);
-  assert.match(source, /id="authorize"[^>]*>Sign in with GitHub<\/button>/);
+  assert.match(source, /id="authorize"[^>]*>Connect GitHub<\/button>/);
   for (const id of ['device-code', 'install-app', 'repository-list', 'finish-setup']) assert.match(source, new RegExp(`id="${id}"`));
   for (const type of ['START_DEVICE_FLOW', 'RESUME_DEVICE_FLOW', 'POLL_DEVICE_FLOW', 'DISCOVER_REPOSITORIES', 'SELECT_REPOSITORY']) assert.match(script, new RegExp(type));
   for (const code of ['auth_denied', 'device_code_expired', 'device_flow_superseded']) assert.match(script, new RegExp(code));
@@ -51,7 +51,7 @@ test('onboarding names and explains Device activation without hiding GitHub safe
 });
 
 test('Device activation copies the code before opening GitHub and keeps manual recovery available', () => {
-  assert.match(source, /id="authorize"[^>]*>Sign in with GitHub<\/button>/i);
+  assert.match(source, /id="authorize"[^>]*>Connect GitHub<\/button>/i);
   assert.match(source, /try to copy it before opening GitHub/i);
   assert.match(source, /id="device-initial-paste-shortcut"/i);
   assert.match(source, /id="device-copy-status"[^>]*aria-live="polite"/i);
