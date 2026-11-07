@@ -12,7 +12,7 @@ You need:
 
 The repository that stores your time is your **time repository**. It is separate from the repositories, documents, and tickets you track, and Clockoli never needs write access to those. See [Key concepts](concepts.md).
 
-The welcome screen opens automatically after installation. Until you connect a time repository, Clockoli shows only the two setup steps: other navigation and preferences are hidden to help you get started. If the GitHub App isn't an option, expand **Why GitHub?** and select **Use a personal access token instead**. After setup, reopen Settings using the gear button in the Clockoli panel or the extension's details page. **More settings** holds Billable rates, Backup & restore (including **Import settings**), and **Advanced**. If GitHub App sign-in is unavailable in a development build, the regular Settings page remains accessible for the PAT alternative.
+The welcome screen opens automatically after installation. Until you connect a time repository, Clockoli shows only the two setup steps: other navigation and preferences are hidden to help you get started. Clicking the Clockoli toolbar icon or trying to open Activity before finishing setup brings you back to Settings rather than showing an empty tracking page. If the GitHub App isn't an option, expand **Why GitHub?** and select **Use a personal access token instead**. After setup, reopen Settings using the gear button in the Clockoli panel or the extension's details page. **More settings** holds Billable rates, Backup & restore (including **Import settings**), and **Advanced**. If GitHub App sign-in is unavailable in a development build, the regular Settings page remains accessible for the PAT alternative.
 
 ## Step 1: Sign in with GitHub
 
