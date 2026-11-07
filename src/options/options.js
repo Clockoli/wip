@@ -805,8 +805,9 @@ function renderState() {
   $('connection-title').textContent = accountConnected ? 'GitHub account'
     : welcome ? 'Welcome to Clockoli!' : 'Set up Clockoli';
   $('connection-description').textContent = welcome ? 'Track your time with one click.'
-    : accountConnected ? 'Manage your GitHub account and time repositories.'
-      : 'Connect your GitHub account to find private time repositories.';
+    : initialSetup ? 'Next, choose a private repository for your time records.'
+      : accountConnected ? 'Manage your GitHub account and time repositories.'
+        : 'Connect your GitHub account to find private time repositories.';
 
   if (state.config) {
     $('owner').value = state.config.owner || '';
