@@ -50,7 +50,7 @@ test('onboarding names and explains Device activation without hiding GitHub safe
   assert.match(source, /Act on your behalf[\s\S]*only repositories you later grant/i);
 });
 
-test('Device activation copies the code before opening GitHub and offers an immediate completion check', () => {
+test('Device activation copies the code before opening GitHub and keeps manual recovery available', () => {
   assert.match(source, /id="authorize"[^>]*>Sign in with GitHub<\/button>/i);
   assert.match(source, /try to copy it before opening GitHub/i);
   assert.match(source, /id="device-initial-paste-shortcut"/i);
@@ -59,23 +59,30 @@ test('Device activation copies the code before opening GitHub and offers an imme
   assert.match(source, /id="device-code"[^>]*readonly[^>]*aria-label="Device activation code"/i);
   assert.match(source, /id="device-handoff-status"[^>]*aria-live="polite"/i);
   assert.match(source, /id="copy-code"[^>]*aria-label="Copy device code"/i);
-  assert.match(source, /id="device-done"[^>]*>Done on GitHub—check now<\/button>/i);
-  assert.match(script, /navigator\.clipboard\.writeText\(attempt\.userCode\)/);
-  assert.match(script, /deviceClipboardState !== 'copied'/);
-  assert.ok(script.indexOf('navigator.clipboard.writeText(attempt.userCode)') < script.indexOf("type: 'OPEN_DEVICE_FLOW_PAGE'"));
-  const startHandler = worker.slice(worker.indexOf("if (message.type === 'START_DEVICE_FLOW')"), worker.indexOf("if (message.type === 'OPEN_DEVICE_FLOW_PAGE')"));
-  assert.doesNotMatch(startHandler, /chrome\.tabs\.create/);
+  assert.doesNotMatch(source, /id="device-done"/);
+  const start = script.slice(script.indexOf("$('authorize').addEventListener('click'"), script.indexOf("$('copy-code').addEventListener('click'"));
+  assert.match(start, /await navigator\.clipboard\.writeText\(attempt\.userCode\)/);
+  assert.match(start, /if \(deviceClipboardState === 'copied'\) scheduleAutomaticDeviceOpen\(attempt\)/);
+  assert.match(script, /if \(state\?\.deviceAttempt\?\.attemptId !== attempt\.attemptId \|\| !deviceOpeningGitHubAutomatically\) return/);
+  assert.match(script, /cancelScheduledDeviceOpen\(\);[\s\S]*deviceGitHubOpened = true/);
+  const workerStart = worker.slice(worker.indexOf("if (message.type === 'START_DEVICE_FLOW')"), worker.indexOf("if (message.type === 'OPEN_DEVICE_FLOW_PAGE')"));
+  assert.doesNotMatch(workerStart, /chrome\.tabs\.create/);
 });
 
-test('Device activation reveals code characters for two seconds, then holds for four seconds before GitHub', () => {
-  assert.match(styles, /#device-code\.code-reveal\{animation:device-code-reveal 2s/);
-  assert.match(styles, /@media\(prefers-reduced-motion:reduce\)\{#device-code\.code-reveal\{animation:none\}\}/);
+test('Device handoff displays the full code immediately, then a three-second countdown', () => {
+  assert.match(source, /id="device-handoff-countdown"[^>]*role="status"[^>]*hidden/);
+  assert.match(source, /Opening GitHub automatically in 3 seconds/);
+  assert.match(source, /id="device-handoff-track"|class="device-handoff-track"/);
+  assert.match(styles, /animation:device-handoff-shrink 3s linear both/);
+  assert.match(styles, /@media\(prefers-reduced-motion:reduce\)\{\.device-handoff-track span\{animation:none\}\}/);
+  assert.match(styles, /\.onboarding-hero\.device-code-active \.trust-list\{display:none\}/);
+  assert.doesNotMatch(styles, /device-code-reveal/);
+  assert.match(script, /const DEVICE_HANDOFF_PAUSE_MS = 3000/);
   const start = script.slice(script.indexOf("$('authorize').addEventListener('click'"), script.indexOf("$('copy-code').addEventListener('click'"));
-  assert.match(start, /renderDeviceAttempt\(attempt\);[\s\S]*device-panel'\)\.scrollIntoView\([\s\S]*classList\.add\('code-reveal'\)/);
-  assert.match(start, /await revealDeviceCode\(attempt\)/);
-  assert.match(script, /2000 \/ attempt\.userCode\.length/);
-  assert.match(start, /await new Promise\(resolve => setTimeout\(resolve, 4000\)\);[\s\S]*OPEN_DEVICE_FLOW_PAGE/);
-  assert.match(start, /state\.deviceAttempt\?\.attemptId !== attempt\.attemptId/);
+  assert.match(start, /renderDeviceAttempt\(attempt\);[\s\S]*device-panel'\)\.scrollIntoView\(/);
+  assert.doesNotMatch(start, /revealDeviceCode|code-reveal|setTimeout\(resolve, 4000\)/);
+  assert.match(script, /deviceAutoOpenTimer = setTimeout\(async \(\) => \{/);
+  assert.match(script, /\}, DEVICE_HANDOFF_PAUSE_MS\)/);
 });
 
 test('Sign in requests the manifest host permissions in its click gesture before starting device flow', () => {
