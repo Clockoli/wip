@@ -50,6 +50,11 @@ test('onboarding names and explains Device activation without hiding GitHub safe
   assert.match(source, /Act on your behalf[\s\S]*only repositories you later grant/i);
 });
 
+test('welcome links to the official Clockoli GitHub App and retains the PAT fallback', () => {
+  assert.match(source, /Can't use the <a href="https:\/\/github\.com\/apps\/clockoli" target="_blank" rel="noreferrer">Clockoli GitHub App<\/a>\?/);
+  assert.match(source, /id="use-pat-instead"[^>]*>Use a personal access token instead<\/button>/);
+});
+
 test('Device activation copies the code before opening GitHub and keeps manual recovery available', () => {
   assert.match(source, /id="authorize"[^>]*>Connect GitHub<\/button>/i);
   assert.match(source, /show and copy a one-time code before opening GitHub/i);
