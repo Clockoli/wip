@@ -770,6 +770,10 @@ function renderState() {
   if (accountChanged) { repositoryCollaborators.clear(); collaboratorAccount = account; }
   const accountConnected = Boolean(state?.auth);
   const destinations = configuredDestinations();
+  const initialSetup = !state.config && destinations.length === 0 && state.appConfigured
+    && !setupCancelled && !authExpired && (!state.auth || state.auth.mode === 'github_app');
+  const welcome = initialSetup && !accountConnected && !state.candidateAuth;
+  document.documentElement.dataset.clockoliOnboarding = initialSetup ? (welcome ? 'welcome' : 'setup') : '';
   const repositoryFlowOpen = Boolean(state?.candidateAuth || authExpired || reconnectingGitHub || state?.deviceAttempt)
     || (state?.auth?.mode === 'github_app' && (showOnboarding || destinations.length === 0));
   $('connected').hidden = !accountConnected || authExpired;
@@ -793,11 +797,16 @@ function renderState() {
   $('connection-status').textContent = authExpired && state.candidateAuth ? 'Checking repository access'
     : authExpired ? 'Sign-in required' : accountConnected ? (state.auth?.mode === 'pat' ? 'Connected with PAT' : 'Connected') : (state.candidateAuth ? 'Setup in progress' : 'Not connected');
   $('connection-status').className = `badge${accountConnected && !authExpired ? ' ready' : ''}`;
+  $('connection-status').hidden = initialSetup;
   $('connected-status').textContent = authExpired ? 'Sign-in required' : 'Connected';
   $('connected-status').className = `badge${authExpired ? '' : ' ready'}`;
   $('reauth-required').hidden = !authExpired || Boolean(state.deviceAttempt || state.candidateAuth);
-  $('authorize').textContent = authExpired ? 'Sign in again with GitHub' : 'Sign in with GitHub';
-  $('connection-title').textContent = accountConnected ? 'GitHub account' : 'Set up Clockoli';
+  $('authorize').textContent = authExpired ? 'Sign in again with GitHub' : 'Connect GitHub';
+  $('connection-title').textContent = accountConnected ? 'GitHub account'
+    : welcome ? 'Welcome to Clockoli!' : 'Set up Clockoli';
+  $('connection-description').textContent = welcome ? 'Track your time with one click.'
+    : accountConnected ? 'Manage your GitHub account and time repositories.'
+      : 'Connect your GitHub account to find private time repositories.';
 
   if (state.config) {
     $('owner').value = state.config.owner || '';
