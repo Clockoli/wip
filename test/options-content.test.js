@@ -74,15 +74,15 @@ test('Device activation copies the code before opening GitHub and keeps manual r
   assert.doesNotMatch(workerStart, /chrome\.tabs\.create/);
 });
 
-test('Device handoff displays the full code immediately, then a three-second countdown', () => {
+test('Device handoff displays the full code immediately, then a five-second countdown', () => {
   assert.match(source, /id="device-handoff-countdown"[^>]*role="status"[^>]*hidden/);
-  assert.match(source, /Opening GitHub automatically in 3 seconds/);
+  assert.match(source, /Opening GitHub automatically in 5 seconds/);
   assert.match(source, /id="device-handoff-track"|class="device-handoff-track"/);
-  assert.match(styles, /animation:device-handoff-shrink 3s linear both/);
+  assert.match(styles, /animation:device-handoff-shrink 5s linear both/);
   assert.match(styles, /@media\(prefers-reduced-motion:reduce\)\{\.device-handoff-track span\{animation:none\}\}/);
   assert.match(styles, /\.onboarding-hero\.device-code-active \.trust-list\{display:none\}/);
   assert.doesNotMatch(styles, /device-code-reveal/);
-  assert.match(script, /const DEVICE_HANDOFF_PAUSE_MS = 3000/);
+  assert.match(script, /const DEVICE_HANDOFF_PAUSE_MS = 5000/);
   const start = script.slice(script.indexOf("$('authorize').addEventListener('click'"), script.indexOf("$('copy-code').addEventListener('click'"));
   assert.match(start, /renderDeviceAttempt\(attempt\);[\s\S]*device-panel'\)\.scrollIntoView\(/);
   assert.doesNotMatch(start, /revealDeviceCode|code-reveal|setTimeout\(resolve, 4000\)/);
