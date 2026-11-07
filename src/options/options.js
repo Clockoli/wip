@@ -773,8 +773,10 @@ function renderState() {
   const destinations = configuredDestinations();
   const initialSetup = !state.config && destinations.length === 0 && state.appConfigured
     && !setupCancelled && !authExpired && !showAdvancedSetup && (!state.auth || state.auth.mode === 'github_app');
-  const welcome = initialSetup && !accountConnected && !state.candidateAuth;
-  document.documentElement.dataset.clockoliOnboarding = initialSetup ? (welcome ? 'welcome' : 'setup') : '';
+  const deviceActive = Boolean(state.deviceAttempt);
+  const welcome = initialSetup && !accountConnected && !state.candidateAuth && !deviceActive;
+  document.documentElement.dataset.clockoliOnboarding = initialSetup
+    ? welcome ? 'welcome' : deviceActive ? 'authorization' : 'setup' : '';
   const repositoryFlowOpen = Boolean(state?.candidateAuth || authExpired || reconnectingGitHub || state?.deviceAttempt)
     || (state?.auth?.mode === 'github_app' && (showOnboarding || destinations.length === 0));
   $('connected').hidden = !accountConnected || authExpired;
@@ -803,12 +805,15 @@ function renderState() {
   $('connected-status').className = `badge${authExpired ? '' : ' ready'}`;
   $('reauth-required').hidden = !authExpired || Boolean(state.deviceAttempt || state.candidateAuth);
   $('authorize').textContent = authExpired ? 'Sign in again with GitHub' : 'Connect GitHub';
-  $('connection-title').textContent = accountConnected ? 'GitHub account'
-    : welcome ? 'Welcome to Clockoli!' : 'Set up Clockoli';
-  $('connection-description').textContent = welcome ? 'Track your time with one click.'
-    : initialSetup ? 'Next, choose a private repository for your time records.'
-      : accountConnected ? 'Manage your GitHub account and time repositories.'
-        : 'Connect your GitHub account to find private time repositories.';
+  $('connection-title').textContent = welcome ? 'Welcome to Clockoli!'
+    : initialSetup && deviceActive ? 'Connect to GitHub'
+      : accountConnected ? 'GitHub account' : 'Set up Clockoli';
+  $('connection-description').textContent = welcome
+    ? 'Track time with one click. Keep your records in a private GitHub repository you control.'
+    : initialSetup && deviceActive ? 'Paste the one-time code on GitHub to authorize Clockoli.'
+      : initialSetup ? 'Next, choose a private repository for your time records.'
+        : accountConnected ? 'Manage your GitHub account and time repositories.'
+          : 'Connect your GitHub account to find private time repositories.';
 
   if (state.config) {
     $('owner').value = state.config.owner || '';
