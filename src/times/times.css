@@ -3,8 +3,7 @@ html,body{min-width:320px;min-height:100%;margin:0;background:var(--bgColor-defa
 
 :root[data-clockoli-theme] body{color-scheme:inherit}
 
-.activity-overview-layout{box-sizing:border-box;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,7fr);align-items:stretch;gap:16px;width:min(1800px,calc(100% - 80px));margin:16px auto 0}
-html[data-clockoli-width="full"] .activity-overview-layout{width:calc(100% - 80px)}
+.activity-overview-layout{box-sizing:border-box;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,7fr);align-items:stretch;gap:16px;width:var(--clockoli-page-width);margin:16px auto 0}
 #activity-summary{box-sizing:border-box;min-width:0;padding:8px 16px;border:1px solid var(--borderColor-muted);border-radius:6px;background:var(--bgColor-muted);font:400 14px/1.5 var(--fontStack-sansSerif)}
 #activity-summary:empty{display:none}
 .activity-initial-summary{display:grid;gap:20px;color:var(--fgColor-muted);font-size:14px}
@@ -12,11 +11,9 @@ html[data-clockoli-width="full"] .activity-overview-layout{width:calc(100% - 80p
 #activity-running-status.running-status.is-loading{box-sizing:border-box;min-height:128px;padding:12px 24px;border:1px solid var(--borderColor-muted);border-radius:6px;background:var(--bgColor-muted)}
 #activity-running-status.running-status.is-loading .running-status-row{display:flex;align-items:center;min-height:112px}
 #activity-running-status.running-status.is-loading .running-status-idle-hint{display:none}
-.activity-initial-loading{box-sizing:border-box;width:min(1800px,calc(100% - 80px));min-height:240px;margin:24px auto;padding:88px 16px 28px;border:1px solid var(--borderColor-muted);border-radius:6px;background:var(--bgColor-muted);color:var(--fgColor-muted);text-align:center}
-@media(max-width:700px){.activity-initial-loading{width:calc(100% - 24px)}}
+.activity-initial-loading{box-sizing:border-box;width:var(--clockoli-page-width);min-height:240px;margin:24px auto;padding:88px 16px 28px;border:1px solid var(--borderColor-muted);border-radius:6px;background:var(--bgColor-muted);color:var(--fgColor-muted);text-align:center}
 #activity-summary:empty + #activity-running-status{grid-column:1/-1}
-#activity-sync-status:not(:empty){width:min(1800px,calc(100% - 80px));margin:14px auto 0;font:400 14px/1.5 var(--fontStack-sansSerif)}
-html[data-clockoli-width="full"] #activity-sync-status:not(:empty){width:calc(100% - 80px)}
+#activity-sync-status:not(:empty){box-sizing:border-box;width:var(--clockoli-page-width);margin:14px auto 0;font:400 14px/1.5 var(--fontStack-sansSerif)}
 .sync-status-banner{display:flex;align-items:center;justify-content:space-between;gap:16px;box-sizing:border-box;padding:12px 16px;border:1px solid var(--borderColor-muted);border-left:4px solid var(--fgColor-accent);border-radius:6px;background:var(--bgColor-muted)}
 .sync-status-banner.has-conflicts{border-color:var(--borderColor-danger-muted);border-left-color:var(--fgColor-danger);background:var(--bgColor-danger-muted)}
 .sync-status-copy{display:grid;gap:2px;min-width:0}
@@ -106,7 +103,6 @@ html[data-clockoli-width="full"] #activity-sync-status:not(:empty){width:calc(10
 #activity-running-status.is-active .running-status-stop{box-sizing:border-box;grid-column:2;grid-row:3;justify-self:stretch;align-self:start;width:100%;min-height:32px}
 @media(max-width:1299px){.activity-overview-layout{grid-template-columns:minmax(190px,1fr) minmax(0,3fr)}}
 @media(max-width:900px){.activity-overview-layout{grid-template-columns:minmax(0,1fr)}}
-@media(max-width:700px){.activity-overview-layout,html[data-clockoli-width="full"] .activity-overview-layout,#activity-sync-status:not(:empty),html[data-clockoli-width="full"] #activity-sync-status:not(:empty){width:calc(100% - 24px)}}
 @media(max-width:640px){.sync-status-banner{align-items:stretch;flex-direction:column}.sync-issues-content{grid-template-columns:1fr;max-height:calc(85dvh - 150px);overflow:auto}.sync-issue-list{max-height:180px;border-right:0;border-bottom:1px solid var(--borderColor-muted)}.sync-issue-detail{overflow:visible}.sync-issues-dialog{max-height:85dvh}}
 @media(max-width:900px){.sync-overlap-pair{grid-template-columns:1fr}}
 @media(max-width:640px){

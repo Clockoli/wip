@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const ROOT = new URL('..', import.meta.url);
-const TOP_TASKS_MIN_DESCRIPTION_PX = 340;
+const GITHUB_CONTAINER_PX = 1280;
+const FRAME_GUTTER_PX = 24;
+const CONTROL_PX = 32;
 
 test('Reports, Top tasks and Settings stretch the running description without overflowing', async () => {
   test.setTimeout(90000);
@@ -52,9 +54,7 @@ test('Reports, Top tasks and Settings stretch the running description without ov
             overflow: document.documentElement.scrollWidth - innerWidth };
         });
         if (width === 1440) {
-          // Top tasks keeps its bar inside the narrower task column, so it needs a fixed floor.
-          if (path.startsWith('tasks')) expect(geometry.width).toBeGreaterThan(TOP_TASKS_MIN_DESCRIPTION_PX);
-          else expect(geometry.width).toBeGreaterThan(geometry.rowWidth * .35);
+          expect(geometry.width).toBeGreaterThan(geometry.rowWidth * .35);
           expect(geometry.gap).toBeGreaterThanOrEqual(0);
           expect(geometry.gap).toBeLessThan(24);
         } else {
@@ -81,6 +81,33 @@ test('Reports, Top tasks and Settings stretch the running description without ov
         await expect(page.locator('html')).toHaveAttribute('data-clockoli-theme', 'dark');
         await expect(page.locator('.page-theme-toggle')).toHaveAttribute('aria-label', 'Switch to light theme');
         await page.locator('.page-theme-toggle').click({ timeout: 5000 });
+      }
+    }
+    // Every page shares one frame: GitHub's 1280px container, or the window when Interface width is Full.
+    for (const width of [1440, 2200]) for (const interfaceWidth of ['contained', 'full']) {
+      const frames = [];
+      for (const path of ['reports/reports.html', 'tasks/tasks.html', 'options/options.html']) {
+        await page.setViewportSize({ width, height: 850 });
+        await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/${path}`);
+        const row = page.locator('#running-status.is-active .running-status-row');
+        await expect(row.getByRole('textbox', { name: 'Description' })).toBeVisible();
+        await page.evaluate(value => { document.documentElement.dataset.clockoliWidth = value; }, interfaceWidth);
+        frames.push(await page.evaluate(() => {
+          const box = selector => document.querySelector(selector).getBoundingClientRect();
+          const row = box('#running-status .running-status-row'), main = box('main');
+          const controls = ['.running-status-description', '.running-status-stats', '.running-status-stop'].map(box);
+          return { left: Math.round(row.left), right: Math.round(row.right), height: Math.round(row.height),
+            mainLeft: Math.round(main.left), mainRight: Math.round(main.right),
+            controlHeights: controls.map(control => Math.round(control.height)),
+            controlCenters: controls.map(control => Math.round(control.top + control.height / 2)) };
+        }));
+      }
+      const expectedWidth = interfaceWidth === 'full' ? width - FRAME_GUTTER_PX * 2 : Math.min(GITHUB_CONTAINER_PX, width - FRAME_GUTTER_PX * 2);
+      for (const frame of frames) {
+        expect(frame).toMatchObject({ ...frames[0], mainLeft: frame.left, mainRight: frame.right });
+        expect(frame.right - frame.left).toBe(expectedWidth);
+        expect(frame.controlHeights).toEqual([CONTROL_PX, CONTROL_PX, CONTROL_PX]);
+        expect(new Set(frame.controlCenters).size).toBe(1);
       }
     }
     expect(errors).toEqual([]);
