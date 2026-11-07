@@ -8,6 +8,7 @@ import { getAddon } from '../addons/registry.js';
 
 const $ = id => document.getElementById(id);
 const SAVE_CONFIRMATION_MS = 2000;
+const DEVICE_HANDOFF_PAUSE_MS = 5000;
 const saveButtonStates = new WeakMap();
 let state = null;
 let repositories = [];
@@ -17,7 +18,10 @@ let deviceClipboardAttemptId = '';
 let deviceClipboardState = 'unknown';
 let deviceOpeningGitHubAutomatically = false;
 let deviceGitHubOpened = false;
+let deviceAutoOpenTimer = null;
+let deviceAutoOpenFailed = false;
 let showOnboarding = false;
+let showAdvancedSetup = false;
 let reconnectingGitHub = false;
 let authExpired = false;
 let refreshRunningStatus = null;
@@ -689,6 +693,12 @@ function deviceKeyboardShortcut(key) {
   return /mac|iphone|ipad|ipod/i.test(platform) ? `⌘${key}` : `Ctrl+${key}`;
 }
 
+function cancelScheduledDeviceOpen() {
+  clearTimeout(deviceAutoOpenTimer);
+  deviceAutoOpenTimer = null;
+  deviceOpeningGitHubAutomatically = false;
+}
+
 function renderDeviceHandoff(attempt) {
   const clipboard = deviceClipboardAttemptId === attempt.attemptId ? deviceClipboardState : 'unknown';
   const status = $('device-copy-status');
@@ -697,13 +707,42 @@ function renderDeviceHandoff(attempt) {
     : clipboard === 'selection' ? `Clipboard copying is blocked. The code is selected; press ${deviceKeyboardShortcut('C')} to copy it.`
       : clipboard === 'failed' ? 'Code not copied yet. Select Copy before opening GitHub.'
         : 'Code ready. Select Copy to put it on your clipboard.';
-  const paste = `press ${deviceKeyboardShortcut('V')} to paste the code.`;
+  const paste = `paste the code with ${deviceKeyboardShortcut('V')} and authorize Clockoli.`;
   $('device-handoff-status').textContent = clipboard === 'copied'
-    ? deviceOpeningGitHubAutomatically ? `Next: When GitHub opens, ${paste}`
-      : deviceGitHubOpened ? `Next: On GitHub, ${paste}`
-        : `Next: Open GitHub, then ${paste}`
-    : clipboard === 'selection' ? 'Next: Copy the selected code, then open GitHub.'
-      : 'Next: Copy the code, then open GitHub.';
+    ? deviceOpeningGitHubAutomatically ? `When GitHub opens, ${paste}`
+      : deviceGitHubOpened ? `On GitHub, ${paste}`
+        : deviceAutoOpenFailed ? `GitHub could not open automatically. Open GitHub below, then ${paste}`
+          : `Open GitHub below, then ${paste}`
+    : clipboard === 'selection' ? 'Copy the selected code, then open GitHub.'
+      : 'Copy the code, then open GitHub.';
+  $('device-handoff-countdown').hidden = !deviceOpeningGitHubAutomatically;
+  $('open-device-page').textContent = deviceOpeningGitHubAutomatically ? 'Open GitHub now'
+    : deviceGitHubOpened ? 'Reopen GitHub' : 'Open GitHub to enter code';
+}
+
+function scheduleAutomaticDeviceOpen(attempt) {
+  cancelScheduledDeviceOpen();
+  deviceOpeningGitHubAutomatically = true;
+  renderDeviceHandoff(attempt);
+  deviceAutoOpenTimer = setTimeout(async () => {
+    deviceAutoOpenTimer = null;
+    if (state?.deviceAttempt?.attemptId !== attempt.attemptId || !deviceOpeningGitHubAutomatically) return;
+    deviceOpeningGitHubAutomatically = false;
+    deviceGitHubOpened = true;
+    githubHandoff = true;
+    renderDeviceHandoff(attempt);
+    try {
+      await send({ type: 'OPEN_DEVICE_FLOW_PAGE', attemptId: attempt.attemptId });
+    } catch (error) {
+      if (state?.deviceAttempt?.attemptId !== attempt.attemptId) return;
+      deviceGitHubOpened = false;
+      deviceAutoOpenFailed = true;
+      githubHandoff = false;
+      message(error.message, 'error');
+    } finally {
+      if (state?.deviceAttempt?.attemptId === attempt.attemptId) renderDeviceAttempt(state.deviceAttempt);
+    }
+  }, DEVICE_HANDOFF_PAUSE_MS);
 }
 
 function renderOnboardingProgress() {
@@ -732,6 +771,12 @@ function renderState() {
   if (accountChanged) { repositoryCollaborators.clear(); collaboratorAccount = account; }
   const accountConnected = Boolean(state?.auth);
   const destinations = configuredDestinations();
+  const initialSetup = !state.config && destinations.length === 0 && state.appConfigured
+    && !setupCancelled && !authExpired && !showAdvancedSetup && (!state.auth || state.auth.mode === 'github_app');
+  const deviceActive = Boolean(state.deviceAttempt);
+  const welcome = initialSetup && !accountConnected && !state.candidateAuth && !deviceActive;
+  document.documentElement.dataset.clockoliOnboarding = initialSetup
+    ? welcome ? 'welcome' : deviceActive ? 'authorization' : 'setup' : '';
   const repositoryFlowOpen = Boolean(state?.candidateAuth || authExpired || reconnectingGitHub || state?.deviceAttempt)
     || (state?.auth?.mode === 'github_app' && (showOnboarding || destinations.length === 0));
   $('connected').hidden = !accountConnected || authExpired;
@@ -755,11 +800,20 @@ function renderState() {
   $('connection-status').textContent = authExpired && state.candidateAuth ? 'Checking repository access'
     : authExpired ? 'Sign-in required' : accountConnected ? (state.auth?.mode === 'pat' ? 'Connected with PAT' : 'Connected') : (state.candidateAuth ? 'Setup in progress' : 'Not connected');
   $('connection-status').className = `badge${accountConnected && !authExpired ? ' ready' : ''}`;
+  $('connection-status').hidden = initialSetup;
   $('connected-status').textContent = authExpired ? 'Sign-in required' : 'Connected';
   $('connected-status').className = `badge${authExpired ? '' : ' ready'}`;
   $('reauth-required').hidden = !authExpired || Boolean(state.deviceAttempt || state.candidateAuth);
-  $('authorize').textContent = authExpired ? 'Sign in again with GitHub' : 'Sign in with GitHub';
-  $('connection-title').textContent = accountConnected ? 'GitHub account' : 'Set up Clockoli';
+  $('authorize').textContent = authExpired ? 'Sign in again with GitHub' : 'Connect GitHub';
+  $('connection-title').textContent = welcome ? 'Welcome to Clockoli!'
+    : initialSetup && deviceActive ? 'Connect to GitHub'
+      : accountConnected ? 'GitHub account' : 'Set up Clockoli';
+  $('connection-description').textContent = welcome
+    ? 'Track time with one click. Keep your records in a private GitHub repository you control.'
+    : initialSetup && deviceActive ? 'Paste the one-time code on GitHub to authorize Clockoli.'
+      : initialSetup ? 'Next, choose a private repository for your time records.'
+        : accountConnected ? 'Manage your GitHub account and time repositories.'
+          : 'Connect your GitHub account to find private time repositories.';
 
   if (state.config) {
     $('owner').value = state.config.owner || '';
@@ -780,20 +834,33 @@ function renderState() {
   if (accountChanged) updateMergePeopleAvatars();
 
   if (state.deviceAttempt) renderDeviceAttempt(state.deviceAttempt);
-  else $('device-panel').hidden = true;
+  else { cancelScheduledDeviceOpen(); $('device-panel').hidden = true; $('device-step').classList.toggle('device-code-active', false); }
   $('authorize-panel').hidden = Boolean(state.deviceAttempt || state.candidateAuth);
   renderOnboardingProgress();
   scheduleRepositoryPolling();
 }
 
 function renderDeviceAttempt(attempt) {
+  if (document.documentElement.dataset.clockoliOnboarding === 'welcome') {
+    document.documentElement.dataset.clockoliOnboarding = 'authorization';
+    $('connection-title').textContent = 'Connect to GitHub';
+    $('connection-description').textContent = 'Paste the one-time code on GitHub to authorize Clockoli.';
+  }
+  if (deviceClipboardAttemptId && deviceClipboardAttemptId !== attempt.attemptId) {
+    cancelScheduledDeviceOpen();
+    deviceClipboardAttemptId = attempt.attemptId;
+    deviceClipboardState = 'unknown';
+    deviceGitHubOpened = false;
+    deviceAutoOpenFailed = false;
+  }
+  $('device-step').classList.toggle('device-code-active', true);
   $('device-panel').hidden = false;
   $('authorize-panel').hidden = true;
   if (attempt.status === 'requesting') {
     $('device-code').value = 'Requesting code…';
     $('copy-code').disabled = true;
-    $('device-done').hidden = true;
-    setLink('open-device-page', '');
+    $('open-device-page').hidden = true;
+    $('device-handoff-countdown').hidden = true;
     $('device-copy-status').textContent = 'Getting your one-time code…';
     $('device-copy-status').dataset.state = 'unknown';
     $('device-handoff-status').textContent = '';
@@ -804,31 +871,15 @@ function renderDeviceAttempt(attempt) {
   // Keep the user's selection intact when polling refreshes the same code.
   if ($('device-code').value !== attempt.userCode) $('device-code').value = attempt.userCode;
   $('copy-code').disabled = false;
-  $('device-done').hidden = false;
-  $('device-done').disabled = false;
+  $('open-device-page').hidden = false;
   setLink('open-device-page', attempt.verificationUri);
-  $('open-device-page').textContent = deviceGitHubOpened ? 'Open GitHub again' : 'Open GitHub to enter code';
   renderDeviceHandoff(attempt);
   const seconds = Math.max(0, Math.ceil((attempt.expiresAt - Date.now()) / 1000));
-  $('device-wait').textContent = `Clockoli checks automatically every few seconds · code expires in ${Math.ceil(seconds / 60)} min`;
+  const expiry = `code expires in ${Math.ceil(seconds / 60)} min`;
+  $('device-wait').textContent = deviceGitHubOpened
+    ? `Waiting for GitHub authorization… Clockoli checks automatically · ${expiry}`
+    : `Clockoli checks automatically after you authorize · ${expiry}`;
   schedulePoll(attempt);
-}
-
-async function revealDeviceCode(attempt) {
-  const code = $('device-code');
-  code.value = '';
-  $('copy-code').disabled = true;
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    code.value = attempt.userCode;
-  } else {
-    for (let i = 1; i <= attempt.userCode.length; i++) {
-      await new Promise(resolve => setTimeout(resolve, 2000 / attempt.userCode.length));
-      if (state.deviceAttempt?.attemptId !== attempt.attemptId) return false;
-      code.value = attempt.userCode.slice(0, i);
-    }
-  }
-  $('copy-code').disabled = false;
-  return state.deviceAttempt?.attemptId === attempt.attemptId;
 }
 
 function schedulePoll(attempt) {
@@ -841,6 +892,7 @@ async function poll(attemptId) {
   try {
     const result = await send({ type: 'POLL_DEVICE_FLOW', attemptId });
     if (result.status === 'authorized') {
+      cancelScheduledDeviceOpen();
       reconnectingGitHub = false;
       state.deviceAttempt = null;
       message(`Device activation complete for ${result.githubLogin}. Connect your time repositories below.`, 'success');
@@ -856,10 +908,12 @@ async function poll(attemptId) {
       catch (error) { message(`${error.message} Reload Settings to retry.`, 'error'); }
       return;
     }
+    if (result.attemptId !== attemptId) cancelScheduledDeviceOpen();
     state.deviceAttempt = result;
     renderDeviceAttempt(result);
   } catch (error) {
     if (['auth_denied', 'device_code_expired', 'device_flow_superseded', 'device_attempt_missing', 'invalid_device_flow'].includes(error.code)) {
+      cancelScheduledDeviceOpen();
       state.deviceAttempt = null;
       reconnectingGitHub = false;
       renderState();
@@ -1921,9 +1975,18 @@ async function refreshState() {
   }
 }
 
+$('use-pat-instead').addEventListener('click', () => {
+  showAdvancedSetup = true;
+  renderState();
+  $('more-settings').open = true;
+  $('advanced-settings').open = true;
+  $('advanced-pat').open = true;
+  $('advanced-pat').scrollIntoView({ block: 'start' });
+});
+
 $('authorize').addEventListener('click', async () => {
   setupCancelled = false; $('authorize').disabled = true; message('Requesting a one-time device code from GitHub…');
-  $('device-code').classList.remove('code-reveal');
+  cancelScheduledDeviceOpen();
   try {
     // Safari and Firefox grant host permissions only after the user approves them; Chrome resolves this at once.
     if (!await chrome.permissions.request({ origins: chrome.runtime.getManifest().host_permissions })) throw new Error('GitHub access was not granted.');
@@ -1932,41 +1995,24 @@ $('authorize').addEventListener('click', async () => {
     message('');
     deviceClipboardAttemptId = attempt.attemptId;
     deviceClipboardState = 'unknown';
-    deviceOpeningGitHubAutomatically = false;
     deviceGitHubOpened = false;
+    deviceAutoOpenFailed = false;
     renderDeviceAttempt(attempt);
     $('device-panel').scrollIntoView({ block: 'center' });
-    $('device-code').classList.add('code-reveal');
     try {
       await navigator.clipboard.writeText(attempt.userCode);
       deviceClipboardState = 'copied';
-      deviceOpeningGitHubAutomatically = true;
     } catch {
       // A denied clipboard write must not send the user to GitHub without a pasteable code.
       deviceClipboardState = 'failed';
     }
     if (state.deviceAttempt?.attemptId !== attempt.attemptId) return;
-    renderDeviceHandoff(attempt);
-    if (!await revealDeviceCode(attempt)) return;
-    if (deviceClipboardState !== 'copied') return;
-    renderDeviceHandoff(attempt);
-    await new Promise(resolve => setTimeout(resolve, 4000));
-    if (state.deviceAttempt?.attemptId !== attempt.attemptId || deviceGitHubOpened || deviceClipboardState !== 'copied') return;
-    githubHandoff = true;
-    try {
-      await send({ type: 'OPEN_DEVICE_FLOW_PAGE', attemptId: attempt.attemptId });
-      deviceGitHubOpened = true;
-      $('open-device-page').textContent = 'Open GitHub again';
-    } finally {
-      deviceOpeningGitHubAutomatically = false;
-      renderDeviceHandoff(attempt);
-    }
+    if (deviceClipboardState === 'copied' && !deviceGitHubOpened) scheduleAutomaticDeviceOpen(attempt);
+    else renderDeviceAttempt(attempt);
   } catch (error) {
-    if (!$('device-panel').hidden) $('device-handoff-status').textContent = `Could not open GitHub automatically. Select Open GitHub to enter code, then press ${deviceKeyboardShortcut('V')}.`;
     if (!state.deviceAttempt) { reconnectingGitHub = false; renderState(); }
     message(error.message, 'error');
-  }
-  finally { $('authorize').disabled = !state?.appConfigured; }
+  } finally { $('authorize').disabled = !state?.appConfigured; }
 });
 
 $('reconnect-github').addEventListener('click', () => {
@@ -1980,10 +2026,10 @@ $('open-device-page').addEventListener('click', () => {
   const attempt = state?.deviceAttempt;
   if (!attempt?.verificationUri) return;
   // A manually opened GitHub tab must not be followed by the scheduled automatic one.
+  cancelScheduledDeviceOpen();
   deviceGitHubOpened = true;
-  deviceOpeningGitHubAutomatically = false;
-  $('open-device-page').textContent = 'Open GitHub again';
-  renderDeviceHandoff(attempt);
+  deviceAutoOpenFailed = false;
+  renderDeviceAttempt(attempt);
 });
 
 $('copy-code').addEventListener('click', async () => {
@@ -2002,22 +2048,6 @@ $('copy-code').addEventListener('click', async () => {
     deviceClipboardState = 'selection';
     renderDeviceHandoff(attempt);
   }
-});
-
-$('device-done').addEventListener('click', async () => {
-  const attemptId = state?.deviceAttempt?.attemptId;
-  if (!attemptId) return;
-  clearTimeout(pollTimer);
-  $('device-done').disabled = true;
-  $('device-wait').textContent = 'Checking GitHub authorization now…';
-  message('Checking GitHub authorization now…');
-  try {
-    await poll(attemptId);
-    if (state?.deviceAttempt?.attemptId === attemptId && !$('message').classList.contains('error')) {
-      $('device-wait').textContent = 'GitHub has not confirmed authorization yet. Clockoli will check again automatically.';
-      message('GitHub has not confirmed authorization yet. Clockoli will check again automatically.');
-    }
-  } finally { $('device-done').disabled = !state?.deviceAttempt; }
 });
 
 function beginRepositoryChange() {
@@ -2317,6 +2347,7 @@ $('add-time-repository').addEventListener('click', async event => {
   try {
     await rememberRepositoryTarget('');
     renderState();
+    $('repository-step-title').scrollIntoView({ block: 'start' });
     if (state?.candidateAuth) await discoverRepositories();
   } catch (error) { message(error.message, 'error'); }
 });

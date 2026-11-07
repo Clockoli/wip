@@ -134,6 +134,29 @@ async function closeOptions(fixture) {
   await rm(fixture.profileDirectory, { recursive: true, force: true });
 }
 
+// The real GitHub tab is not opened by this synthetic worker. Simulate the user
+// opening it and returning to Settings, which triggers the automatic check.
+async function returnFromGitHub(page) {
+  await page.evaluate(() => document.getElementById('open-device-page').addEventListener('click', event => event.preventDefault()));
+  await page.locator('#open-device-page').click();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+}
+
+test('Add time repository scrolls to the repository setup heading', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, browserErrors } = fixture;
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await expect(page.locator('#repository-step')).toBeHidden();
+    await page.locator('#add-time-repository').click();
+    await expect(page.locator('#repository-step-title')).toBeVisible();
+    const top = await page.locator('#repository-step-title').evaluate(node => node.getBoundingClientRect().top);
+    expect(top).toBeGreaterThanOrEqual(-1);
+    expect(top).toBeLessThan(12);
+    expect(browserErrors).toEqual([]);
+  } finally { await closeOptions(fixture); }
+});
+
 test('connected account can reauthorize without signing out or losing its repositories', async () => {
   const fixture = await openOptions();
   try {
@@ -151,7 +174,7 @@ test('connected account can reauthorize without signing out or losing its reposi
     await expect(page.locator('#device-panel')).toBeVisible();
     await expect(page.locator('#device-step')).toBeVisible();
     await worker.evaluate(() => { globalThis.authorizedAgain = true; });
-    await page.locator('#device-done').click();
+    await returnFromGitHub(page);
     await expect(page.locator('#device-panel')).toBeHidden();
     await expect(page.locator('#connected-account')).toHaveText('@octocat');
     await expect(page.locator('.time-repository')).toHaveCount(2);
@@ -173,8 +196,10 @@ test('an authorized attempt survives a transient onboarding read failure without
       globalThis.authorizedAgain = true;
       globalThis.failNextOnboardingRead = true;
     });
-    await page.locator('#device-done').click();
-    await expect(page.locator('#connection-status')).toHaveText('Checking repository access');
+    await returnFromGitHub(page);
+    // A completed authorization can already clear the sign-in warning while
+    // the repository step remains open; both states are valid after recovery.
+    await expect(page.locator('#connection-status')).toHaveText(/^(Checking repository access|Connected)$/);
     await expect(page.locator('#repository-step')).toBeVisible();
     await expect(page.locator('.time-repository')).toHaveCount(2);
     await page.waitForTimeout(5_200);
@@ -209,7 +234,7 @@ test('renewal failure opens sign-in immediately without a duplicate status error
     await expect(page.locator('#device-code')).toHaveValue('ABCD-1234');
     await expect(page.locator('.time-repository')).toHaveCount(2);
     await worker.evaluate(() => { globalThis.authorizedAgain = true; });
-    await page.locator('#device-done').click();
+    await returnFromGitHub(page);
     await expect(page.locator('#reauth-required')).toBeHidden();
     await expect(page.locator('#connected')).toBeVisible();
     await expect(page.locator('#connection-status')).toHaveText('Connected');
@@ -293,7 +318,7 @@ test('rejected reconnect attempt offers a new code without signing out or endles
     await page.locator('#reconnect-github').click();
     await expect(page.locator('#device-panel')).toBeVisible();
     await worker.evaluate(() => { globalThis.rejectNextPoll = true; });
-    await page.locator('#device-done').click();
+    await returnFromGitHub(page);
     await expect(page.locator('#message')).toContainText('Start again.');
     await expect(page.locator('#device-panel')).toBeHidden();
     await expect(page.locator('#reconnect-github')).toBeEnabled();

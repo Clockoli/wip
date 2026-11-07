@@ -36,7 +36,7 @@ Clockoli normally renews its GitHub App access token automatically when it makes
 GitHub user authorization and GitHub App installation are separate.
 
 1. Return to Clockoli Settings.
-2. Use **Done on GitHub—check now** if automatic checking has not completed.
+2. Clockoli checks for authorization automatically. If it still shows **Waiting for GitHub authorization**, verify that you approved Clockoli on GitHub, then return to Settings. Use **Reopen GitHub** if you need to revisit the authorization page.
 3. After sign-in, type a repository name in **Connect time repositories** to choose an App-granted suggestion, or paste a GitHub URL or `owner/name` and select **Check** (or press Enter).
 4. Grant App access only if Clockoli reports that the target is missing or needs **Contents: Read and write**. Check a ready repository, then choose **Connect repository** and confirm separately. A replacement authorization is also confirmed automatically after Clockoli read-validates every configured destination; failures appear once at account level.
 

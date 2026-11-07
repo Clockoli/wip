@@ -2,7 +2,7 @@
 
 Every Settings section, in the order Settings shows it: account, repositories, display, routing, merging, add-ons, billing, backups, and advanced.
 
-Settings opens after the first installation. Reopen it from the gear button in the Clockoli panel, the **Settings** navigation link, or the extension details page.
+The welcome screen opens after first installation. Until you connect a time repository, it shows just the GitHub sign-in and repository setup steps; the usual navigation and preferences are hidden. Once setup is complete, reopen Settings from the gear button in the Clockoli panel, the **Settings** navigation link, or the extension details page.
 
 **Save projects and routing**, **Save billable rates**, and **Save invoicing settings** each show success or an error beside their own button. After a settings change, a reminder suggests exporting an updated backup; it appears once per page load and, after exporting, does not show again until you reopen or reload Settings.
 
@@ -22,7 +22,7 @@ Each connected repository has a card with its status, a **Default** badge for th
 - **Make default** makes it the destination for tasks that match no project.
 - **Remove from Clockoli** removes the repository from this browser. Repository data, GitHub App access, and Git history are not deleted. Removal is blocked while it would strand active or pending work.
 
-**Add time repository** adds another destination regardless of who owns it; adding never deletes records in existing repositories. See [Time repositories](time-data-repository.md) for requirements and [Work as a team](teams.md) for invitations and avatars.
+**Add time repository** opens the connection form and scrolls **Connect time repositories** to the top of the page. It adds another destination regardless of who owns it; adding never deletes records in existing repositories. See [Time repositories](time-data-repository.md) for requirements and [Work as a team](teams.md) for invitations and avatars.
 
 ## Interface width
 

@@ -76,11 +76,16 @@ test('compact popup loads the shared timeline component before its tracking cont
   assert.ok(popup.indexOf('task-timeline-component.js') < popup.indexOf('github.js'));
 });
 
-async function actionHarness({ delivered = false, failure = 0, existingTabs = [], queryGate = null, closeOnActivate = false, moveOnActivate = null, navigateOnActivate = null } = {}) {
+async function actionHarness({ delivered = false, failure = 0, existingTabs = [], queryGate = null, closeOnActivate = false, moveOnActivate = null, navigateOnActivate = null,
+  setup = { auth: { mode: 'github_app' }, registry: { defaultDestinationId: 'github:20' } } } = {}) {
   const { default: vm } = await import('node:vm');
-  const calls = [];
-  const context = vm.createContext({ URL, chrome: {
-    runtime: { getURL: path => `chrome-extension://clockoli/${path}` },
+  const calls = [], setupReads = [];
+  let currentSetup = setup;
+  const context = vm.createContext({ URL,
+    configuredSnapshot: async options => { setupReads.push(options); if (currentSetup instanceof Error) throw currentSetup; return currentSetup; },
+    chrome: {
+    runtime: { getURL: path => `chrome-extension://clockoli/${path}`,
+      openOptionsPage: async () => { calls.push(['settings']); } },
     tabs: {
       sendMessage: async (...args) => { calls.push(['message', ...args]); if (!delivered) throw new Error('No receiver'); },
       query: async options => {
@@ -110,9 +115,56 @@ async function actionHarness({ delivered = false, failure = 0, existingTabs = []
     } },
   } });
   const helper = worker.match(/async function openTimesPage\(\) \{[\s\S]*?\n\}/)?.[0] || '';
-  vm.runInContext(`let openingTimesPage = null;\n${helper}\n${worker.slice(worker.indexOf('async function toggleActionSurface('), worker.indexOf("void chrome.action.setPopup({ popup: '' })"))}`, context);
-  return { calls, toggle: tab => context.toggleActionSurface(tab) };
+  vm.runInContext(`let openingTimesPage = null;\n${helper}\n${worker.slice(worker.indexOf('async function shouldOpenOnboarding('), worker.indexOf("void chrome.action.setPopup({ popup: '' })"))}`, context);
+  return { calls, setupReads, setSetup: next => { currentSetup = next; },
+    toggle: tab => context.toggleActionSurface(tab), openActivity: () => context.openTimesPage() };
 }
+
+test('toolbar returns to onboarding until GitHub authorization and a default time repository exist', async () => {
+  const incomplete = [
+    { auth: null, registry: { defaultDestinationId: null } },
+    { auth: { mode: 'github_app' }, registry: { defaultDestinationId: null } },
+    { auth: null, registry: { defaultDestinationId: 'github:20' } },
+  ];
+  for (const setup of incomplete) {
+    const harness = await actionHarness({ setup });
+    for (const tab of [
+      { id: 1, url: 'chrome://extensions' },
+      { id: 2, url: 'https://example.com/task' },
+      {},
+    ]) await harness.toggle(tab);
+    assert.deepEqual(harness.calls, [['settings'], ['settings'], ['settings']]);
+    assert.equal(harness.setupReads.length, 3, 'each click checks durable setup state');
+    assert.ok(harness.setupReads.every(read => read.localOnly === true));
+    assert.equal(harness.calls.some(([kind]) => ['tab', 'inject', 'message'].includes(kind)), false);
+  }
+});
+
+test('Activity navigation also returns to onboarding when setup is incomplete', async () => {
+  const harness = await actionHarness({ setup: { auth: { mode: 'github_app' }, registry: { defaultDestinationId: null } } });
+  await harness.openActivity();
+  assert.deepEqual(harness.calls, [['settings']]);
+  harness.setSetup({ auth: { mode: 'pat' }, registry: { defaultDestinationId: 'github:5' } });
+  await harness.openActivity();
+  assert.deepEqual(harness.calls.filter(([kind]) => kind === 'tab').map(([, tab]) => tab.url),
+    ['chrome-extension://clockoli/src/times/times.html']);
+});
+
+test('toolbar opens Settings as recovery when local setup cannot be read', async () => {
+  const harness = await actionHarness({ setup: new Error('local storage unavailable') });
+  await harness.toggle({ id: 1, url: 'chrome://settings' });
+  assert.deepEqual(harness.calls, [['settings']]);
+});
+
+test('toolbar opens Activity again immediately after first setup without restarting the worker', async () => {
+  const harness = await actionHarness({ setup: { auth: { mode: 'github_app' }, registry: { defaultDestinationId: null } } });
+  await harness.toggle({ id: 1, url: 'chrome://extensions' });
+  harness.setSetup({ auth: { mode: 'github_app' }, registry: { defaultDestinationId: 'github:20' } });
+  await harness.toggle({ id: 1, url: 'chrome://extensions' });
+  assert.deepEqual(harness.calls.filter(([kind]) => kind === 'settings'), [['settings']]);
+  assert.deepEqual(harness.calls.filter(([kind]) => kind === 'tab').map(([, tab]) => tab.url),
+    ['chrome-extension://clockoli/src/times/times.html']);
+});
 
 test('toolbar falls back to Activity for restricted, missing, and invalid tab URLs', async () => {
   for (const url of ['chrome://settings', 'file:///tmp/example.pdf', 'chrome-extension://pdf-viewer/index.html', 'about:blank', '', 'invalid']) {

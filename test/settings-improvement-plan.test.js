@@ -20,10 +20,14 @@ function section(id) {
 
 test('first run has two steps: GitHub sign-in then repository selection regardless of access state', () => {
   assert.match(html, /Step <span id="current-step">1<\/span> of 2/);
-  assert.match(html, /Set up Clockoli[\s\S]*private GitHub repository[\s\S]*Only you and people you grant access to can see it/i);
-  assert.match(html, /id="authorize"[^>]*>Sign in with GitHub<\/button>/);
-  assert.match(html, /try to copy it before opening GitHub[\s\S]*id="device-initial-paste-shortcut"/);
+  assert.match(html, /Welcome to Clockoli![\s\S]*private GitHub repository/i);
+  assert.match(html, /id="authorize"[^>]*>Connect GitHub<\/button>/);
+  assert.match(html, /id="authorize-panel"[\s\S]*id="device-initial-paste-shortcut"/);
+  assert.match(html, /<details[^>]*id="onboarding-why"[\s\S]*<summary>Why GitHub\?<\/summary>/);
   assert.match(html, /<details[^>]*id="connection-details"[\s\S]*<summary>How it works<\/summary>/i);
+  assert.match(styles, /data-clockoli-onboarding="welcome"/);
+  assert.match(styles, /html\[data-clockoli-onboarding="welcome"\] \.setup-progress,/);
+  assert.match(styles, /html\[data-clockoli-onboarding="welcome"\] \.primary-action-block \.help\{display:none\}/);
   assert.doesNotMatch(html, /of [34]|Step [34]/i);
   assert.equal(onboardingStep({ authorized: false }), 1);
   assert.equal(onboardingStep({ authorized: true, repositories: [], repositoryAccessDetected: false }), 2);

@@ -39,7 +39,7 @@ function element(tagName = 'div') {
     dataset: {}, style: {}, attributes: {}, children: [], listeners: {}, classList: { toggle() {} },
     append(...children) { for (const child of children) { child.parentNode = this; this.children.push(child); } },
     replaceChildren(...children) { this.children = []; this.textContent = ''; this.append(...children); },
-    setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name) { delete this.attributes[name]; }, focus() { this.focused = true; }, scrollIntoView() { this.scrolled = true; },
+    setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name) { delete this.attributes[name]; }, focus() { this.focused = true; }, scrollIntoView(options) { this.scrolled = true; this.scrollOptions = options; },
     showModal() { this.open = true; }, close() { this.open = false; this.listeners.close?.(); },
     querySelectorAll(selector) { const className = selector.startsWith('.') ? selector.slice(1) : ''; const matches = child => className ? child.className.split(' ').includes(className) : child.tagName.toLowerCase() === selector.toLowerCase(); return this.children.flatMap(child => [...(matches(child) ? [child] : []), ...child.querySelectorAll(selector)]); },
     querySelector(selector) { return this.querySelectorAll(selector)[0] || null; },
@@ -88,6 +88,42 @@ function harness({ reply = () => ({}), confirm = () => false, savedChoices = new
     submit(id, submitter = null) { return nodes.get(id).listeners.submit({ preventDefault() {}, submitter }); },
   };
 }
+
+test('initial onboarding is focused until a default repository is connected', () => {
+  const page = harness();
+  page.render({ appConfigured: true, auth: null, config: null, destinations: [] });
+  assert.equal(page.context.document.documentElement.dataset.clockoliOnboarding, 'welcome');
+  assert.equal(page.nodes.get('connection-title').textContent, 'Welcome to Clockoli!');
+  assert.equal(page.nodes.get('authorize').textContent, 'Connect GitHub');
+  assert.match(page.nodes.get('connection-description').textContent, /private GitHub repository you control/);
+
+  page.render({ appConfigured: true, auth: null, config: null, destinations: [],
+    deviceAttempt: { attemptId: 'attempt', status: 'pending', userCode: 'ABCD-1234',
+      verificationUri: 'https://github.com/login/device', expiresAt: Date.now() + 600000,
+      nextPollAt: Date.now() + 300000 } });
+  assert.equal(page.context.document.documentElement.dataset.clockoliOnboarding, 'authorization');
+  assert.equal(page.nodes.get('connection-title').textContent, 'Connect to GitHub');
+
+  page.render({ ...connectedState, config: null, destinations: [] });
+  assert.equal(page.context.document.documentElement.dataset.clockoliOnboarding, 'setup');
+  assert.equal(page.nodes.get('connection-title').textContent, 'GitHub account');
+
+  page.render(connectedState);
+  assert.equal(page.context.document.documentElement.dataset.clockoliOnboarding, '');
+
+  const advanced = harness();
+  advanced.render({ appConfigured: true, auth: null, config: null, destinations: [] });
+  advanced.nodes.get('use-pat-instead').listeners.click();
+  assert.equal(advanced.context.document.documentElement.dataset.clockoliOnboarding, '');
+  for (const id of ['more-settings', 'advanced-settings', 'advanced-pat']) {
+    assert.equal(advanced.nodes.get(id).open, true, `${id} is accessible for advanced setup`);
+  }
+
+  const unavailable = harness();
+  unavailable.render({ appConfigured: false, auth: null, config: null, destinations: [] });
+  assert.equal(unavailable.context.document.documentElement.dataset.clockoliOnboarding, '');
+  assert.equal(unavailable.nodes.get('authorize').disabled, true);
+});
 
 function billingSaveResult(request, current = preferences) {
   return {
@@ -965,7 +1001,11 @@ test('reopening completed setup refreshes the granted catalog before showing sug
   await page.context.discoverRepositories();
   await page.nodes.get('finish-setup').listeners.click();
   granted = [old, added];
+  const heading = page.nodes.get('repository-step-title');
+  assert.equal(heading.scrolled, undefined);
   await page.nodes.get('add-time-repository').listeners.click({ preventDefault() {} });
+  assert.equal(page.nodes.get('repository-step').hidden, false);
+  assert.equal(heading.scrollOptions?.block, 'start', 'the repository heading is aligned with the top of the viewport');
   const input = page.nodes.get('repository-target');
   input.value = 'time'; input.listeners.input();
   await vm.runInContext('discoveryPromise', page.context);

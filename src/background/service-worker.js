@@ -1869,6 +1869,7 @@ function scheduleSync() {
 
 let openingTimesPage = null;
 async function openTimesPage() {
+  if (await shouldOpenOnboarding()) return chrome.runtime.openOptionsPage();
   if (openingTimesPage) return openingTimesPage;
   const open = async () => {
     const url = chrome.runtime.getURL('src/times/times.html');
@@ -1897,7 +1898,20 @@ async function openTimesPage() {
   try { await openingTimesPage; } finally { openingTimesPage = null; }
 }
 
+async function shouldOpenOnboarding() {
+  // Match onboardingState.ready without remote requests; the worker can restart
+  // between toolbar clicks, so always check the current durable configuration.
+  try {
+    const { auth, registry } = await configuredSnapshot({ localOnly: true });
+    return !auth || !registry?.defaultDestinationId;
+  } catch {
+    // If local setup cannot be read, Settings is the recovery surface.
+    return true;
+  }
+}
+
 async function toggleActionSurface(tab) {
+  if (await shouldOpenOnboarding()) return chrome.runtime.openOptionsPage();
   if (!Number.isInteger(tab?.id)) return openTimesPage();
   try {
     try {
