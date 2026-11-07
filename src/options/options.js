@@ -825,7 +825,11 @@ function renderState() {
 }
 
 function renderDeviceAttempt(attempt) {
-  if (deviceClipboardAttemptId && deviceClipboardAttemptId !== attempt.attemptId) cancelScheduledDeviceOpen();
+  if (deviceClipboardAttemptId && deviceClipboardAttemptId !== attempt.attemptId) {
+    cancelScheduledDeviceOpen();
+    deviceGitHubOpened = false;
+    deviceAutoOpenFailed = false;
+  }
   $('device-step').classList.toggle('device-code-active', true);
   $('device-panel').hidden = false;
   $('authorize-panel').hidden = true;
@@ -1971,7 +1975,7 @@ $('authorize').addEventListener('click', async () => {
       deviceClipboardState = 'failed';
     }
     if (state.deviceAttempt?.attemptId !== attempt.attemptId) return;
-    if (deviceClipboardState === 'copied') scheduleAutomaticDeviceOpen(attempt);
+    if (deviceClipboardState === 'copied' && !deviceGitHubOpened) scheduleAutomaticDeviceOpen(attempt);
     else renderDeviceAttempt(attempt);
   } catch (error) {
     if (!state.deviceAttempt) { reconnectingGitHub = false; renderState(); }
