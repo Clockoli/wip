@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 const HOUR = 60 * 60 * 1000;
+const SCROLL_SETTLE_MS = 150;
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -679,7 +680,8 @@ test('a block clipped at Monday cannot be moved with a shortened duration', asyn
 
 for (const mode of ['timeline', 'calendar']) {
   test(`clamps a completed entry before the future while dragging in ${mode}`, async ({ page }) => {
-    await page.clock.install({ time: new Date('2026-10-16T16:00:00Z') });
+    // Calendar shows the local day, so pin the clock to local afternoon in every time zone.
+    await page.clock.install({ time: new Date(2026, 9, 16, 16) });
     const now = await page.evaluate(() => Date.now());
     const start = now - 2 * HOUR;
     const neighborStart = now - 4 * HOUR;
@@ -687,7 +689,7 @@ for (const mode of ['timeline', 'calendar']) {
       { id: 'entry:neighbor', url: 'https://example.com/neighbor', title: 'Neighbor', startedAt: neighborStart, endedAt: neighborStart + 30 * 60_000, isEditable: true },
       { id: 'entry:a', url: 'https://example.com/a', title: 'Past', startedAt: start, endedAt: start + HOUR, isEditable: true },
     ], view: { start: now - 5 * HOUR, end: now + 4 * HOUR, focusedAt: now } });
-    await page.clock.pauseAt(new Date('2026-10-16T16:00:01Z'));
+    await page.clock.pauseAt(new Date(2026, 9, 16, 16, 0, 1));
     if (mode === 'calendar') await page.evaluate(() => {
       const timeline = window.__timeline.__timeline;
       timeline.setViewMode('calendar');
@@ -3869,6 +3871,13 @@ test('a five-second block can be dragged exactly to 19:30:00', async ({ page }) 
   expect(badgeGeometry.task.width).toBeLessThanOrEqual(31);
   expect(badgeGeometry.startRight).toBeLessThanOrEqual(badgeGeometry.task.left);
   expect(badgeGeometry.endLeft).toBeGreaterThanOrEqual(badgeGeometry.task.right);
+  // The timeline settles its scroll once shortly after mounting; measure only once it stops moving.
+  await expect.poll(() => page.evaluate(async settleMs => {
+    const viewport = window.__timeline.__timeline.viewport;
+    const before = viewport.scrollLeft;
+    await new Promise(resolve => setTimeout(resolve, settleMs));
+    return viewport.scrollLeft === before;
+  }, SCROLL_SETTLE_MS)).toBe(true);
   const coordinates = await page.evaluate(() => {
     const timeline = window.__timeline.__timeline;
     const task = timeline.tasks[0];

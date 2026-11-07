@@ -2202,7 +2202,8 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
 }
 
 test('popup entries remain read-only until a complete week read succeeds', async () => {
-  const now = new Date(2026, 9, 16, 12).getTime();
+  // The entry is stored in UTC, so a UTC "now" keeps it in the past in every local zone.
+  const now = Date.parse('2026-10-16T12:00:00Z');
   const entry = activityEntry('popup-entry', '2026-10-16', '08');
   const state = { configured: true, active: null, pendingWrites: [] };
   let partial = false, failed = false, delayedReply = null;

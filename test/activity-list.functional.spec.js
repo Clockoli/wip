@@ -2131,6 +2131,11 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     const popupWorkerSource = workerSource
       .replace('day.setDate(day.getDate() - ((day.getDay() + 6) % 7) - 3);',
         'day.setDate(day.getDate() - ((day.getDay() + 6) % 7));')
+      // Keep both entries mid-afternoon on Monday in local time, far from the local week start in every zone.
+      .replace("const taskUrl = 'https://example.com/activity-test';",
+        "const localAt = (hour, minute = 0) => new Date(day.getFullYear(), day.getMonth(), day.getDate(), hour, minute).toISOString();\nconst taskUrl = 'https://example.com/activity-test';")
+      .replace("startedAt: date + 'T08:00:00Z', endedAt: date + 'T08:30:00Z'", 'startedAt: localAt(15), endedAt: localAt(15, 30)')
+      .replace("startedAt: date + 'T07:00:00Z', endedAt: date + 'T07:30:00Z'", 'startedAt: localAt(14), endedAt: localAt(14, 30)')
       .replace("message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT'", "message.type === 'LOAD_WEEK'")
       .replace("if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK') respond({ ok: true, data: state() });",
         "if (message.type === 'LOAD_WEEK') { if (globalThis.autoReplyWeeks) respond({ ok: true, data: { ...state(), recent } }); else (globalThis.weekReplies ||= []).push(respond); return true; }\n  if (message.type === 'LOAD_TIMES') respond({ ok: true, data: { ...state(), recent } });")
@@ -2201,7 +2206,11 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     await source.hover();
     const from = await source.boundingBox();
     await page.mouse.down();
-    await page.mouse.move(from.x + from.width / 2 - 90, from.y + from.height / 2, { steps: 8 });
+    // Drop the entry just clear of its neighbor's drawn block so it passes the neighbor
+    // and the pointer stays inside the popup.
+    const CLEAR_NEIGHBOR_PX = 4;
+    const neighborBox = await neighbor.boundingBox();
+    await page.mouse.move(neighborBox.x - from.width / 2 - CLEAR_NEIGHBOR_PX, from.y + from.height / 2, { steps: 8 });
     await page.mouse.up();
     await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(1);
     expect(await worker.evaluate(() => globalThis.editPayloads[0].original.id)).toBe('record');
@@ -2254,7 +2263,7 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     await page.close();
     await worker.evaluate(() => {
       const first = recent.find(entry => entry.id === 'record');
-      first.startedAt = date + 'T08:00:00Z'; first.endedAt = date + 'T08:30:00Z';
+      first.startedAt = localAt(15); first.endedAt = localAt(15, 30);
       globalThis.editPayloads = [];
     });
     const github = await context.newPage();
