@@ -21,11 +21,11 @@ Use **Only select repositories** when granting App access.
 
 ### Check a repository
 
-After sign-in, the primary action is **Connect an existing repository**. Paste its URL or `owner/name` and select **Check** (or press Enter). Simply leaving the field does not check it. The **Check** button also retries a check and shows **Checking…** while a check is in progress.
+After sign-in, choose **Create my own repository** or **Join a team**. A Clockoli `/join/#repo=...` invitation tab automatically selects the join path if the extension can see it; several distinct open invitations require an explicit choice. Existing users can also paste the invite URL manually. To connect an existing repository, choose **Join a team** (or the existing-repository shortcut). Paste its URL or `owner/name` and select **Check** (or press Enter). Simply leaving the field does not check it. The **Check** button also retries a check and shows **Checking…** while a check is in progress.
 
 Or type at least two characters of a repository name and choose one of up to eight matching GitHub App-granted suggestions from the dropdown. Choosing a suggestion checks the target but does not connect it; merely typing or seeing a suggestion does neither. The granted catalog is fetched on demand rather than displayed in full when setup opens, and not once per keystroke.
 
-There is no separate existing/new or personal/organization choice: Clockoli inspects the selected repository's state and your permissions, regardless of its name or owner.
+The two onboarding paths express the user's intent, not different trust or ownership permissions. Clockoli inspects any selected repository's state and your actual GitHub permissions, regardless of its name or owner.
 
 Checking is necessary because an App grant alone does not prove the repository is private, writable, compatible with Clockoli storage, or that your personal branch and task index belong to you. **Check repository** verifies the current GitHub grant, permissions, membership, personal branch ownership, and task index. A grant or a previously checked Ready label alone cannot authorize writes. Checking changes neither repository files nor the list of connected repositories.
 
@@ -33,7 +33,7 @@ Editing the repository field invalidates the previous selection and confirmation
 
 ### Create a repository
 
-If you do not have a repository, choose the secondary **Create a new time repository** action below the existing-repository field; it suggests `clockoli-data`. After creating the private repository on GitHub, return and paste its URL into the **New repository URL** dialog to check it. This checks the target without connecting or initializing it, and creating a repository does not grant the Clockoli GitHub App access to it.
+If you do not have a repository, choose **Create my own repository**, then **Create a new time repository**. GitHub suggests `clockoli-data`. After creating the private repository on GitHub, return and paste its URL into the **New repository URL** dialog to check it. This checks the target without connecting or initializing it, and creating a repository does not grant the Clockoli GitHub App access to it.
 
 The access dialog's **Create one on GitHub** link prefills the checked repository name and owner while retaining the private Clockoli template. GitHub may ignore the owner if you lack creation permission; verify the owner before creating.
 
