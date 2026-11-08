@@ -801,6 +801,7 @@ async function dismissJoinInvitation() {
   const name = selectedJoinInvitation;
   if (!name) return;
   await choiceStore.ignoreJoinInvitation(name);
+  if (repositoryTarget.toLowerCase() === name.toLowerCase()) await rememberRepositoryTarget('');
   joinChoices = joinChoices.filter(item => item.toLowerCase() !== name.toLowerCase());
   selectedJoinInvitation = joinChoices.length === 1 ? joinChoices[0] : '';
   if (selectedJoinInvitation) await choiceStore.saveJoinInvitation(selectedJoinInvitation);
@@ -1319,6 +1320,11 @@ async function confirmRepositoryAction() {
       repoId: confirmation.repoId,
       action: confirmation.intent.startsWith('initialize_') ? 'initialize' : confirmation.intent,
     } });
+    if (selectedJoinInvitation && selectedJoinInvitation.toLowerCase() === confirmation.fullName.toLowerCase()) {
+      await choiceStore.ignoreJoinInvitation(selectedJoinInvitation);
+      joinChoices = joinChoices.filter(name => name.toLowerCase() !== selectedJoinInvitation.toLowerCase());
+      selectedJoinInvitation = '';
+    }
     stopRepositoryMonitoring();
     await rememberRepositoryTarget('');
     repositoryCheckFeedback = '';
@@ -2067,17 +2073,70 @@ async function refreshState() {
   if (account !== choiceAccount) {
     choiceAccount = account;
     const saved = account ? await choiceStore.getOnboardingRepositoryChoice(account) : '';
-    try { repositoryTarget = saved ? parseRepositoryTarget(saved) : ''; } catch { repositoryTarget = ''; }
+    // A recognized invitation wins on first run, but never silently changes
+    // an already configured default repository or a dirty user input.
+    const incoming = selectedJoinInvitation && !state?.ready && !configuredDestinations().length && !repositoryInputDirty
+      ? selectedJoinInvitation : '';
+    try { repositoryTarget = incoming || (saved ? parseRepositoryTarget(saved) : ''); }
+    catch { repositoryTarget = ''; }
     $('repository-target').value = repositoryTarget;
     selectedRepository = null;
     discoveryStatus = 'idle';
     if (repositoryTarget) showOnboarding = true;
+    if (incoming && account) await rememberRepositoryTarget(incoming);
   }
   renderState();
+  if (isAppAuthorized() && !state?.ready && !state?.candidateAuth && setupPath === 'join'
+      && selectedJoinInvitation && !repositoryInputDirty
+      && repositoryTarget.toLowerCase() === selectedJoinInvitation.toLowerCase() && discoveryStatus === 'idle') {
+    const key = `${account}:${selectedJoinInvitation.toLowerCase()}`;
+    if (invitationAutoCheckKey !== key) {
+      invitationAutoCheckKey = key;
+      await checkRepositoryTarget(selectedJoinInvitation, false, true);
+      return;
+    }
+  }
   if (isAppAuthorized() && !setupCancelled && (repositoryTarget || state?.candidateAuth) && discoveryStatus === 'idle') {
     await discoverRepositories().catch(() => {});
   }
 }
+
+$('choose-create-repository').addEventListener('click', () => {
+  setupPath = 'create'; setupPathTouched = true; showOnboarding = true; renderState();
+  $('new-time-repository').focus();
+});
+for (const id of ['choose-join-team', 'choose-existing-repository']) $(id).addEventListener('click', () => {
+  setupPath = 'join'; setupPathTouched = true; showOnboarding = true; renderState();
+  $('repository-target').focus();
+});
+$('change-repository-path').addEventListener('click', () => {
+  setupPath = 'choose'; setupPathTouched = true; renderState();
+  $('choose-create-repository').focus();
+});
+$('resume-join-invitation').addEventListener('click', () => {
+  setupPath = 'join'; setupPathTouched = true; showOnboarding = true; renderState();
+  $('repository-step-title').scrollIntoView({ block: 'start' });
+});
+$('join-invitation-picker').addEventListener('change', async () => {
+  const name = $('join-invitation-picker').value;
+  if (!name) {
+    selectedJoinInvitation = ''; renderState(); return;
+  }
+  try { await selectJoinInvitation(name); }
+  catch (error) { message(error.message, 'error'); }
+});
+$('use-join-invitation').addEventListener('click', async () => {
+  if (!selectedJoinInvitation) return;
+  try {
+    await selectJoinInvitation(selectedJoinInvitation);
+    if (isAppAuthorized()) await checkRepositoryTarget(selectedJoinInvitation, false, true);
+    else $('authorize').focus();
+  } catch (error) { message(error.message, 'error'); }
+});
+$('dismiss-join-invitation').addEventListener('click', async () => {
+  try { await dismissJoinInvitation(); }
+  catch (error) { message(error.message, 'error'); }
+});
 
 $('use-pat-instead').addEventListener('click', () => {
   showAdvancedSetup = true;
@@ -2165,6 +2224,8 @@ function beginRepositoryChange() {
   }
   setupCancelled = false;
   showOnboarding = true;
+  setupPath = 'choose';
+  setupPathTouched = false;
   discoveryStatus = 'idle';
   renderState();
   if (repositoryTarget || state?.candidateAuth) void discoverRepositories().catch(() => {});
@@ -2243,7 +2304,13 @@ async function checkRepositoryTarget(rawTarget, fromList = false, keepInput = fa
   const account = repositoryChoiceAccount();
   let completed = false;
   try {
-    const target = parseRepositoryTarget(rawTarget);
+    const invited = parseClockoliInvitationUrl(rawTarget);
+    const target = invited || parseRepositoryTarget(rawTarget);
+    if (invited) {
+      await selectJoinInvitation(invited);
+      // Switch from the website URL to validated owner/repository coordinates.
+      $('repository-target').value = invited;
+    }
     checkingRepositoryTarget = target;
     repositorySuggestionsOpen = false;
     repositoryCheckError = '';
@@ -2306,9 +2373,10 @@ async function checkRepositoryTarget(rawTarget, fromList = false, keepInput = fa
 }
 function checkEnteredRepositoryTarget() {
   const input = $('repository-target');
-  try { parseRepositoryTarget(input.value); }
-  catch {
-    repositoryCheckFeedback = 'Enter a valid GitHub repository URL or owner/name.';
+  try {
+    if (!parseClockoliInvitationUrl(input.value)) parseRepositoryTarget(input.value);
+  } catch {
+    repositoryCheckFeedback = 'Enter a valid Clockoli invitation link, GitHub repository URL, or owner/name.';
     repositoryCheckFeedbackError = true;
     repositoryCheckError = '';
     renderRepositoryAccess();
@@ -2446,6 +2514,8 @@ $('add-time-repository').addEventListener('click', async event => {
   repositories = [];
   setupCancelled = false;
   showOnboarding = true;
+  setupPath = 'choose';
+  setupPathTouched = true;
   selectedRepository = null;
   discoveryStatus = 'idle';
   try {
@@ -2528,7 +2598,10 @@ function markRepositoryGrantDeparture() {
   clearTimeout(repositoryGrantReturnTimer); repositoryGrantReturnTimer = null;
 }
 window.addEventListener('blur', markRepositoryGrantDeparture);
-window.addEventListener('focus', () => void rediscoverAfterGitHubHandoff());
+window.addEventListener('focus', () => {
+  void rediscoverAfterGitHubHandoff();
+  void scanOpenJoinInvitations().catch(() => {});
+});
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') markRepositoryGrantDeparture();
   else void rediscoverAfterGitHubHandoff();
@@ -2820,7 +2893,7 @@ async function checkSignInRecovery() {
   finally { authRecoveryChecking = false; }
 }
 
-refreshState().then(refreshLocalPreferences).then(refreshAddonSettings).then(refreshMergeTasks).catch(error => message(error.message, 'error'));
+scanOpenJoinInvitations().then(refreshState).then(refreshLocalPreferences).then(refreshAddonSettings).then(refreshMergeTasks).catch(error => message(error.message, 'error'));
 
 const disposeRunningStatus = mountRunningStatus($('running-status'), { send, onAuthExpired: showSignInRequired, onAuthRestored: clearSignInRequired });
 refreshRunningStatus = disposeRunningStatus.refresh;
