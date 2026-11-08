@@ -18,5 +18,5 @@ test('Activity and popup mount the same tracking-card presentation', async () =>
   assert.match(manifest, /src\/ui\/tracking-card\.js/);
   assert.match(popup, /tracking-card\.js/);
   assert.match(times, /tracking-card\.js/);
-  assert.match(worker, /src\/ui\/tracking-card\.js/);
+  assert.match(worker, /openTimesPage\(\)/);
 });

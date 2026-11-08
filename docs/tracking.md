@@ -1,6 +1,6 @@
 # Track a task
 
-Clockoli tracks time against a task URL. Click the toolbar icon to open Activity in a separate tab with the current page ready to track, or use the stopwatch Clockoli adds to GitHub.
+Track tasks by URL from a dedicated Activity tab, or use the stopwatch Clockoli adds to GitHub.
 
 ## What counts as a task
 
@@ -22,7 +22,7 @@ The toolbar icon works from any HTTP(S) page. The injected stopwatch and split c
 3. In the **From current page** banner, choose **Track this task** (or **Switch to this task** when another timer is running).
 4. When you finish, choose **Stop and save** in Activity.
 
-The toolbar hands off only the validated page URL and title. It uses short-lived extension session storage, not query parameters, and clears the handoff after Activity reads it. Opening Activity directly does not reuse an old task. Dismiss the source URL with **×** without affecting your timer.
+The toolbar hands off only the validated page URL and title. It uses one-use privileged IndexedDB (cleared when Activity reads it), not query parameters. Opening Activity directly does not reuse an old task. Dismiss the source URL with **×** without affecting your timer.
 
 Activity shows the same weekly statistics, running status, quick-start tasks and calendar/timeline controls regardless of how it was opened. The original GitHub page is unaffected.
 

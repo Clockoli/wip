@@ -14,9 +14,10 @@ const policy = read('src/background/message-policy.js');
 
 test('toolbar opens Activity in its own tab and hands off only the clicked URL', () => {
   assert.equal(manifest.action?.default_popup, undefined);
-  for (const permission of ['activeTab', 'tabs', 'storage']) assert.ok(manifest.permissions.includes(permission));
+  for (const permission of ['activeTab', 'tabs']) assert.ok(manifest.permissions.includes(permission));
+  assert.equal(manifest.permissions.includes('storage'), false);
   assert.match(worker, /chrome\.action\.onClicked\.addListener\(tab => \{[\s\S]*toggleActionSurface\(tab\)/);
-  assert.match(worker, /chrome\.storage\.session\.set\(\{ \[ACTION_CONTEXT_KEY\]: toolbarTaskContext\(tab\) \}\)/);
+  assert.match(worker, /actionContextBackend\.setMany\(\{ \[ACTION_CONTEXT_KEY\]: toolbarTaskContext\(tab\) \}\)/);
   const handler = worker.slice(worker.indexOf('async function toggleActionSurface('), worker.indexOf('async function dismissInactivePanels('));
   assert.doesNotMatch(handler, /chrome\.scripting|chrome\.tabs\.sendMessage|TOGGLE_FULL_WIDTH_POPUP/);
   assert.match(content, /renderActionSourceContext\(\)/);
@@ -26,10 +27,16 @@ test('toolbar opens Activity in its own tab and hands off only the clicked URL',
   assert.match(times, /id="activity-source-dismiss"/);
 });
 
-test('Activity consumes toolbar context from session storage, never from the extension URL', () => {
-  assert.match(content, /chrome\.storage\.onChanged\.addListener/);
-  assert.match(content, /chrome\.storage\.session\.get\(ACTION_CONTEXT_KEY\)/);
-  assert.match(content, /chrome\.storage\.session\.remove\(ACTION_CONTEXT_KEY\)/);
+test('Activity consumes toolbar context from private one-use IndexedDB, never from the extension URL', () => {
+  assert.match(content, /chrome\.runtime\.onMessage\?\.addListener\?\./);
+  assert.match(content, /send\(\{ type: 'CONSUME_TOOLBAR_TASK_CONTEXT' \}\)/);
+  assert.match(worker, /actionContextBackend\.mutateMany\(\[ACTION_CONTEXT_KEY\]/);
+  assert.match(worker, /delete: present \? \[ACTION_CONTEXT_KEY\] : \[\]/);
+  const origin = 'chrome-extension://clockoli/';
+  assert.doesNotThrow(() => assertMessageAllowed('CONSUME_TOOLBAR_TASK_CONTEXT',
+    { url: origin + 'src/times/times.html' }, origin));
+  assert.throws(() => assertMessageAllowed('CONSUME_TOOLBAR_TASK_CONTEXT',
+    { url: 'https://github.com/org/repo/issues/1', tab: { id: 1 } }, origin), /not allowed/i);
   assert.match(content, /age >= -10_000 && age <= 120_000/);
   assert.match(content, /actionSourceTask = task\?\.taskUrl === value\?\.taskUrl \? task : null/);
   assert.match(content, /trackCurrentTimelineTask\(\{ sourceTask: task, preserveSavedDescription: true \}\)/);
@@ -80,10 +87,12 @@ async function actionHarness({ delivered = false, failure = 0, existingTabs = []
   const calls = [], setupReads = [];
   let currentSetup = setup;
   const context = vm.createContext({ URL, normalizeTaskUrl, parseGitHubProjectPaneIssueUrl,
+    actionContextBackend: { setMany: async values => { calls.push(['context', values]); } },
     configuredSnapshot: async options => { setupReads.push(options); if (currentSetup instanceof Error) throw currentSetup; return currentSetup; },
     chrome: {
     runtime: { getURL: path => `chrome-extension://clockoli/${path}`,
-      openOptionsPage: async () => { calls.push(['settings']); } },
+      openOptionsPage: async () => { calls.push(['settings']); },
+      sendMessage: async message => { calls.push(['signal', message]); } },
     tabs: {
       sendMessage: async (...args) => { calls.push(['message', ...args]); if (!delivered) throw new Error('No receiver'); },
       query: async options => {
@@ -107,7 +116,6 @@ async function actionHarness({ delivered = false, failure = 0, existingTabs = []
       create: async options => { calls.push(['tab', options]); existingTabs.push({ id: 100, windowId: 1, pendingUrl: options.url }); },
     },
     windows: { update: async (id, options) => { calls.push(['focus', id, options]); } },
-    storage: { session: { set: async value => { calls.push(['context', value]); } } },
     scripting: { executeScript: async options => {
       calls.push(['inject', options]);
       if (calls.filter(([kind]) => kind === 'inject').length === failure) throw new Error('Cannot access this page');
@@ -170,12 +178,11 @@ test('toolbar falls back to Activity for restricted, missing, and invalid tab UR
     const harness = await actionHarness();
     await harness.toggle({ id: 1, url });
     assert.equal(harness.calls.filter(([kind]) => kind === 'inject').length, 0);
-    assert.equal(harness.calls.at(-1)[0], 'tab');
-    assert.equal(harness.calls.at(-1)[1].url, 'chrome-extension://clockoli/src/times/times.html');
+    assert.equal(harness.calls.filter(([kind]) => kind === 'tab').at(-1)[1].url, 'chrome-extension://clockoli/src/times/times.html');
   }
   const harness = await actionHarness();
   await harness.toggle({});
-  assert.equal(harness.calls.at(-1)[0], 'tab');
+  assert.equal(harness.calls.filter(([kind]) => kind === 'tab').at(-1)[0], 'tab');
 });
 
 test('toolbar reuses an existing Activity tab across windows without navigating it', async () => {
@@ -198,14 +205,14 @@ test('toolbar focuses the new window if Activity moves there during activation',
     moveOnActivate: 4,
   });
   await harness.toggle({ id: 1, url: 'chrome://extensions' });
-  assert.deepEqual(JSON.parse(JSON.stringify(harness.calls.at(-1))), ['focus', 4, { focused: true }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(harness.calls.filter(([kind]) => kind === 'focus').at(-1))), ['focus', 4, { focused: true }]);
 });
 
 test('toolbar rediscovers Activity after the service worker restarts', async () => {
   const activityUrl = 'chrome-extension://clockoli/src/times/times.html';
   const restarted = await actionHarness({ existingTabs: [{ id: 21, windowId: 4, url: activityUrl }] });
   await restarted.toggle({ id: 7, url: 'about:blank' });
-  assert.deepEqual(restarted.calls.map(([kind]) => kind), ['context', 'query', 'activate', 'focus']);
+  assert.deepEqual(restarted.calls.map(([kind]) => kind), ['context', 'query', 'activate', 'focus', 'signal']);
   assert.equal(restarted.calls.some(([kind]) => kind === 'tab'), false);
 });
 
@@ -226,7 +233,7 @@ test('a closed Activity tab falls back to creating a new one', async () => {
     closeOnActivate: true,
   });
   await harness.toggle({ id: 1, url: 'chrome://extensions' });
-  assert.deepEqual(harness.calls.map(([kind]) => kind), ['context', 'query', 'activate', 'tab']);
+  assert.deepEqual(harness.calls.map(([kind]) => kind), ['context', 'query', 'activate', 'tab', 'signal']);
 });
 
 test('a still-loading Activity tab is reused on the next click', async () => {
