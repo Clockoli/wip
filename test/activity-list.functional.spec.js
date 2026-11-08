@@ -583,7 +583,7 @@ test('imported Activity records display the theme-colored Clockoli icon in List 
       const tile = root.locator('.calendar-task[data-task-key="entry:imported"] .clockoli-fallback-icon').first();
       await expect(tile).toBeVisible();
       expect(await tile.evaluate(element => getComputedStyle(element).backgroundColor)).toBe(listColor);
-      expect(await tile.evaluate(element => getComputedStyle(element).maskImage)).toContain('clockoli-inverse-circle.svg');
+      await expect(tile).toHaveCSS('mask-image', /clockoli-inverse-circle\.svg/);
       const githubTile = root.locator('.calendar-task[data-task-key="entry:github-icon"] .clockoli-github-favicon').first();
       await expect(githubTile).toBeVisible();
       await expect(githubTile).toHaveCSS('filter', theme === 'dark' ? 'brightness(0) invert(1)' : 'none');
