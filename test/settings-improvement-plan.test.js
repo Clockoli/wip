@@ -38,7 +38,7 @@ test('first run has two steps: GitHub sign-in then repository selection regardle
 test('step two offers repositories and a manual target with conditional App access, not scenario choices', () => {
   const connect = section('repository-step');
   assert.match(connect, /Connect time repositories/i);
-  assert.match(connect, /id="repository-target-form"[\s\S]*Enter a repository URL or owner\/name[\s\S]*id="repository-target"/);
+  assert.match(connect, /id="repository-target-form"[\s\S]*Invitation link, repository URL, or owner\/name[\s\S]*id="repository-target"/);
   assert.match(connect, /id="repository-list"/);
   assert.match(connect, /<a id="new-time-repository"[^>]*>Create a new time repository<\/a>/);
   assert.match(connect, /id="repository-access-panel"[^>]*hidden/);
