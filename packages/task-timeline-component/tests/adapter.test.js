@@ -162,3 +162,17 @@ test('adapter supports external Timeline and Calendar controls without applying 
   assert.match(source, /props = \{ \.\.\.props, view \}/);
   assert.match(source, /applyExternalView: Object\.hasOwn\(next, 'view'\)/);
 });
+
+
+test('compact activity entry details always offer description editing and visible time actions', () => {
+  assert.match(source, /width:min\(400px,calc\(100vw - 16px\)\)/);
+  assert.match(source, /if \(typeof props\.onDescriptionCommit === 'function'\) \{/);
+  assert.match(source, /description\.placeholder = 'Add description\.\.\.'/);
+  assert.match(source, /description\.addEventListener\('blur'/);
+  assert.match(source, /event\.key === 'Escape'/);
+  assert.match(source, /event\.key === 'Enter' && !event\.shiftKey/);
+  assert.match(source, /button\.textContent = 'Track again'/);
+  assert.match(source, /button\.title = 'Edit time entry'/);
+  assert.match(source, /button\.title = 'Delete time entry'/);
+  assert.match(source, /details\.contains\(timeline\.shadow\.activeElement\)\) return/);
+});

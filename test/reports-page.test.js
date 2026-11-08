@@ -166,3 +166,12 @@ test('date range picker replaces the old controls with one accessible trigger an
   assert.doesNotMatch(styles, /\.period-presets|\.period-select|\.custom-period|#report-range/);
   assert.match(html, /id="reporting-utc"[^>]*role="switch"/);
 });
+
+
+test('analytics axis controls are labeled as compact Y and X chips beside their axes', () => {
+  assert.match(html, /class="axis-select axis-chip metric-select"[^>]*>[\s\S]*?axis-chip-prefix"[^>]*>Y:<\/span>[\s\S]*?<select id="metric" aria-label="Y axis: measured value"/);
+  assert.match(html, /class="axis-select axis-chip horizontal-axis-select"[^>]*>[\s\S]*?axis-chip-prefix"[^>]*>X:<\/span>[\s\S]*?<select id="horizontal-axis" aria-label="X axis: group by"/);
+  assert.ok(html.indexOf('id="metric"') < html.indexOf('id="analytics-chart"'));
+  assert.ok(html.indexOf('id="horizontal-axis"') > html.indexOf('id="analytics-chart"'));
+  assert.match(styles, /\.axis-chip\{display:inline-flex/);
+});
