@@ -790,8 +790,15 @@
       if (isActivityDetails() && event.pointerType === 'mouse') {
         if (details.contains(timeline.shadow.activeElement)) return;
         if ((target && (details.contains(target) || target.closest('.calendar-task[data-task-key], .task[data-task-key]')))
-          || crossingToDetails(event)) return;
-        clearHover();
+          || crossingToDetails(event)) {
+          clearTimeout(hoverExitTimer);
+          hoverExitTimer = null;
+          return;
+        }
+        // A brief detour across a gap or another element must not close the
+        // details card while the pointer is still moving toward its actions.
+        clearTimeout(hoverExitTimer);
+        hoverExitTimer = setTimeout(clearHover, 200);
       } else if (!target || !timeline.shadow.contains(target)) clearHover();
     };
     const onDetailsScroll = () => scheduleDetails();
