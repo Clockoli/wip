@@ -164,6 +164,21 @@ test('manual Clockoli invitation URL is accepted as an unverified repository cho
   assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
 });
 
+test('new repository creation exposes Check and confirmation controls after returning from GitHub', async () => {
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? { repositories: [], installations: [] } : {} });
+  page.render({ appConfigured: true, auth: { mode: 'github_app', githubLogin: 'alex' }, config: null, destinations: [] });
+  assert.equal(page.nodes.get('repository-path-choices').hidden, false);
+  page.nodes.get('choose-create-repository').listeners.click();
+  assert.equal(page.nodes.get('new-repository-option').hidden, false);
+  assert.equal(page.nodes.get('existing-repository-option').hidden, true);
+  page.nodes.get('new-repository-target').value = 'https://github.com/acme/clockoli-data';
+  await page.submit('new-repository-target-form');
+  assert.equal(page.nodes.get('existing-repository-option').hidden, false);
+  assert.equal(page.nodes.get('repository-target').value, 'acme/clockoli-data');
+  assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
+});
+
 test('initial onboarding is focused until a default repository is connected', () => {
   const page = harness();
   page.render({ appConfigured: true, auth: null, config: null, destinations: [] });
