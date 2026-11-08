@@ -4894,7 +4894,7 @@
           .clockoli-calendar-empty { font-size:12px }
           .clockoli-calendar-empty-help { font-size:12px;max-width:none }
           .details.clockoli-compact-entry-details {
-            box-sizing:border-box;width:min(400px,calc(100vw - 16px));gap:10px;padding:12px;
+            box-sizing:border-box;width:min(360px,calc(100vw - 16px));gap:10px;padding:12px;
             border:1px solid var(--tt-border) !important;border-radius:12px;
             background:var(--tt-panel);backdrop-filter:none;-webkit-backdrop-filter:none;
             box-shadow:0 8px 24px rgba(16,24,40,.12)

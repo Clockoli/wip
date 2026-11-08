@@ -129,13 +129,13 @@ test('Activity Calendar shows a compact inline details card with accessible acti
   expect(visual.time).toMatch(/^\d{2}:\d{2} – \d{2}:\d{2} · 2h$/);
   expect(visual.timeLines).toBe(1);
   expect(visual.oldValuesHidden).toBe(true);
-  expect(visual.buttons.map(button => button.name)).toEqual(['Delete', 'Edit', 'Track time']);
+  expect(visual.buttons.map(button => button.name)).toEqual(['Delete', 'Edit', 'Track again']);
   expect(visual.buttons.slice(0, 2).every(button => button.fontSize === '0px' && button.icon)).toBe(true);
   expect(new Set(visual.buttons.map(button => button.top)).size).toBe(1);
   expect(visual.primaryBackground).not.toBe('rgb(31, 136, 61)');
   if (process.env.CLOCKOLI_COMPACT_POPOVER_SCREENSHOT) await details.screenshot({ path: process.env.CLOCKOLI_COMPACT_POPOVER_SCREENSHOT });
   await details.getByRole('button', { name: 'Edit' }).click();
-  await details.getByRole('button', { name: 'Track time' }).click();
+  await details.getByRole('button', { name: 'Track again' }).click();
   await details.getByRole('button', { name: 'Delete' }).click();
   await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([
     ['edit-form', 'entry:a'], ['start', 'entry:a'], ['delete', 'entry:a'],
@@ -176,7 +176,7 @@ test('Activity Timeline and Calendar share the compact card layout', async ({ pa
   expect(timelineCard.time).toMatch(/^\d{2}:\d{2} – \d{2}:\d{2} · 2h$/);
   expect(timelineCard.titleTruncated).toBe(true);
   expect(timelineCard.valuesHidden).toBe(true);
-  expect(timelineCard.actions.map(button => button.name)).toEqual(['Delete', 'Edit', 'Track time']);
+  expect(timelineCard.actions.map(button => button.name)).toEqual(['Delete', 'Edit', 'Track again']);
   expect(timelineCard.actions.slice(0, 2).map(button => button.fontSize)).toEqual(['0px', '0px']);
   if (process.env.CLOCKOLI_COMPACT_POPOVER_SCREENSHOT) {
     await details.screenshot({ path: process.env.CLOCKOLI_COMPACT_POPOVER_SCREENSHOT.replace(/\.png$/, '-timeline.png') });
@@ -284,7 +284,7 @@ test('popup Calendar places a right-edge entry card on its left', async ({ page 
     return { leftOfTask: rect.right <= task.left - 8, inside: rect.left >= 0 && rect.right <= innerWidth };
   });
   expect(placement).toEqual({ leftOfTask: true, inside: true });
-  await details.getByRole('button', { name: 'Track time' }).hover();
+  await details.getByRole('button', { name: 'Track again' }).hover();
   await expect(details).toContainText('Sunday task');
 });
 
@@ -1424,7 +1424,7 @@ test('a completed record of the running task offers Stop and save rather than di
     window.__items = window.__items.filter(item => item.id !== 'active:now').map(item => ({ ...item, isCurrentTask: false, isStartDisabled: false }));
     window.__timeline.update({ items: window.__items });
   });
-  await expect(action).toHaveText('Track time');
+  await expect(action).toHaveText('Track again');
   await expect(action).toBeEnabled();
 });
 
@@ -1435,7 +1435,8 @@ test('completed details expose Edit even when the task is currently running', as
     { id: 'active:now', url: 'https://example.com/c', title: 'Task C', startedAt: now - 120_000, endedAt: null, rowId: 'one', isRunning: true, isEditable: false },
   ] });
   await page.locator('#timeline .task[data-task-key="entry:old"]').click();
-  await expect(page.locator('#timeline .clockoli-timeline-description')).toHaveCount(0);
+  await expect(page.locator('#timeline .clockoli-timeline-description')).toHaveCount(1);
+  await expect(page.locator('#timeline .clockoli-timeline-description')).toHaveAttribute('placeholder', 'Add description...');
   const edit = page.locator('#timeline .clockoli-entry-edit');
   await expect(edit).toBeEnabled();
   await expect(edit).toHaveText('Edit');
@@ -1445,7 +1446,8 @@ test('completed details expose Edit even when the task is currently running', as
   await edit.click();
   expect(await page.evaluate(() => window.__calls)).toContainEqual(['edit-form', 'entry:old']);
   await page.locator('#timeline .task[data-task-key="active:now"]').click();
-  await expect(page.locator('#timeline .clockoli-timeline-description')).toHaveCount(0);
+  await expect(page.locator('#timeline .clockoli-timeline-description')).toHaveCount(1);
+  await expect(page.locator('#timeline .clockoli-timeline-description')).toHaveAttribute('placeholder', 'Add description...');
   await expect(edit).toBeEnabled();
   await expect(edit.locator('svg.clockoli-timeline-icon[data-action="edit"]')).toBeVisible();
   await edit.click();
@@ -2458,7 +2460,7 @@ for (const mode of ['timeline', 'calendar']) {
     expect(state.interaction.runningInstanceId).toBe('active:c');
     expect(state.calls).toEqual([]);
     const action = page.locator('#timeline .clockoli-timeline-action.primary');
-    await expect(action).toHaveText('Track time');
+    await expect(action).toHaveText('Track again');
     await action.click();
     await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['start', 'entry:a']]);
   });
@@ -2482,7 +2484,7 @@ for (const mode of ['timeline', 'calendar']) {
     await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['stop', 'active:c']]);
   });
 
-  test('Track time stays on one line below the full-width description in ' + mode, async ({ page }) => {
+  test('Track again stays on one line below the full-width description in ' + mode, async ({ page }) => {
     if (mode === 'calendar') await page.clock.setFixedTime(new Date('2026-10-14T12:00:00Z'));
     await mount(page, { weeklyCalendar: true });
     await page.evaluate(() => {
@@ -2493,7 +2495,7 @@ for (const mode of ['timeline', 'calendar']) {
     await page.locator('#timeline ' + blockSelector + '[data-task-key="entry:a"]').first().click();
 
     const action = page.locator('#timeline .clockoli-timeline-action.primary');
-    await expect(action).toHaveText('Track time');
+    await expect(action).toHaveText('Track again');
     await expect(action).toHaveCSS('white-space', 'nowrap');
 
     for (const width of [1600, 420]) {
@@ -2534,7 +2536,7 @@ for (const mode of ['timeline', 'calendar']) {
     }
   });
 
-  test('Track time keeps its background on hover in ' + mode, async ({ page }) => {
+  test('Track again keeps its background on hover in ' + mode, async ({ page }) => {
     if (mode === 'calendar') await page.clock.setFixedTime(new Date('2026-10-14T12:00:00Z'));
     await mount(page, { weeklyCalendar: true });
     if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
@@ -2542,7 +2544,7 @@ for (const mode of ['timeline', 'calendar']) {
     await block.dblclick();
 
     const action = page.locator('#timeline .clockoli-timeline-action.primary');
-    await expect(action).toHaveText('Track time');
+    await expect(action).toHaveText('Track again');
     const restingBackground = await action.evaluate(button => getComputedStyle(button).backgroundColor);
     await action.hover();
     await expect(action).toHaveCSS('background-color', restingBackground);

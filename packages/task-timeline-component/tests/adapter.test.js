@@ -165,7 +165,7 @@ test('adapter supports external Timeline and Calendar controls without applying 
 
 
 test('compact activity entry details always offer description editing and visible time actions', () => {
-  assert.match(source, /width:min\(400px,calc\(100vw - 16px\)\)/);
+  assert.match(source, /width:min\(360px,calc\(100vw - 16px\)\)/);
   assert.match(source, /if \(typeof props\.onDescriptionCommit === 'function'\) \{/);
   assert.match(source, /description\.placeholder = 'Add description\.\.\.'/);
   assert.match(source, /description\.addEventListener\('blur'/);
