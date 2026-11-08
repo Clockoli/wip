@@ -92,7 +92,7 @@ function harness({ reply = () => ({}), confirm = () => false, savedChoices = new
     } } },
   });
   vm.runInContext(taskSearchSource, context);
-  vm.runInContext(source.replace(/^import .*;\n/gm, '').slice(0, source.replace(/^import .*;\n/gm, '').indexOf('refreshState().then(refreshLocalPreferences)')), context);
+  vm.runInContext(source.replace(/^import .*;\n/gm, '').slice(0, source.replace(/^import .*;\n/gm, '').indexOf('scanOpenJoinInvitations().then(refreshState)')), context);
   return {
     nodes, requests, timers, context, windowListeners, documentListeners, tabListeners, joinState,
     render(state) { context.nextState = state; vm.runInContext('state = nextState; renderState();', context); },
