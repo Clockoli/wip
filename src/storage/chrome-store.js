@@ -3,6 +3,7 @@ import {
   normalizeProjectDefinitions, normalizeProjects, normalizeReportingUtc, parseSettingsImport, projectClientPreferences, settingsExportText,
 } from '../domain/local-settings.js';
 import { listAddons } from '../addons/registry.js';
+import { validateJoinRepository } from '../domain/join-invitation.js';
 const DEFAULT_STATE = Object.freeze({ activeCache: null, recentCache: [], summaryCache: null, pendingWrites: [], user: null, dataVersion: 0 });
 const DESTINATION_STATE_DEFAULT = Object.freeze({ user: null, recentCache: [], summaryCache: null, pendingWrites: [] });
 const CONFIGURATION_GENERATION = 'configurationGeneration';
@@ -13,6 +14,8 @@ const PENDING_AUTH = 'pendingAuth';
 const PENDING_AUTH_GENERATION = 'pendingAuthGeneration';
 const ONBOARDING_KEYS = ['onboardingLastVerifiedAt', 'onboardingVerificationStatus'];
 const REPOSITORY_CHOICE = 'onboardingRepositoryChoice';
+const JOIN_INVITATION = 'onboardingJoinInvitation';
+const IGNORED_JOIN_INVITATIONS = 'ignoredJoinInvitations';
 const BILLING_SETTINGS = 'billingSettings';
 const EXCHANGE_RATE_CACHE = 'exchangeRateCache';
 const LOCAL_RECENT_DAYS = 'localRecentDays';
@@ -38,7 +41,7 @@ const MIGRATION_KEYS = [
   'config', CONFIGURATION_GENERATION, ...LEGACY_TRACKING_KEYS, 'dataVersion', ...ONBOARDING_KEYS,
   'taskMetadataCache', 'reportCache', 'taskSearchCache', DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION,
 ];
-const ALL_KEYS = [REPOSITORY_CHOICE, 'config', 'token', AUTH, AUTH_GENERATION, PENDING_AUTH, PENDING_AUTH_GENERATION, DEVICE_ATTEMPT, 'reportCache', 'taskSearchCache', 'taskMetadataCache', EXCHANGE_RATE_CACHE, ADDON_ENABLED, INTERFACE_WIDTH, ACTIVITY_VIEW_MODE, ...ONBOARDING_KEYS, ...SETTINGS_KEYS, CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE), DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION];
+const ALL_KEYS = [REPOSITORY_CHOICE, JOIN_INVITATION, IGNORED_JOIN_INVITATIONS, 'config', 'token', AUTH, AUTH_GENERATION, PENDING_AUTH, PENDING_AUTH_GENERATION, DEVICE_ATTEMPT, 'reportCache', 'taskSearchCache', 'taskMetadataCache', EXCHANGE_RATE_CACHE, ADDON_ENABLED, INTERFACE_WIDTH, ACTIVITY_VIEW_MODE, ...ONBOARDING_KEYS, ...SETTINGS_KEYS, CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE), DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION];
 
 function preservedProjectClients(values) {
   if (!(values[BILLING_SETTINGS]?.invoicing?.clients ?? []).some(client => Array.isArray(client.projects) && client.projects.length)) return {};
@@ -226,6 +229,46 @@ export class IndexedDbBackend {
 
 export class ChromeStore {
   constructor(backend = new IndexedDbBackend()) { this.backend = backend; }
+
+  // Repository identifiers are unverified intent, never evidence of GitHub access.
+  async getJoinInvitation() {
+    const saved = (await this.backend.getMany([JOIN_INVITATION]))[JOIN_INVITATION];
+    return validateJoinRepository(saved);
+  }
+
+  async getIgnoredJoinInvitations() {
+    const saved = (await this.backend.getMany([IGNORED_JOIN_INVITATIONS]))[IGNORED_JOIN_INVITATIONS];
+    return Array.isArray(saved) ? saved.filter(item => validateJoinRepository(item)).slice(-20) : [];
+  }
+
+  async saveJoinInvitation(repository) {
+    const name = validateJoinRepository(repository);
+    if (!name) throw new Error('Invalid Clockoli invitation repository');
+    await this.backend.mutateMany([JOIN_INVITATION, IGNORED_JOIN_INVITATIONS], values => ({
+      set: {
+        [JOIN_INVITATION]: name,
+        [IGNORED_JOIN_INVITATIONS]: (Array.isArray(values[IGNORED_JOIN_INVITATIONS]) ? values[IGNORED_JOIN_INVITATIONS] : [])
+          .filter(item => item?.toLowerCase() !== name.toLowerCase()).slice(-20),
+      },
+    }));
+  }
+
+  async ignoreJoinInvitation(repository) {
+    const name = validateJoinRepository(repository);
+    if (!name) return;
+    await this.backend.mutateMany([JOIN_INVITATION, IGNORED_JOIN_INVITATIONS], values => {
+      const ignored = (Array.isArray(values[IGNORED_JOIN_INVITATIONS]) ? values[IGNORED_JOIN_INVITATIONS] : [])
+        .filter(item => validateJoinRepository(item) && item.toLowerCase() !== name.toLowerCase());
+      return {
+        set: { [IGNORED_JOIN_INVITATIONS]: [...ignored, name].slice(-20) },
+        delete: values[JOIN_INVITATION]?.toLowerCase() === name.toLowerCase() ? [JOIN_INVITATION] : [],
+      };
+    });
+  }
+
+  async clearJoinInvitation() {
+    await this.backend.mutateMany([JOIN_INVITATION], () => ({ delete: [JOIN_INVITATION] }));
+  }
 
   // UI-only, credentials-free intent. This never configures a destination.
   async getOnboardingRepositoryChoice(account) {
