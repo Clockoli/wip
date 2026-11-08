@@ -25,6 +25,10 @@ Sign-in uses GitHub's [device flow](https://docs.github.com/en/apps/oauth-apps/b
 
 ## Step 2: Connect a time repository
 
+Choose **Create my own repository** to start with a new private repository, or **Join a team** if someone has shared one with you. Both are first-class onboarding choices.
+
+If you arrived through `https://clockoli.com/join/#repo=owner%2Frepository`, leave that tab open while installing Clockoli. The extension detects the invitation, remembers the repository through sign-in and selects **Join a team**. When several invitation tabs are open, choose which repository to join. The URL itself grants no GitHub permissions and never causes a write without your confirmation. If the tab is unavailable, choose **Join a team** and paste the full Clockoli invitation link manually.
+
 1. Paste the repository's GitHub URL (for example, `https://github.com/acme/time-data`) or `owner/name` into the repository field and click **Check** (or press Enter). You can also type at least two characters of a repository name and choose one of the suggestions.
 2. If Clockoli shows **Grant access**, select it. On GitHub, choose **Only select repositories**, add the time repository, and save. Return to Settings: Clockoli checks the repository again by itself.
 3. Read the privacy disclosure and, for actions that write to GitHub, **Repository writes**, then explicitly confirm the offered action:
@@ -37,7 +41,7 @@ The first repository you connect becomes your default and completes setup. When 
 
 ### No time repository yet?
 
-Select **Create a new time repository** below the repository field. GitHub opens with the private Clockoli template, suggested as `clockoli-data`. After creating the repository, copy its URL from the GitHub address bar, return to Settings, paste it into the **New repository URL** dialog, and select **Check repository**. Then continue with step 2 above: creating a repository does not grant the Clockoli GitHub App access to it.
+Choose **Create my own repository**, then select **Create a new time repository**. GitHub opens with the private Clockoli template, suggested as `clockoli-data`. After creating the repository, copy its URL from the GitHub address bar, return to Settings, paste it into the **New repository URL** dialog, and select **Check repository**. Then continue with step 2 above: creating a repository does not grant the Clockoli GitHub App access to it.
 
 ### Which repositories work
 
