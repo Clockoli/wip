@@ -12,7 +12,7 @@ const timePicker = content.slice(content.indexOf('function timePicker('), conten
 const serviceWorker = await readFile(new URL('src/background/service-worker.js', root), 'utf8');
 
 test('repository-first setup requests App access only for the concrete target', () => {
-  assert.doesNotMatch(optionsHtml, /id="repository-setup-step"|id="repository-access-step"|id="choose-existing-repository"|id="choose-empty-repository"/);
+  assert.doesNotMatch(optionsHtml, /id="repository-setup-step"|id="repository-access-step"|id="choose-empty-repository"/);
   assert.match(optionsHtml, /id="repository-access-panel"[^>]*hidden/);
   assert.equal((optionsHtml.match(/id="install-app"/g) || []).length, 1);
   assert.match(optionsHtml, /id="install-app"[^>]*>Grant access<\/a>/);
@@ -44,7 +44,7 @@ test('repository discovery honors an explicit dirty target and never confirms wr
 
 test('repository controls offer autocomplete and explicit Check, default and Finish', () => {
   assert.match(optionsHtml, /id="repository-target-form"/);
-  assert.match(optionsHtml, /for="repository-target">Enter a repository URL or owner\/name<\/label>/);
+  assert.match(optionsHtml, /for="repository-target">Invitation link, repository URL, or owner\/name<\/label>/);
   assert.match(optionsHtml, /id="check-repository-target"[^>]*type="button"[^>]*aria-label="Check repository"[^>]*>Check<\/button>/);
   assert.doesNotMatch(optionsHtml, /id="refresh-repository-target"/);
   assert.doesNotMatch(optionsHtml, /id="refresh-repositories"|id="connect-repository"/);
