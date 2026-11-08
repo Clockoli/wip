@@ -974,6 +974,10 @@ test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week
     await expect(toolbarDetails).toHaveClass(/clockoli-compact-entry-details/);
     await expect(toolbarDetails.locator('.clockoli-details-task-icon')).toBeVisible();
     await expect(toolbarDetails.locator('.details-value').first()).toBeHidden();
+    // This test checks menu scrolling, not wheel interaction with an open
+    // task details card. Dismiss the card before targeting the menu.
+    await toolbar.mouse.move(1, 1);
+    await expect(toolbarDetails).toBeHidden();
     await toolbar.setViewportSize({ width: 420, height: 420 });
     await expectPanelScroll(toolbar, toolbarRoot, '.menu');
     await toolbar.close();
