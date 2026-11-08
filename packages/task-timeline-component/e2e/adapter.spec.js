@@ -256,6 +256,10 @@ test('popup Calendar keeps a short running entry card while moving down over the
   expect(placement.overlappingLower).toBe(false);
   await page.mouse.move(button.x + button.width / 2, button.y + button.height / 2, { steps: 25 });
   await expect(details).toContainText('Running upper task');
+  // The card must remain actionable after the pointer finishes crossing the gap.
+  await expect(stop).toBeVisible();
+  await page.waitForTimeout(250);
+  await expect(stop).toBeVisible();
   await stop.click();
   await expect.poll(() => page.evaluate(() => window.__calls)).toContainEqual(['stop', 'active:a']);
   await page.mouse.move(2, 2);
