@@ -107,10 +107,11 @@ test('expected post-activation repository setup is neutral rather than an error'
   assert.match(source, /id="existing-repository-option"[\s\S]*Invitation link, repository URL, or owner\/name/i);
 });
 
-test('repository-first choice has no scenario or owner preselection', () => {
+test('two genuine onboarding choices leave GitHub authorization and storage safety unchanged', () => {
+  assert.match(source, /id="choose-create-repository"/);
+  assert.match(source, /id="choose-join-team"/);
   assert.match(source, /id="repository-target"/);
   assert.match(source, /id="new-time-repository"[^>]*>Create a new time repository/i);
-  assert.doesNotMatch(source, /id="repository-setup-step"|id="choose-existing-repository"|id="choose-empty-repository"/);
   assert.doesNotMatch(source, /Use a personal repository|Join an organization repository|Set up an organization repository/i);
   assert.match(script, /configuredDestinations\(\)\.length === 0[\s\S]*discoverRepositories/);
 });
@@ -160,7 +161,7 @@ test('PAT setup remains an explicit advanced compatibility path without direct c
   assert.match(source, /<details[^>]*id="advanced-pat"[\s\S]*Use a personal access token/i);
   assert.doesNotMatch(script, /chrome\.storage|indexedDB|getAuthSnapshot|getPendingAuthSnapshot/);
   assert.deepEqual([...new Set([...script.matchAll(/choiceStore\.(\w+)\s*\(/g)].map(match => match[1]))].sort(),
-    ['getOnboardingRepositoryChoice', 'saveOnboardingRepositoryChoice'],
+    ['getIgnoredJoinInvitations', 'getJoinInvitation', 'getOnboardingRepositoryChoice', 'ignoreJoinInvitation', 'saveJoinInvitation', 'saveOnboardingRepositoryChoice'],
     'direct store access is limited to UI-only repository intent, never credentials');
   assert.match(script, /SAVE_CONFIG/);
   assert.doesNotMatch(source, /Private time-data repository/);
@@ -305,7 +306,7 @@ test('compliance documentation matches any-owner tracking and durable v1 work-it
 
 
 test('repository choice copy is plain language and errors stay visible at the current scroll position', () => {
-  assert.match(source, /Enter a repository URL or owner\/name/i);
+  assert.match(source, /Invitation link, repository URL, or owner\/name/i);
   assert.match(source, /explicitly connect a ready repository, regardless of who owns it/i);
   assert.match(source, /Anyone with read access[\s\S]*stored task URLs, titles, timestamps, and descriptions/i);
   assert.match(styles, /#message\.error\{[^}]*position:fixed/);
