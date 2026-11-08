@@ -131,7 +131,11 @@ test('week reads accept only a Monday–Sunday range from the extension or a Git
   for (const payload of [{ ...week, destinationId: 'github:1' }, { ...week, endDate: '2026-10-12' }, { ...week, startDate: '2026-10-06' }, { ...week, startDate: '2026-02-30' }, null]) {
     assert.throws(() => weekRangeForSender(payload, content, origin), /week/i);
   }
-  assert.throws(() => weekRangeForSender(week, { url: 'https://example.com/task', tab: { id: 2 } }, origin), /GitHub/i);
+  for (const url of ['https://vc.ru/technology/123', 'https://example.com/task', 'http://example.com/task']) {
+    assert.deepEqual(weekRangeForSender(week, { url, tab: { id: 2 } }, origin), week);
+  }
+  assert.deepEqual(weekRangeForSender(week, { tab: { id: 2, url: 'https://vc.ru/technology/123' } }, origin), week);
+  assert.throws(() => weekRangeForSender(week, { url: 'file:///tmp/local.html', tab: { id: 2 } }, origin), /not allowed/i);
   assert.throws(() => weekRangeForSender(week, { url: 'https://app.clockify.me/reports/detailed', tab: { id: 2 } }, origin), /not allowed/i);
   assert.throws(() => weekRangeForSender(week, { url: 'https://github.com/acme/frontend/issues/123' }, origin), /not allowed/i);
   assert.throws(() => assertMessageAllowed('LOAD_TIMES', content, origin), /not allowed/i);
