@@ -55,6 +55,8 @@ const destinationValidationCache = new Map();
 const STATIC_ACTION_ICON = { 16: 'src/assets/clockoli-16.png', 32: 'src/assets/clockoli-32.png' };
 const ACTION_ICON_FRAMES = 8;
 const ACTION_CONTEXT_KEY = 'clockoli-toolbar-task-context';
+// Reuse Clockoli's privileged IndexedDB; do not expand extension permissions.
+const actionContextBackend = new IndexedDbBackend();
 const currentCredentialProvider = new CredentialBroker({ clientId: GITHUB_APP_CLIENT_ID, store });
 const configuration = new ConfigurationService({
   store,
@@ -969,6 +971,18 @@ async function handle(message, sender) {
   if (!message || typeof message.type !== 'string') throw new Error('Invalid extension message');
   const extensionOrigin = chrome.runtime.getURL('');
   assertMessageAllowed(message.type, sender, extensionOrigin);
+  if (message.type === 'CONSUME_TOOLBAR_TASK_CONTEXT') {
+    if (sender?.url !== chrome.runtime.getURL('src/times/times.html')) {
+      throw new Error('Only Activity can consume the toolbar task context');
+    }
+    return actionContextBackend.mutateMany([ACTION_CONTEXT_KEY], current => {
+      const present = Object.hasOwn(current, ACTION_CONTEXT_KEY);
+      return {
+        delete: present ? [ACTION_CONTEXT_KEY] : [],
+        result: { present, value: present ? current[ACTION_CONTEXT_KEY] : null },
+      };
+    });
+  }
   if (message.type === 'SET_ACTION_ICON_FRAME') {
     if (!Number.isInteger(sender?.tab?.id)) throw new Error('Action icon updates require a browser tab');
     const frame = message.frame;
@@ -1651,7 +1665,7 @@ async function handle(message, sender) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type === 'LOCAL_PREFERENCES_CHANGED') return undefined;
+  if (message?.type === 'LOCAL_PREFERENCES_CHANGED' || message?.type === 'TOOLBAR_CONTEXT_UPDATED') return undefined;
   const reportReadOnly = ['LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'CANCEL_REPORT', 'GET_EXCHANGE_RATES'].includes(message?.type);
   const localStateRead = ['GET_STATE', 'GET_PAGE_STATE'].includes(message?.type) && !message?.refresh;
   const readOnly = reportReadOnly || localStateRead || ['LOAD_TASKS', 'LOAD_TIMES', 'GET_STOPPED_OVERLAP', 'SEARCH_TASKS', 'SEARCH_ENTRY_TASKS', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES', 'GET_ADDON_SETTINGS', 'GET_CLOCKIFY_MIGRATION_PREVIEW', 'SEARCH_INVITEE_USERS', 'SEARCH_CLOCKIFY_GITHUB_USERS', 'LOAD_REPOSITORY_COLLABORATORS'].includes(message?.type);
@@ -1664,7 +1678,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     } catch (error) { operation = Promise.reject(error); }
   } else {
     const direct = readOnly || DIRECT_DEVICE_FLOW_MESSAGES.has(message?.type) || message?.type === 'CONFIRM_CLOCKIFY_MIGRATION'
-      || ['OPEN_OPTIONS', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES'].includes(message?.type)
+      || ['OPEN_OPTIONS', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'CONSUME_TOOLBAR_TASK_CONTEXT'].includes(message?.type)
       || ['CLOCKIFY_ARM_CAPTURE', 'CLOCKIFY_ARM_CSV_CAPTURE', 'CLOCKIFY_IS_CAPTURE_ARMED', 'CLOCKIFY_DISARM_CAPTURE', 'CLOCKIFY_YEAR_OBSERVED', 'CLOCKIFY_CAPTURED_CSV', 'CLOCKIFY_CAPTURED_REPORT', 'CLOCKIFY_CSV_EMAIL_OFFER'].includes(message?.type);
     const acceptsLocally = [
       'START', 'STOP', 'SWITCH_TASK', 'DISCARD_ACTIVE', 'ADD_TIME', 'ADD_DAY_RANGE', 'BULK_ADD_TIMES',
@@ -1927,8 +1941,11 @@ async function toggleActionSurface(tab) {
   if (await shouldOpenOnboarding()) return chrome.runtime.openOptionsPage();
   // Only the explicitly clicked page may supply this one-use task context.
   // A restricted or invalid page clears the previous context.
-  await chrome.storage.session.set({ [ACTION_CONTEXT_KEY]: toolbarTaskContext(tab) });
-  return openTimesPage();
+  await actionContextBackend.setMany({ [ACTION_CONTEXT_KEY]: toolbarTaskContext(tab) });
+  await openTimesPage();
+  // A running Activity document can consume the new task without reloading.
+  await chrome.runtime.sendMessage({ type: 'TOOLBAR_CONTEXT_UPDATED' }).catch(() => {});
+
 }
 
 async function dismissInactivePanels({ windowId }) {

@@ -4444,7 +4444,7 @@
 
   function renderActionSourceContext() {
     if (!timesMode) return;
-    const banner = document.getElementById('activity-source-context');
+    const banner = document.getElementById?.('activity-source-context');
     if (!banner) return;
     const task = actionSourceTask;
     banner.hidden = !task;
@@ -4464,6 +4464,11 @@
       || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
   }
 
+  async function refreshActionSourceContext() {
+    const result = await send({ type: 'CONSUME_TOOLBAR_TASK_CONTEXT' });
+    if (result?.present) receiveActionSourceContext(result.value);
+  }
+
   function receiveActionSourceContext(value) {
     if (!timesMode) return;
     const age = Date.now() - Number(value?.openedAt);
@@ -4473,8 +4478,7 @@
     }
     actionSourceTask = task?.taskUrl === value?.taskUrl ? task : null;
     renderActionSourceContext();
-    // The URL is consumed by this Activity document and never becomes a preference.
-    void chrome.storage.session.remove(ACTION_CONTEXT_KEY).catch(setError);
+    // The worker atomically deletes the one-use context on consumption.
   }
 
   function renderUi() {
@@ -5219,29 +5223,28 @@
   });
 
   if (timesMode) {
-    // Reused Activity tabs receive a fresh context without navigation or lost drafts.
-    chrome.storage.onChanged.addListener((changes, areaName) => {
-      if (areaName !== 'session' || !Object.hasOwn(changes, ACTION_CONTEXT_KEY)) return;
-      const change = changes[ACTION_CONTEXT_KEY];
-      if (Object.hasOwn(change, 'newValue')) receiveActionSourceContext(change.newValue);
-    });
-    void chrome.storage.session.get(ACTION_CONTEXT_KEY).then(snapshot => {
-      if (Object.hasOwn(snapshot, ACTION_CONTEXT_KEY)) receiveActionSourceContext(snapshot[ACTION_CONTEXT_KEY]);
-    }).catch(setError);
-    document.getElementById('activity-source-track')?.addEventListener('click', async event => {
-      if (!event.isTrusted || !actionSourceTask) return;
-      const task = actionSourceTask;
-      if (sameTask(task, pageState.active)) return;
-      try { await trackCurrentTimelineTask({ sourceTask: task, preserveSavedDescription: true }); }
-      catch { /* trackCurrentTimelineTask displays the error. */ }
-      finally { renderActionSourceContext(); }
-    });
-    document.getElementById('activity-source-dismiss')?.addEventListener('click', event => {
-      if (!event.isTrusted) return;
-      actionSourceTask = null;
-      renderActionSourceContext();
-      void chrome.storage.session.remove(ACTION_CONTEXT_KEY).catch(setError);
-    });
+    const sourceBanner = document.getElementById?.('activity-source-context');
+    if (sourceBanner) {
+      chrome.runtime.onMessage?.addListener?.(message => {
+        if (message?.type === 'TOOLBAR_CONTEXT_UPDATED') {
+          void refreshActionSourceContext().catch(setError);
+        }
+      });
+      void refreshActionSourceContext().catch(setError);
+      document.getElementById('activity-source-track')?.addEventListener('click', async event => {
+        if (!event.isTrusted || !actionSourceTask) return;
+        const task = actionSourceTask;
+        if (sameTask(task, pageState.active)) return;
+        try { await trackCurrentTimelineTask({ sourceTask: task, preserveSavedDescription: true }); }
+        catch { /* trackCurrentTimelineTask displays the error. */ }
+        finally { renderActionSourceContext(); }
+      });
+      document.getElementById('activity-source-dismiss')?.addEventListener('click', event => {
+        if (!event.isTrusted) return;
+        actionSourceTask = null;
+        renderActionSourceContext();
+      });
+    }
     document.addEventListener('clockoli:local-tracking-changed', event => {
       const detail = event.detail ?? {};
       if (detail.type === 'STOP' && detail.completion?.entry?.id) {
