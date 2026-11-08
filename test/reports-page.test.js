@@ -130,9 +130,9 @@ test('reports exposes local invoice preview, export, numbering and print contrac
   assert.match(html, /<section class="invoice-preview-region"[^>]*aria-labelledby="invoice-preview-title"[\s\S]*<h3 id="invoice-preview-title">Preview<\/h3>[\s\S]*id="invoice-preview"[\s\S]*Choose a client and currency to preview the invoice\./);
   assert.match(styles, /\.invoice-extra-row\{[^}]*align-items:start/);
   assert.match(styles, /\.invoice-extra-row label\{[^}]*grid-template-rows:20px auto/);
-  assert.match(styles, /\.invoice-extra-row input,\.invoice-extra-row textarea\{[^}]*height:40px;min-height:40px/);
-  assert.match(styles, /\.invoice-extra-row>button\{[^}]*height:40px;margin-top:24px/);
-  assert.ok(js.includes('Math.max(40, height)'));
+  assert.match(styles, /\.invoice-extra-row input,\.invoice-extra-row textarea\{[^}]*height:32px;min-height:32px/);
+  assert.match(styles, /\.invoice-extra-row>button\{[^}]*height:32px;margin-top:24px/);
+  assert.ok(js.includes('Math.max(32, height)'));
   assert.match(styles, /\.invoice-preview\{[^}]*padding:[^}]*border:1px solid var\(--borderColor-default\)/);
   assert.match(styles, /\.invoice-seller h2\{display:flex;flex-wrap:wrap;/);
   assert.match(styles, /\.invoice-seller-name-raster\{display:block\}/);

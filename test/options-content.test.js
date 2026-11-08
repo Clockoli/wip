@@ -299,7 +299,7 @@ test('repository choice copy is plain language and errors stay visible at the cu
 });
 
 test('visible repository check status keeps space below the input form', () => {
-  assert.match(styles, /#repository-step \.existing-repository-option>\.repository-check-status:not\(\[hidden\]\)\{[^}]*margin:16px 0 18px/);
+  assert.match(styles, /#repository-step \.existing-repository-option>\.repository-check-status:not\(\[hidden\]\)\{[^}]*margin:16px 0 16px/);
 });
 
 test('options mounts the shared running status directly below the tabs', () => {

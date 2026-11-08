@@ -1,6 +1,11 @@
 import { test, expect } from '@playwright/test';
 
 const HOUR = 60 * 60 * 1000;
+const SCROLL_SETTLE_MS = 150;
+// Longer than the 50ms the timeline waits before rebuilding for a new size.
+const RESIZE_SETTLE_WAIT_MS = 200;
+const MINIMUM_TASK_PX = 30;
+const SUBPIXEL_PX = 0.01;
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -679,7 +684,8 @@ test('a block clipped at Monday cannot be moved with a shortened duration', asyn
 
 for (const mode of ['timeline', 'calendar']) {
   test(`clamps a completed entry before the future while dragging in ${mode}`, async ({ page }) => {
-    await page.clock.install({ time: new Date('2026-10-16T16:00:00Z') });
+    // Calendar shows the local day, so pin the clock to local afternoon in every time zone.
+    await page.clock.install({ time: new Date(2026, 9, 16, 16) });
     const now = await page.evaluate(() => Date.now());
     const start = now - 2 * HOUR;
     const neighborStart = now - 4 * HOUR;
@@ -687,7 +693,7 @@ for (const mode of ['timeline', 'calendar']) {
       { id: 'entry:neighbor', url: 'https://example.com/neighbor', title: 'Neighbor', startedAt: neighborStart, endedAt: neighborStart + 30 * 60_000, isEditable: true },
       { id: 'entry:a', url: 'https://example.com/a', title: 'Past', startedAt: start, endedAt: start + HOUR, isEditable: true },
     ], view: { start: now - 5 * HOUR, end: now + 4 * HOUR, focusedAt: now } });
-    await page.clock.pauseAt(new Date('2026-10-16T16:00:01Z'));
+    await page.clock.pauseAt(new Date(2026, 9, 16, 16, 0, 1));
     if (mode === 'calendar') await page.evaluate(() => {
       const timeline = window.__timeline.__timeline;
       timeline.setViewMode('calendar');
@@ -1143,6 +1149,35 @@ test('moving an entry with a running timer keeps future day bands visible throug
   await expect.poll(() => page.evaluate(() => window.__timeline.__timeline._runningTask()?.running)).toBe(true);
 });
 
+test('mounting does not rebuild entries, and a resize during a drag waits for the drop', async ({ page }) => {
+  await mount(page);
+  const source = page.locator('#timeline .task[data-task-key="entry:a"]');
+  await source.evaluate(element => { window.__mountedSource = element; });
+  // Wait past the component's resize settle delay: the first size report must not rebuild entries.
+  await page.waitForTimeout(RESIZE_SETTLE_WAIT_MS);
+  expect(await source.evaluate(element => element === window.__mountedSource)).toBe(true);
+  await source.evaluate(element => element.scrollIntoView({ inline: 'center' }));
+  const box = await source.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 - 18, box.y + box.height / 2);
+  const dragged = await page.evaluate(() => {
+    const timeline = window.__timeline.__timeline;
+    window.__draggedSource = timeline._taskElementByKey('entry:a');
+    return timeline.editState?.didMutate;
+  });
+  expect(dragged).toBe(true);
+  const widthBefore = await page.evaluate(() => window.__timeline.__timeline._viewportWidthNow());
+  await page.locator('#timeline').evaluate(host => { host.style.width = '800px'; });
+  await page.waitForTimeout(RESIZE_SETTLE_WAIT_MS);
+  expect(await page.evaluate(() => ({
+    connected: window.__draggedSource.isConnected,
+    editing: Boolean(window.__timeline.__timeline.editState),
+  }))).toEqual({ connected: true, editing: true });
+  await page.mouse.up();
+  await expect.poll(() => page.evaluate(() => window.__timeline.__timeline._viewportWidthNow())).toBeLessThan(widthBefore);
+});
+
 test('stopping a timer does not discard future days in the selected Timeline range', async ({ page }) => {
   const now = Date.now();
   const tomorrow = new Date(now);
@@ -1239,8 +1274,9 @@ test('Timeline keeps the original minimum widths and task spacing in a weekly vi
     return timeline.tasks.map(task => ({ width: timeline._taskElementByKey(task._key).getBoundingClientRect().width,
       axisWidth: task.x1 - task.x0 }));
   });
-  expect(geometry[0].width).toBeGreaterThanOrEqual(30);
-  expect(geometry[1].width).toBeGreaterThanOrEqual(30);
+  // Positions are floats thousands of pixels from the origin, so a 30px block measures 29.9999px.
+  expect(geometry[0].width).toBeGreaterThanOrEqual(MINIMUM_TASK_PX - SUBPIXEL_PX);
+  expect(geometry[1].width).toBeGreaterThanOrEqual(MINIMUM_TASK_PX - SUBPIXEL_PX);
   expect(geometry[0].axisWidth).toBeCloseTo(geometry[0].width, 1);
   expect(geometry[1].axisWidth).toBeCloseTo(geometry[1].width, 1);
 });
@@ -1362,7 +1398,7 @@ test('hydrates running and pending entries with Clockoli block styling', async (
   expect(state.running).toBe('active:c');
   expect(state.pending).toEqual(['entry:b']);
   expect(state.blocks.every(block => block.height === '40px')).toBeTruthy();
-  expect(state.blocks.every(block => block.radius === '7px')).toBeTruthy();
+  expect(state.blocks.every(block => block.radius === '6px')).toBeTruthy();
   expect(state.blocks.every(block => block.leftBorder === '3px')).toBeTruthy();
   expect(state.blocks.find(block => block.key === 'entry:b').pending).toBeTruthy();
 });
@@ -1848,7 +1884,7 @@ test('switches Timeline and Calendar without losing running state', async ({ pag
     const style = getComputedStyle(block);
     return { leftBorder: style.borderLeftWidth, radius: style.borderRadius, shadow: style.boxShadow };
   });
-  expect(calendarStyle).toEqual({ leftBorder: '3px', radius: '7px', shadow: 'none' });
+  expect(calendarStyle).toEqual({ leftBorder: '3px', radius: '6px', shadow: 'none' });
   await page.evaluate(() => window.__timeline.setViewMode('timeline'));
   expect(await page.evaluate(() => window.__timeline.getViewMode())).toBe('timeline');
 });
@@ -2785,7 +2821,7 @@ test('Timeline shows darker end grips without top or bottom bands', async ({ pag
   }
   expect(grips[0].marks).toBe(grips[1].marks);
   expect(grips[0].background).toBe(grips[1].background);
-  expect(grips.map(grip => grip.radius)).toEqual(['4px 0px 0px 4px', '0px 4px 4px 0px']);
+  expect(grips.map(grip => grip.radius)).toEqual(['6px 0px 0px 6px', '0px 6px 6px 0px']);
   await block.click();
   await page.mouse.move(0, 0);
   const selectedStyle = await block.evaluate(element => {
@@ -3139,7 +3175,7 @@ test('Timeline and Calendar descriptions save multiline text on Enter with visib
     await input.press('Enter');
     await expect.poll(() => page.evaluate(() => window.__calls.filter(call => call[0] === 'description').length)).toBe(before + 1);
     expect(await page.evaluate(() => window.__calls.filter(call => call[0] === 'description').at(-1)[2])).toBe('First line\nSecond line');
-    await expect(page.locator('#timeline .clockoli-description-saved')).toHaveText('✓ Saved');
+    await expect(page.locator('#timeline .clockoli-description-saved')).toHaveText('Saved');
     await input.press('Tab');
     expect(await page.evaluate(() => window.__calls.filter(call => call[0] === 'description').length)).toBe(before + 1);
     await page.locator('#timeline .clockoli-description-saved').waitFor({ state: 'visible' });
@@ -3355,17 +3391,21 @@ test('a failed Calendar favicon stays failed without an observer recreate loop',
 
 test('running action keeps its save label and keyboard focus as time advances', async ({ page }) => {
   await mount(page);
-  await page.evaluate(() => {
-    const root = document.querySelector('#timeline').shadowRoot;
-    root.querySelector('.task[data-task-key="active:c"]').click();
-  });
-  const before = await page.evaluate(() => {
-    const root = document.querySelector('#timeline').shadowRoot;
-    const button = root.querySelector('.clockoli-timeline-action.primary');
+  // A real pointer click keeps the task hovered while its floating details
+  // open. A synthetic DOM click can leave them hidden on the next animation frame.
+  await page.locator('#timeline .task[data-task-key="active:c"]').click();
+  const stop = page.locator('#timeline .clockoli-timeline-action.primary');
+  await expect(stop).toBeVisible();
+  await expect(stop).toBeEnabled();
+  const before = await stop.evaluate(button => {
     button.focus();
     window.__stopButton = button;
-    return button.textContent;
+    return {
+      text: button.textContent,
+      focused: button.getRootNode().activeElement === button,
+    };
   });
+  expect(before.focused).toBe(true);
   await page.evaluate(() => window.__timeline.update({ now: Date.now() + 60_000 }));
   const after = await page.evaluate(() => ({
     same: window.__stopButton === document.querySelector('#timeline').shadowRoot.querySelector('.clockoli-timeline-action.primary'),
@@ -3374,7 +3414,7 @@ test('running action keeps its save label and keyboard focus as time advances', 
   }));
   expect(after.same).toBeTruthy();
   expect(after.focused).toBeTruthy();
-  expect(after.text).toBe(before);
+  expect(after.text).toBe(before.text);
   expect(after.text).toBe('Stop and save');
 });
 
@@ -3869,6 +3909,13 @@ test('a five-second block can be dragged exactly to 19:30:00', async ({ page }) 
   expect(badgeGeometry.task.width).toBeLessThanOrEqual(31);
   expect(badgeGeometry.startRight).toBeLessThanOrEqual(badgeGeometry.task.left);
   expect(badgeGeometry.endLeft).toBeGreaterThanOrEqual(badgeGeometry.task.right);
+  // The timeline settles its scroll once shortly after mounting; measure only once it stops moving.
+  await expect.poll(() => page.evaluate(async settleMs => {
+    const viewport = window.__timeline.__timeline.viewport;
+    const before = viewport.scrollLeft;
+    await new Promise(resolve => setTimeout(resolve, settleMs));
+    return viewport.scrollLeft === before;
+  }, SCROLL_SETTLE_MS)).toBe(true);
   const coordinates = await page.evaluate(() => {
     const timeline = window.__timeline.__timeline;
     const task = timeline.tasks[0];

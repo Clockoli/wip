@@ -2,13 +2,26 @@ import { normalizeTaskUrl } from '../domain/values.js';
 import { dateValue, timeValue, parseTime, localTimestamp } from './local-time.js';
 
 /** One extension-page time-entry form for creating and editing records. */
+const CHECK_PATH = 'M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z';
+const X_PATH = 'M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z';
+const CHEVRON_LEFT_PATH = 'M9.78 12.78a.75.75 0 0 1-1.06 0L4.47 8.53a.75.75 0 0 1 0-1.06l4.25-4.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042L6.06 8l3.72 3.72a.75.75 0 0 1 0 1.06Z';
+const CHEVRON_RIGHT_PATH = 'M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z';
+const OCTICON_NS = 'http://www.w3.org/2000/svg';
+function octicon(path) {
+  const svg = document.createElementNS(OCTICON_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16'); svg.setAttribute('width', '16'); svg.setAttribute('height', '16');
+  svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('fill', 'currentColor');
+  const shape = document.createElementNS(OCTICON_NS, 'path'); shape.setAttribute('d', path); svg.append(shape);
+  return svg;
+}
+
 export function mountAddTime(button, { send, onAdded = () => location.reload(), container = document.body,
   searchIsCompleteCatalog = true }) {
   const dialog = document.createElement('dialog'); dialog.className = 'add-time-dialog';
   dialog.setAttribute('aria-labelledby', 'add-time-title');
   const heading = document.createElement('h2'); heading.id = 'add-time-title'; heading.textContent = 'Add new time';
   const close = document.createElement('button'); close.type = 'button'; close.className = 'add-time-close';
-  close.textContent = '×'; close.setAttribute('aria-label', 'Close Add time');
+  close.append(octicon(X_PATH)); close.setAttribute('aria-label', 'Close Add time');
   const intro = document.createElement('p'); intro.className = 'add-time-hint'; intro.textContent = searchIsCompleteCatalog
     ? 'Find a tracked task from any person in your time repositories or paste a task URL.'
     : 'Find a tracked imported task in this entry’s time repository or paste a task URL.';
@@ -43,10 +56,10 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   calendar.setAttribute('role', 'group'); calendar.setAttribute('aria-label', 'Select days');
   const calendarHeader = document.createElement('div'); calendarHeader.className = 'add-time-calendar-header';
   const previousMonth = document.createElement('button'); previousMonth.type = 'button';
-  previousMonth.textContent = '‹'; previousMonth.setAttribute('aria-label', 'Previous month');
+  previousMonth.append(octicon(CHEVRON_LEFT_PATH)); previousMonth.setAttribute('aria-label', 'Previous month');
   const monthTitle = document.createElement('strong'); monthTitle.setAttribute('aria-live', 'polite');
   const nextMonth = document.createElement('button'); nextMonth.type = 'button';
-  nextMonth.textContent = '›'; nextMonth.setAttribute('aria-label', 'Next month');
+  nextMonth.append(octicon(CHEVRON_RIGHT_PATH)); nextMonth.setAttribute('aria-label', 'Next month');
   calendarHeader.append(previousMonth, monthTitle, nextMonth);
   const days = document.createElement('div'); days.className = 'add-time-calendar-days';
   const selectedCount = document.createElement('p'); selectedCount.className = 'add-time-selected-count';
@@ -153,7 +166,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     hint, rangeHint, boundaryHint, descriptionFields, preview, error, actions);
   container.append(dialog);
   const saved = document.createElement('span');
-  saved.className = 'add-time-success'; saved.textContent = '✓ Saved'; saved.setAttribute('role', 'status'); saved.hidden = true;
+  saved.className = 'add-time-success'; saved.textContent = 'Saved'; saved.prepend(octicon(CHECK_PATH)); saved.setAttribute('role', 'status'); saved.hidden = true;
   button.insertAdjacentElement('afterend', saved);
   let savedTimer = null;
 

@@ -4,6 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const ROOT = new URL('..', import.meta.url);
+const GITHUB_CONTAINER_PX = 1280;
+const FRAME_GUTTER_PX = 24;
+const CONTROL_PX = 32;
 
 test('Reports, Top tasks and Settings stretch the running description without overflowing', async () => {
   test.setTimeout(90000);
@@ -24,6 +27,7 @@ test('Reports, Top tasks and Settings stretch the running description without ov
             entryDate: new Date().toISOString().slice(0, 10), timezone: 'UTC' },
           recent: [], pendingWrites: [], pendingCount: 0, todayTrackedMs: 0,
         } });
+        else if (message.type === 'GET_LOCAL_PREFERENCES' && globalThis.savedWidth) respond({ ok: true, data: { interfaceWidth: globalThis.savedWidth } });
         else respond({ ok: false, error: { message: 'Unsupported fixture request' } });
       });
     `);
@@ -80,6 +84,54 @@ test('Reports, Top tasks and Settings stretch the running description without ov
         await page.locator('.page-theme-toggle').click({ timeout: 5000 });
       }
     }
+    // Every page shares one frame: GitHub's 1280px container, or the window when Interface width is Full.
+    for (const width of [1440, 2200]) for (const interfaceWidth of ['contained', 'full']) {
+      const frames = [];
+      for (const path of ['reports/reports.html', 'tasks/tasks.html', 'options/options.html']) {
+        await page.setViewportSize({ width, height: 850 });
+        await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/${path}`);
+        const row = page.locator('#running-status.is-active .running-status-row');
+        await expect(row.getByRole('textbox', { name: 'Description' })).toBeVisible();
+        await page.evaluate(value => { document.documentElement.dataset.clockoliWidth = value; }, interfaceWidth);
+        frames.push(await page.evaluate(() => {
+          const box = selector => document.querySelector(selector).getBoundingClientRect();
+          const row = box('#running-status .running-status-row'), main = box('main');
+          // The visible blocks inside main must fill the frame too, not just main itself.
+          const content = [...document.querySelector('main').children].map(node => node.getBoundingClientRect()).filter(rect => rect.width > 0);
+          const controls = ['.running-status-description', '.running-status-stats', '.running-status-stop'].map(box);
+          return { left: Math.round(row.left), right: Math.round(row.right), height: Math.round(row.height),
+            mainLeft: Math.round(main.left), mainRight: Math.round(main.right),
+            contentLeft: Math.round(Math.min(...content.map(rect => rect.left))),
+            contentRight: Math.round(Math.max(...content.map(rect => rect.right))),
+            controlHeights: controls.map(control => Math.round(control.height)),
+            controlCenters: controls.map(control => Math.round(control.top + control.height / 2)) };
+        }));
+      }
+      const expectedWidth = interfaceWidth === 'full' ? width - FRAME_GUTTER_PX * 2 : Math.min(GITHUB_CONTAINER_PX, width - FRAME_GUTTER_PX * 2);
+      for (const frame of frames) {
+        expect(frame).toMatchObject({ ...frames[0], mainLeft: frame.left, mainRight: frame.right, contentLeft: frame.left, contentRight: frame.right });
+        expect(frame.right - frame.left).toBe(expectedWidth);
+        expect(frame.controlHeights).toEqual([CONTROL_PX, CONTROL_PX, CONTROL_PX]);
+        expect(new Set(frame.controlCenters).size).toBe(1);
+      }
+    }
+    // A page opens at the last known width before the worker answers, then follows the worker.
+    await page.addInitScript(() => document.addEventListener('DOMContentLoaded', () => {
+      window.widthAtParse = document.documentElement.dataset.clockoliWidth;
+    }));
+    const tasksUrl = `chrome-extension://${new URL(worker.url()).host}/src/tasks/tasks.html`;
+    const fullWidthViewport = 2200;
+    await page.setViewportSize({ width: fullWidthViewport, height: 850 });
+    await page.evaluate(() => localStorage.setItem('clockoli-interface-width', 'full'));
+    await page.goto(tasksUrl);
+    await expect(page.locator('#running-status.is-active .running-status-row')).toBeVisible();
+    expect(await page.evaluate(() => ({ atParse: window.widthAtParse,
+      row: document.querySelector('#running-status .running-status-row').getBoundingClientRect().width })))
+      .toEqual({ atParse: 'full', row: fullWidthViewport - FRAME_GUTTER_PX * 2 });
+    await worker.evaluate(() => { globalThis.savedWidth = 'contained'; });
+    await page.reload();
+    await expect(page.locator('html')).toHaveAttribute('data-clockoli-width', 'contained');
+    expect(await page.evaluate(() => localStorage.getItem('clockoli-interface-width'))).toBe('contained');
     expect(errors).toEqual([]);
   } finally {
     await context?.close();

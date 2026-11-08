@@ -1,4 +1,14 @@
-html[data-clockoli-width="full"] main:not(.settings-main) { max-width:none; }
+/* Every extension page shares one frame for the tracking bar and the content below it:
+   GitHub's 1280px container when contained, the whole window when Interface width is Full. */
+:root { --clockoli-page-width:min(1280px,calc(100% - 48px)); }
+html[data-clockoli-width="full"] { --clockoli-page-width:calc(100% - 48px); }
+@media(max-width:700px) { :root,html[data-clockoli-width="full"] { --clockoli-page-width:calc(100% - 24px); } }
+@media screen {
+  #running-status.is-idle .running-status-row,
+  #running-status.is-active .running-status-row,
+  body > main { box-sizing:border-box; width:var(--clockoli-page-width); max-width:none; margin-inline:auto; }
+  body > main { padding-inline:0; }
+}
 html[data-clockoli-width="full"] .app-header { padding-inline:24px; }
 html[data-clockoli-width="full"]:has(#clockoli-popup-root),
 html[data-clockoli-width="full"] body:has(#clockoli-popup-root) { width:min(800px,100vw); }

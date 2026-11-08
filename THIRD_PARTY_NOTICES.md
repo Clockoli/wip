@@ -60,6 +60,14 @@ a standardized SPDX identifier. Those notices must remain intact.
 Copyright © 2018 GitHub Inc.; MIT.
 Complete license: [LICENSES/Primer-MIT.txt](LICENSES/Primer-MIT.txt).
 
+## Octicons
+
+Interface icons in `src/` and `packages/task-timeline-component/src/` copy their
+SVG paths from [Octicons](https://github.com/primer/octicons).
+
+Copyright © GitHub Inc.; MIT.
+Complete license: [LICENSES/Octicons-MIT.txt](LICENSES/Octicons-MIT.txt).
+
 ## Not bundled into browser releases
 
 Development-only dependencies listed in `package-lock.json` are used for
