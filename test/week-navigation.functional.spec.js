@@ -89,19 +89,21 @@ async function expectWeekHeaderLayout(root) {
     // changes. Wait for a complete header snapshot, not a half-updated layout.
     let geometry;
     await expect.poll(async () => {
-      const [bounds, left, right, chart, header, ruler] = await Promise.all([
+      const [bounds, left, right, chart, header, ruler, firstDay] = await Promise.all([
         section.locator('.timeline-shell').boundingBox(),
         navigation.getByRole('button', { name: 'Previous week' }).boundingBox(),
         navigation.getByRole('button', { name: 'Next week' }).boundingBox(),
         section.locator('.calendar-view:visible,.viewport:visible').boundingBox(),
         section.locator('.calendar-sticky-header:visible,.day-row:visible').boundingBox(),
         section.locator('.ruler-row').boundingBox(),
+        section.locator('.calendar-day-header:visible').first().boundingBox(),
       ]);
-      geometry = { bounds, left, right, chart, header, ruler };
+      geometry = { bounds, left, right, chart, header, ruler, firstDay };
       return { shell: Boolean(bounds), previous: Boolean(left), next: Boolean(right),
-        chart: Boolean(chart), header: Boolean(header) };
+        chart: Boolean(chart), header: Boolean(header),
+        dayHeaderOrRuler: Boolean(ruler || firstDay) };
     }, { message: 'Week navigation and calendar header settle after resizing' }).toEqual({
-      shell: true, previous: true, next: true, chart: true, header: true,
+      shell: true, previous: true, next: true, chart: true, header: true, dayHeaderOrRuler: true,
     });
     const { bounds, left, right, chart, header, ruler } = geometry;
     expect(await navigation.evaluate(element => element.parentElement?.classList.contains('timeline-shell'))).toBe(true);
@@ -110,8 +112,7 @@ async function expectWeekHeaderLayout(root) {
       expect(left.x - bounds.x).toBeGreaterThanOrEqual(12);
       expect(bounds.x + bounds.width - right.x - right.width).toBeGreaterThanOrEqual(12);
     } else {
-      const firstDay = await section.locator('.calendar-day-header').first().boundingBox();
-      expect(right.x + right.width).toBeLessThanOrEqual(firstDay.x);
+      expect(right.x + right.width).toBeLessThanOrEqual(geometry.firstDay.x);
       expect(right.x - left.x).toBe(left.width - 1);
     }
     await expect(navigation.locator('.week-navigation-label')).toBeHidden();
