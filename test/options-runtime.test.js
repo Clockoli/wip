@@ -1370,7 +1370,7 @@ test('unfinished repository names validate on Check, never on blur', async () =>
   await page.nodes.get('check-repository-target').listeners.click();
   assert.equal(page.requests.length, 0);
   assert.equal(input.attributes['aria-invalid'], 'true');
-  assert.match(page.nodes.get('repository-target-status').textContent, /Enter a valid GitHub repository URL/);
+  assert.match(page.nodes.get('repository-target-status').textContent, /Enter a valid Clockoli invitation link, GitHub repository URL/);
   input.value = ''; input.listeners.input();
   await input.listeners.blur();
   assert.equal(input.attributes['aria-invalid'], undefined);
