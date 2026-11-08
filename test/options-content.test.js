@@ -8,11 +8,13 @@ const worker = await readFile(new URL('../src/background/service-worker.js', imp
 const recovery = await readFile(new URL('../src/domain/recovery-actions.js', import.meta.url), 'utf8');
 const styles = await readFile(new URL('../src/options/options.css', import.meta.url), 'utf8');
 
-test('existing repository connection is the primary onboarding path, creation is secondary', () => {
-  assert.match(source, /class="existing-repository-option"[\s\S]*Connect an existing repository/);
+test('create and join are equal, clickable onboarding choices', () => {
+  assert.match(source, /id="repository-path-choices"/);
+  assert.match(source, /id="choose-create-repository"[^>]*class="repository-path-choice"/);
+  assert.match(source, /id="choose-join-team"[^>]*class="repository-path-choice"/);
   assert.match(source, /id="new-time-repository" class="button-link secondary-link new-repository-action"/);
-  assert.ok(source.indexOf('id="repository-target-form"') < source.indexOf('id="new-time-repository"'));
-  assert.match(styles, /\.existing-repository-option\{[^}]*border:/);
+  assert.match(styles, /\.repository-path-choices\{[^}]*grid-template-columns:repeat\(2/);
+  assert.match(styles, /\.repository-path-choice:hover/);
   assert.doesNotMatch(styles, /new-repository-pulse|\.new-repository-action\{[^}]*animation:/);
 });
 
@@ -102,7 +104,7 @@ test('Sign in requests the manifest host permissions in its click gesture before
 test('expected post-activation repository setup is neutral rather than an error', async () => {
   const onboarding = await readFile(new URL('../src/services/github-app-onboarding.js', import.meta.url), 'utf8');
   assert.doesNotMatch(onboarding, /Install Clockoli on a private repository, then check again/);
-  assert.match(source, /Connect an existing repository[\s\S]*Enter a repository URL or owner\/name/i);
+  assert.match(source, /id="existing-repository-option"[\s\S]*Invitation link, repository URL, or owner\/name/i);
 });
 
 test('repository-first choice has no scenario or owner preselection', () => {
