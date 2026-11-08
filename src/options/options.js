@@ -4,6 +4,7 @@ import { invoicingSettings, normalizeInvoicingSettings, normalizeProjects, parse
 import { taskPeriodRange } from '../domain/tasks.js';
 import { normalizeStoredTaskIdentity, normalizeTaskUrl } from '../domain/values.js';
 import { getAddon } from '../addons/registry.js';
+import { clockoliInvitationLink, discoverClockoliInvitations, parseClockoliInvitationUrl, validateJoinRepository } from '../domain/join-invitation.js';
 
 
 const $ = id => document.getElementById(id);
@@ -31,6 +32,12 @@ let authRecoveryTried = '';
 import { ChromeStore } from '../storage/chrome-store.js';
 const choiceStore = new ChromeStore();
 let repositoryTarget = '';
+let setupPath = 'choose';
+let setupPathTouched = false;
+let joinChoices = [];
+let selectedJoinInvitation = '';
+let joinChoicesSignature = '';
+let invitationAutoCheckKey = '';
 let repositoryInputDirty = false;
 let checkingRepositoryTarget = '';
 let autoCheckingRepositoryTarget = '';
@@ -750,6 +757,97 @@ function scheduleAutomaticDeviceOpen(attempt) {
   }, DEVICE_HANDOFF_PAUSE_MS);
 }
 
+// Never assume a link is proof of GitHub access. The open invitation tab only
+// transports owner/repository through extension installation.
+function isConnectedJoinRepository(repository) {
+  return configuredDestinations().some(destination => (destination.owner && destination.repo
+    && `${destination.owner}/${destination.repo}`.toLowerCase() === repository.toLowerCase()));
+}
+
+async function scanOpenJoinInvitations() {
+  const [saved, ignored, tabs] = await Promise.all([
+    choiceStore.getJoinInvitation(),
+    choiceStore.getIgnoredJoinInvitations(),
+    chrome.tabs.query({}).catch(() => []),
+  ]);
+  const blocked = new Set(ignored.map(name => name.toLowerCase()));
+  const values = [...(saved ? [saved] : []), ...discoverClockoliInvitations(tabs)];
+  const unique = new Map();
+  for (const name of values) {
+    if (!blocked.has(name.toLowerCase()) && !isConnectedJoinRepository(name)
+        && !unique.has(name.toLowerCase())) unique.set(name.toLowerCase(), name);
+  }
+  joinChoices = [...unique.values()].slice(0, 20).sort((a, b) => a.localeCompare(b));
+  selectedJoinInvitation = saved && joinChoices.some(name => name.toLowerCase() === saved.toLowerCase()) ? saved
+    : joinChoices.length === 1 ? joinChoices[0] : '';
+  if (selectedJoinInvitation && !saved) await choiceStore.saveJoinInvitation(selectedJoinInvitation);
+  if (joinChoices.length && !setupPathTouched) setupPath = 'join';
+  if (state) renderState();
+}
+
+async function selectJoinInvitation(name) {
+  const repository = validateJoinRepository(name);
+  if (!repository) return;
+  selectedJoinInvitation = repository;
+  if (!joinChoices.some(item => item.toLowerCase() === repository.toLowerCase())) joinChoices.push(repository);
+  setupPath = 'join';
+  setupPathTouched = true;
+  await choiceStore.saveJoinInvitation(repository);
+  if (isAppAuthorized()) await rememberRepositoryTarget(repository);
+  renderState();
+}
+
+async function dismissJoinInvitation() {
+  const name = selectedJoinInvitation;
+  if (!name) return;
+  await choiceStore.ignoreJoinInvitation(name);
+  joinChoices = joinChoices.filter(item => item.toLowerCase() !== name.toLowerCase());
+  selectedJoinInvitation = joinChoices.length === 1 ? joinChoices[0] : '';
+  if (selectedJoinInvitation) await choiceStore.saveJoinInvitation(selectedJoinInvitation);
+  else { setupPath = 'choose'; setupPathTouched = false; }
+  renderState();
+}
+
+function renderJoinSetup() {
+  const isJoin = setupPath === 'join';
+  const isCreate = setupPath === 'create';
+  $('repository-path-choices').hidden = setupPath !== 'choose';
+  $('existing-repository-option').hidden = !isJoin && !(isCreate && repositoryTarget);
+  $('new-repository-option').hidden = !isCreate;
+  $('change-repository-path').hidden = setupPath === 'choose';
+  const suggestions = joinChoices.filter(name => !isConnectedJoinRepository(name));
+  const select = $('join-invitation-picker');
+  const signature = JSON.stringify(suggestions);
+  if (signature !== joinChoicesSignature) {
+    joinChoicesSignature = signature;
+    select.replaceChildren();
+    if (suggestions.length > 1) {
+      const empty = document.createElement('option'); empty.value = ''; empty.textContent = 'Choose an invitation'; select.append(empty);
+    }
+    for (const name of suggestions) {
+      const option = document.createElement('option'); option.value = name; option.textContent = name; select.append(option);
+    }
+  }
+  select.value = selectedJoinInvitation && suggestions.some(item => item.toLowerCase() === selectedJoinInvitation.toLowerCase())
+    ? selectedJoinInvitation : '';
+  $('join-invitation-picker-label').hidden = suggestions.length <= 1;
+  $('join-invitation-status').textContent = suggestions.length > 1 && !selectedJoinInvitation
+    ? 'Several Clockoli invitations are open. Choose the repository you want to join.'
+    : selectedJoinInvitation
+      ? `Invitation for ${selectedJoinInvitation}. GitHub will verify your access; accept any pending GitHub repository invitation first.`
+      : '';
+  $('join-invitation-panel').hidden = !isJoin || suggestions.length === 0;
+  $('use-join-invitation').disabled = !selectedJoinInvitation;
+  $('use-join-invitation').textContent = isAppAuthorized() ? 'Check this invitation' : 'Connect GitHub to continue';
+  $('dismiss-join-invitation').hidden = !selectedJoinInvitation;
+
+  const showResume = Boolean(state?.ready && suggestions.length && !showOnboarding);
+  $('invitation-resume').hidden = !showResume;
+  $('invitation-resume-text').textContent = selectedJoinInvitation
+    ? `Clockoli invitation for ${selectedJoinInvitation}`
+    : 'Clockoli invitations found — choose a team to join';
+}
+
 function renderOnboardingProgress() {
   const authorized = isAppAuthorized();
   const step = authExpired && state?.candidateAuth ? 2
@@ -810,11 +908,11 @@ function renderState() {
   $('connected-status').className = `badge${authExpired ? '' : ' ready'}`;
   $('reauth-required').hidden = !authExpired || Boolean(state.deviceAttempt || state.candidateAuth);
   $('authorize').textContent = authExpired ? 'Sign in again with GitHub' : 'Connect GitHub';
-  $('connection-title').textContent = welcome ? 'Welcome to Clockoli!'
+  $('connection-title').textContent = welcome ? selectedJoinInvitation ? 'Join your team on Clockoli' : 'Welcome to Clockoli!'
     : initialSetup && deviceActive ? 'Connect to GitHub'
       : accountConnected ? 'GitHub account' : 'Set up Clockoli';
   $('connection-description').textContent = welcome
-    ? 'Track time with one click. Keep your records in a private GitHub repository you control.'
+    ? selectedJoinInvitation ? `You've been invited to use ${selectedJoinInvitation}. Connect GitHub to continue.` : 'Track time with one click. Keep your records in a private GitHub repository you control.'
     : initialSetup && deviceActive ? 'Paste the one-time code on GitHub to authorize Clockoli.'
       : initialSetup ? 'Next, choose a private repository for your time records.'
         : accountConnected ? 'Manage your GitHub account and time repositories.'
@@ -842,6 +940,7 @@ function renderState() {
   else { cancelScheduledDeviceOpen(); $('device-panel').hidden = true; $('device-step').classList.toggle('device-code-active', false); }
   $('authorize-panel').hidden = Boolean(state.deviceAttempt || state.candidateAuth);
   renderOnboardingProgress();
+  renderJoinSetup();
   scheduleRepositoryPolling();
 }
 
