@@ -3391,17 +3391,21 @@ test('a failed Calendar favicon stays failed without an observer recreate loop',
 
 test('running action keeps its save label and keyboard focus as time advances', async ({ page }) => {
   await mount(page);
-  await page.evaluate(() => {
-    const root = document.querySelector('#timeline').shadowRoot;
-    root.querySelector('.task[data-task-key="active:c"]').click();
-  });
-  const before = await page.evaluate(() => {
-    const root = document.querySelector('#timeline').shadowRoot;
-    const button = root.querySelector('.clockoli-timeline-action.primary');
+  // A real pointer click keeps the task hovered while its floating details
+  // open. A synthetic DOM click can leave them hidden on the next animation frame.
+  await page.locator('#timeline .task[data-task-key="active:c"]').click();
+  const stop = page.locator('#timeline .clockoli-timeline-action.primary');
+  await expect(stop).toBeVisible();
+  await expect(stop).toBeEnabled();
+  const before = await stop.evaluate(button => {
     button.focus();
     window.__stopButton = button;
-    return button.textContent;
+    return {
+      text: button.textContent,
+      focused: button.getRootNode().activeElement === button,
+    };
   });
+  expect(before.focused).toBe(true);
   await page.evaluate(() => window.__timeline.update({ now: Date.now() + 60_000 }));
   const after = await page.evaluate(() => ({
     same: window.__stopButton === document.querySelector('#timeline').shadowRoot.querySelector('.clockoli-timeline-action.primary'),
@@ -3410,7 +3414,7 @@ test('running action keeps its save label and keyboard focus as time advances', 
   }));
   expect(after.same).toBeTruthy();
   expect(after.focused).toBeTruthy();
-  expect(after.text).toBe(before);
+  expect(after.text).toBe(before.text);
   expect(after.text).toBe('Stop and save');
 });
 
