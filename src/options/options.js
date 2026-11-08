@@ -2803,11 +2803,11 @@ $('export-settings').addEventListener('click', async () => {
 });
 function settingsImportMessage(result) {
   const issues = Array.isArray(result?.notRestored) ? result.notRestored : [];
-  if (!issues.length) return 'Local settings restored from backup. GitHub remains connected only if it was already connected.';
+  if (!issues.length) return 'Local settings restored from backup.';
   const details = issues.map(issue => issue.type === 'project'
     ? `project “${issue.name}” — its route was not restored because repository ${issue.repository} is ${issue.reason}`
     : `repository ${issue.repository} — dependent settings were not restored because it is ${issue.reason}`);
-  return `Local settings restored where possible. Not restored: ${details.join('; ')}. Connect the missing time repositories, then import the backup again. GitHub remains connected only if it was already connected.`;
+  return `Local settings restored where possible. Not restored: ${details.join('; ')}. Connect the missing time repositories, then import the backup again.`;
 }
 
 $('import-settings-file').addEventListener('change', async () => {
