@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { ChromeStore } from '../src/storage/chrome-store.js';
+import { normalizeTaskUrl, parseGitHubProjectPaneIssueUrl } from '../src/domain/values.js';
 import { assertMessageAllowed } from '../src/background/message-policy.js';
 
 const read = path => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -11,32 +12,29 @@ const worker = read('src/background/service-worker.js');
 const content = read('src/content/github.js');
 const policy = read('src/background/message-policy.js');
 
-test('toolbar opens the same full-width tracking surface on GitHub and other HTTP(S) pages', () => {
+test('toolbar opens Activity in its own tab and hands off only the clicked URL', () => {
   assert.equal(manifest.action?.default_popup, undefined);
-  assert.ok(manifest.permissions.includes('activeTab'));
-  assert.ok(manifest.permissions.includes('scripting'));
-  assert.ok(manifest.permissions.includes('tabs'));
-
-  assert.match(worker, /async function toggleActionSurface\(tab\)/);
-  assert.match(worker, /chrome\.scripting\.executeScript\(\{[\s\S]*target: \{ tabId: tab\.id \}[\s\S]*globalThis\.__CLOCKOLI_ACTION_SURFACE__ = true/);
-  assert.match(worker, /files: \['src\/domain\/recovery-actions\.js', 'src\/ui\/tracking-card\.js', 'src\/ui\/task-search\.js', 'src\/content\/task-timeline-component\.js', 'src\/content\/github\.js'\]/);
+  for (const permission of ['activeTab', 'tabs', 'storage']) assert.ok(manifest.permissions.includes(permission));
   assert.match(worker, /chrome\.action\.onClicked\.addListener\(tab => \{[\s\S]*toggleActionSurface\(tab\)/);
-  assert.doesNotMatch(worker, /restoreActionPopup|REGISTER_GITHUB_ACTION_SURFACE/);
-
-  assert.match(content, /const actionSurfaceMode = globalThis\.__CLOCKOLI_ACTION_SURFACE__ === true/);
-  assert.match(content, /else if \(actionSurfaceMode\) \{[\s\S]*toggleFullWidthPopup\(\)/);
-  assert.match(content, /renderMenu\(\{ compact: true, onClose: closeFullWidthPopup \}\)/);
-  assert.match(content, /:host\(\.full-width-popup-surface\) \.full-width-popup \{ width:100vw; max-width:none/);
-  assert.doesNotMatch(policy, /REGISTER_GITHUB_ACTION_SURFACE/);
+  assert.match(worker, /chrome\.storage\.session\.set\(\{ \[ACTION_CONTEXT_KEY\]: toolbarTaskContext\(tab\) \}\)/);
+  const handler = worker.slice(worker.indexOf('async function toggleActionSurface('), worker.indexOf('async function dismissInactivePanels('));
+  assert.doesNotMatch(handler, /chrome\.scripting|chrome\.tabs\.sendMessage|TOGGLE_FULL_WIDTH_POPUP/);
+  assert.match(content, /renderActionSourceContext\(\)/);
+  const times = read('src/times/times.html');
+  assert.match(times, /id="activity-source-context"/);
+  assert.match(times, /id="activity-source-track"/);
+  assert.match(times, /id="activity-source-dismiss"/);
 });
 
-test('toolbar always opens a partial-height panel with independently selected width', () => {
-  assert.doesNotMatch(read('src/options/options.html'), /id="toolbar-display-mode"/);
-  assert.doesNotMatch(policy, /SET_TOOLBAR_DISPLAY_MODE/);
-  assert.match(worker, /chrome\.action\.setPopup\(\{ popup: '' \}\)/);
-  assert.match(content, /:host\(\.full-width-popup-surface\) \.full-width-popup \{[^}]*max-height:min\(720px,70vh\)/);
-  assert.match(content, /:host\(\.full-width-popup-surface\[data-clockoli-width="contained"\]\) \.tracker-toolbar,:host\(\.full-width-popup-surface\[data-clockoli-width="contained"\]\) \.menu-body \{ max-width:1100px; margin-inline:auto \}/);
-  assert.doesNotMatch(content, /:host\(\.full-width-popup-surface\[data-clockoli-width="contained"\]\) \.full-width-popup \{ width:min\(/);
+test('Activity consumes toolbar context from session storage, never from the extension URL', () => {
+  assert.match(content, /chrome\.storage\.onChanged\.addListener/);
+  assert.match(content, /chrome\.storage\.session\.get\(ACTION_CONTEXT_KEY\)/);
+  assert.match(content, /chrome\.storage\.session\.remove\(ACTION_CONTEXT_KEY\)/);
+  assert.match(content, /age >= -10_000 && age <= 120_000/);
+  assert.match(content, /actionSourceTask = task\?\.taskUrl === value\?\.taskUrl \? task : null/);
+  assert.match(content, /trackCurrentTimelineTask\(\{ sourceTask: task, preserveSavedDescription: true \}\)/);
+  assert.match(content, /link\.textContent = githubTabTitle\(task\.taskTitle\) \|\| task\.taskUrl/);
+  assert.doesNotMatch(read('src/times/times.html'), /src\/times\/times\.html\?task=|location\.hash/);
 });
 
 test('interface width persists and only options may write it', async () => {
@@ -81,7 +79,7 @@ async function actionHarness({ delivered = false, failure = 0, existingTabs = []
   const { default: vm } = await import('node:vm');
   const calls = [], setupReads = [];
   let currentSetup = setup;
-  const context = vm.createContext({ URL,
+  const context = vm.createContext({ URL, normalizeTaskUrl, parseGitHubProjectPaneIssueUrl,
     configuredSnapshot: async options => { setupReads.push(options); if (currentSetup instanceof Error) throw currentSetup; return currentSetup; },
     chrome: {
     runtime: { getURL: path => `chrome-extension://clockoli/${path}`,
@@ -109,13 +107,14 @@ async function actionHarness({ delivered = false, failure = 0, existingTabs = []
       create: async options => { calls.push(['tab', options]); existingTabs.push({ id: 100, windowId: 1, pendingUrl: options.url }); },
     },
     windows: { update: async (id, options) => { calls.push(['focus', id, options]); } },
+    storage: { session: { set: async value => { calls.push(['context', value]); } } },
     scripting: { executeScript: async options => {
       calls.push(['inject', options]);
       if (calls.filter(([kind]) => kind === 'inject').length === failure) throw new Error('Cannot access this page');
     } },
   } });
   const helper = worker.match(/async function openTimesPage\(\) \{[\s\S]*?\n\}/)?.[0] || '';
-  vm.runInContext(`let openingTimesPage = null;\n${helper}\n${worker.slice(worker.indexOf('async function shouldOpenOnboarding('), worker.indexOf("void chrome.action.setPopup({ popup: '' })"))}`, context);
+  vm.runInContext(`const ACTION_CONTEXT_KEY = 'clockoli-toolbar-task-context';\nlet openingTimesPage = null;\n${helper}\n${worker.slice(worker.indexOf('async function shouldOpenOnboarding('), worker.indexOf("void chrome.action.setPopup({ popup: '' })"))}`, context);
   return { calls, setupReads, setSetup: next => { currentSetup = next; },
     toggle: tab => context.toggleActionSurface(tab), openActivity: () => context.openTimesPage() };
 }
@@ -206,7 +205,7 @@ test('toolbar rediscovers Activity after the service worker restarts', async () 
   const activityUrl = 'chrome-extension://clockoli/src/times/times.html';
   const restarted = await actionHarness({ existingTabs: [{ id: 21, windowId: 4, url: activityUrl }] });
   await restarted.toggle({ id: 7, url: 'about:blank' });
-  assert.deepEqual(restarted.calls.map(([kind]) => kind), ['message', 'query', 'activate', 'focus']);
+  assert.deepEqual(restarted.calls.map(([kind]) => kind), ['context', 'query', 'activate', 'focus']);
   assert.equal(restarted.calls.some(([kind]) => kind === 'tab'), false);
 });
 
@@ -227,7 +226,7 @@ test('a closed Activity tab falls back to creating a new one', async () => {
     closeOnActivate: true,
   });
   await harness.toggle({ id: 1, url: 'chrome://extensions' });
-  assert.deepEqual(harness.calls.map(([kind]) => kind), ['message', 'query', 'activate', 'tab']);
+  assert.deepEqual(harness.calls.map(([kind]) => kind), ['context', 'query', 'activate', 'tab']);
 });
 
 test('a still-loading Activity tab is reused on the next click', async () => {
@@ -269,20 +268,28 @@ test('a tab beginning to navigate away during activation is not reused', async (
   assert.equal(harness.calls.filter(([kind]) => kind === 'tab').length, 1);
 });
 
-test('toolbar preserves delivery and HTTP injection order and falls back on either injection failure', async () => {
-  const delivered = await actionHarness({ delivered: true });
-  await delivered.toggle({ id: 1, url: 'https://github.com/acme/app/issues/1' });
-  assert.deepEqual(delivered.calls.map(([kind]) => kind), ['message']);
-  const injected = await actionHarness();
-  await injected.toggle({ id: 1, url: 'https://example.org' });
-  assert.deepEqual(injected.calls.map(([kind]) => kind), ['message', 'inject', 'inject']);
-  for (const url of ['https://chromewebstore.google.com/detail/example', 'https://example.org/file.pdf']) {
-    for (const failure of [1, 2]) {
-      const harness = await actionHarness({ failure });
-      await harness.toggle({ id: 1, url });
-      assert.equal(harness.calls.filter(([kind]) => kind === 'tab').length, 1);
-    }
-  }
+test('toolbar preserves canonical URL and title without injecting into the source page', async () => {
+  const harness = await actionHarness();
+  await harness.toggle({
+    id: 1, url: 'https://github.com/acme/app/issues/7?foo=bar#discussion_r1',
+    title: 'Fix UI by alice · Issue #7 · acme/app',
+  });
+  const value = harness.calls.find(([kind]) => kind === 'context')[1]['clockoli-toolbar-task-context'];
+  assert.equal(value.taskUrl, 'https://github.com/acme/app/issues/7');
+  assert.equal(value.taskTitle, 'Fix UI by alice · Issue #7 · acme/app');
+  assert.ok(Date.now() - value.openedAt < 60_000);
+  assert.equal(harness.calls.filter(([kind]) => kind === 'inject').length, 0);
+  assert.equal(harness.calls.filter(([kind]) => kind === 'message').length, 0);
+  assert.equal(harness.calls.filter(([kind]) => kind === 'tab').length, 1);
+});
+
+test('toolbar normalizes Projects issue links and clears context on restricted pages', async () => {
+  const harness = await actionHarness();
+  await harness.toggle({ id: 4, url: 'https://github.com/orgs/acme/projects/1/views/2?pane=issue&issue=acme%7Capp%7C9' });
+  assert.equal(harness.calls.find(([kind]) => kind === 'context')[1]['clockoli-toolbar-task-context'].taskUrl,
+    'https://github.com/acme/app/issues/9');
+  await harness.toggle({ id: 5, url: 'chrome://extensions' });
+  assert.equal(harness.calls.filter(([kind]) => kind === 'context').at(-1)[1]['clockoli-toolbar-task-context'], null);
 });
 
 test('activating another tab dismisses panels in inactive tabs even without page visibility events', async () => {

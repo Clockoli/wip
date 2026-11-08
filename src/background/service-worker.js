@@ -6,7 +6,7 @@ import {
 } from '../config/github-app.js';
 import { activeRecordPath } from '../domain/work-records.js';
 import { createUlid } from '../domain/ulid.js';
-import { normalizeTaskUrl, taskUrlOf } from '../domain/values.js';
+import { normalizeTaskUrl, parseGitHubProjectPaneIssueUrl, taskUrlOf } from '../domain/values.js';
 import { aggregateTaskParticipants, aggregateTrackedTasks } from '../domain/tasks.js';
 import { ChromeStore } from '../storage/chrome-store.js';
 import { IndexedDbBackend } from '../storage/chrome-store.js';
@@ -54,6 +54,7 @@ let directCompletedWrites = 0;
 const destinationValidationCache = new Map();
 const STATIC_ACTION_ICON = { 16: 'src/assets/clockoli-16.png', 32: 'src/assets/clockoli-32.png' };
 const ACTION_ICON_FRAMES = 8;
+const ACTION_CONTEXT_KEY = 'clockoli-toolbar-task-context';
 const currentCredentialProvider = new CredentialBroker({ clientId: GITHUB_APP_CLIENT_ID, store });
 const configuration = new ConfigurationService({
   store,
@@ -1910,28 +1911,24 @@ async function shouldOpenOnboarding() {
   }
 }
 
+function toolbarTaskContext(tab) {
+  try {
+    const url = new URL(tab?.url || '');
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return null;
+    // A Projects issue pane points to an issue, not a generic project-view task.
+    const taskUrl = normalizeTaskUrl(parseGitHubProjectPaneIssueUrl(url.href) || url.href);
+    return { taskUrl, taskTitle: String(tab.title || '').trim().slice(0, 300), openedAt: Date.now() };
+  } catch {
+    return null;
+  }
+}
+
 async function toggleActionSurface(tab) {
   if (await shouldOpenOnboarding()) return chrome.runtime.openOptionsPage();
-  if (!Number.isInteger(tab?.id)) return openTimesPage();
-  try {
-    try {
-      await chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_FULL_WIDTH_POPUP' });
-      return;
-    } catch {
-      const url = new URL(tab.url || '');
-      if (!['http:', 'https:'].includes(url.protocol)) return openTimesPage();
-    }
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: () => { globalThis.__CLOCKOLI_ACTION_SURFACE__ = true; },
-    });
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ['src/domain/recovery-actions.js', 'src/ui/tracking-card.js', 'src/ui/task-search.js', 'src/content/task-timeline-component.js', 'src/content/github.js'],
-    });
-  } catch {
-    return openTimesPage();
-  }
+  // Only the explicitly clicked page may supply this one-use task context.
+  // A restricted or invalid page clears the previous context.
+  await chrome.storage.session.set({ [ACTION_CONTEXT_KEY]: toolbarTaskContext(tab) });
+  return openTimesPage();
 }
 
 async function dismissInactivePanels({ windowId }) {

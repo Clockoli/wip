@@ -189,6 +189,8 @@
   const resolveTaskColor = globalThis.ClockoliTaskTimeline?.createColorResolver?.();
   const motionPreference = globalThis.matchMedia?.('(prefers-reduced-motion: no-preference)');
   let popupTask = null;
+  let actionSourceTask = null;
+  const ACTION_CONTEXT_KEY = 'clockoli-toolbar-task-context';
 
   function normalizeTaskUrl(value) {
     const candidate = String(value || '');
@@ -3264,13 +3266,13 @@
     if (!refreshMountedTimeline()) renderUi();
   }
 
-  async function trackCurrentTimelineTask({ preserveSavedDescription = false } = {}) {
+  async function trackCurrentTimelineTask({ preserveSavedDescription = false, sourceTask = null } = {}) {
     if (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight) return;
     timelineStartInFlight = true;
     refreshMountedTimeline();
     let startContext = null;
     try {
-      const task = popupMode ? await refreshPopupTask() : taskFromLocation();
+      const task = sourceTask || (popupMode ? await refreshPopupTask() : taskFromLocation());
       if (!task) throw new Error('Open an HTTP(S) page to start tracking.');
       if (sameTask(task, pageState.active)) return;
       const switching = Boolean(pageState.active);
@@ -4440,6 +4442,41 @@
     return true;
   }
 
+  function renderActionSourceContext() {
+    if (!timesMode) return;
+    const banner = document.getElementById('activity-source-context');
+    if (!banner) return;
+    const task = actionSourceTask;
+    banner.hidden = !task;
+    if (!task) return;
+    const link = document.getElementById('activity-source-link');
+    const url = document.getElementById('activity-source-url');
+    const track = document.getElementById('activity-source-track');
+    const label = document.getElementById('activity-source-track-label');
+    link.href = task.taskUrl;
+    link.textContent = githubTabTitle(task.taskTitle) || task.taskUrl;
+    link.title = task.taskUrl;
+    url.textContent = task.taskUrl;
+    const alreadyTracking = sameTask(task, pageState.active);
+    label.textContent = alreadyTracking ? 'Tracking this task' : pageState.active ? 'Switch to this task' : 'Track this task';
+    track.disabled = !pageState.configured || alreadyTracking || timelineStartInFlight
+      || timelineStopInFlight || timelineDeleteInFlight
+      || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
+  }
+
+  function receiveActionSourceContext(value) {
+    if (!timesMode) return;
+    const age = Date.now() - Number(value?.openedAt);
+    let task = null;
+    if (age >= -10_000 && age <= 120_000) {
+      try { task = taskFromUrl(value?.taskUrl, value?.taskTitle); } catch { /* Invalid context. */ }
+    }
+    actionSourceTask = task?.taskUrl === value?.taskUrl ? task : null;
+    renderActionSourceContext();
+    // The URL is consumed by this Activity document and never becomes a preference.
+    void chrome.storage.session.remove(ACTION_CONTEXT_KEY).catch(setError);
+  }
+
   function renderUi() {
     if ((!shadow || !root?.isConnected) && (!fullWidthPopupShadow || !fullWidthPopupRoot?.isConnected)) return;
     if (descriptionDraft && (!pageState.active || descriptionDraft.id !== (pageState.active.id || pageState.active.startedAt)
@@ -5102,6 +5139,7 @@
         refreshMountedTimeline();
         timelineInstance.restoreCalendarScroll?.(preservedActivityCalendarScroll);
       }
+      renderActionSourceContext();
       return;
     }
     if (popupMode) { shadow.append(style, renderMenu()); updateActivityWeekSummary(); restoreMenuScroll(preservedMenuScrollTop); return; }
@@ -5181,6 +5219,29 @@
   });
 
   if (timesMode) {
+    // Reused Activity tabs receive a fresh context without navigation or lost drafts.
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== 'session' || !Object.hasOwn(changes, ACTION_CONTEXT_KEY)) return;
+      const change = changes[ACTION_CONTEXT_KEY];
+      if (Object.hasOwn(change, 'newValue')) receiveActionSourceContext(change.newValue);
+    });
+    void chrome.storage.session.get(ACTION_CONTEXT_KEY).then(snapshot => {
+      if (Object.hasOwn(snapshot, ACTION_CONTEXT_KEY)) receiveActionSourceContext(snapshot[ACTION_CONTEXT_KEY]);
+    }).catch(setError);
+    document.getElementById('activity-source-track')?.addEventListener('click', async event => {
+      if (!event.isTrusted || !actionSourceTask) return;
+      const task = actionSourceTask;
+      if (sameTask(task, pageState.active)) return;
+      try { await trackCurrentTimelineTask({ sourceTask: task, preserveSavedDescription: true }); }
+      catch { /* trackCurrentTimelineTask displays the error. */ }
+      finally { renderActionSourceContext(); }
+    });
+    document.getElementById('activity-source-dismiss')?.addEventListener('click', event => {
+      if (!event.isTrusted) return;
+      actionSourceTask = null;
+      renderActionSourceContext();
+      void chrome.storage.session.remove(ACTION_CONTEXT_KEY).catch(setError);
+    });
     document.addEventListener('clockoli:local-tracking-changed', event => {
       const detail = event.detail ?? {};
       if (detail.type === 'STOP' && detail.completion?.entry?.id) {
