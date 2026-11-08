@@ -1204,6 +1204,18 @@ test('repository list loader clears when discovery is blocked or setup is cancel
   assert.equal(page.nodes.get('repository-list-loading').hidden, true);
 });
 
+test('complete settings import gives a concise success message', async () => {
+  const imported = { recentDays: 12, notRestored: [] };
+  const page = harness({ reply: request => request.type === 'IMPORT_SETTINGS' ? imported : preferences });
+  page.render(connectedState);
+  const input = page.nodes.get('import-settings-file');
+  input.files = [{ size: 100, text: async () => '{"backup":true}' }];
+  await input.listeners.change();
+  assert.equal(page.nodes.get('message').textContent, 'Local settings restored from backup.');
+  assert.equal(page.nodes.get('message').className, 'success');
+  assert.equal(input.disabled, false);
+});
+
 test('partial settings import message names repositories and project routes that were not restored', () => {
   const page = harness();
   const text = page.context.settingsImportMessage({ notRestored: [
@@ -1214,6 +1226,7 @@ test('partial settings import message names repositories and project routes that
   assert.match(text, /repository acme\/archive.*not connected/i);
   assert.match(text, /project “Legacy”.*acme\/archive.*not connected/i);
   assert.match(text, /connect.*import.*again/i);
+  assert.doesNotMatch(text, /GitHub remains connected/i);
 });
 
 test('partial settings import completes and displays the concrete recovery report', async () => {

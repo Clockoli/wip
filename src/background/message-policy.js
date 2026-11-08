@@ -54,10 +54,9 @@ export function assertMessageAllowed(type, sender, extensionOrigin) {
 }
 
 export function weekRangeForSender(payload, sender, extensionOrigin) {
-  const kind = assertMessageAllowed('LOAD_WEEK', sender, extensionOrigin);
-  if (kind === 'content' && (!sender?.tab || new URL(sender.url || sender.tab.url).hostname !== 'github.com')) {
-    throw new Error('Week reads from page tabs require GitHub');
-  }
+  // The toolbar can inject its tracking panel on any HTTP(S) page, not just GitHub.
+  // The sender allowlist and the bounded one-week payload validation still apply.
+  assertMessageAllowed('LOAD_WEEK', sender, extensionOrigin);
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)
       || Object.keys(payload).sort().join(',') !== 'endDate,startDate') throw new Error('Invalid week range');
   const date = value => {
