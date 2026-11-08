@@ -6,7 +6,7 @@ Every change is saved locally first and synchronized with GitHub in the backgrou
 
 ## Add a single entry
 
-The **Add time** button in the upper right of **Top tasks** and **Activity** adds one entry or entries for multiple selected days; it is not available in the toolbar panel.
+The **Add time** button in the upper right of **Top tasks** and **Activity** adds one entry or entries for multiple selected days; it is not available in the GitHub-page stopwatch panel.
 
 1. Search tracked tasks from all joined people in the connected time repositories by title or identity, including imported tasks without an HTTP(S) URL, or paste a new HTTP(S) task URL.
 2. Choose Start and optional End as keyboard-editable local times, followed by one native Date picker for the start day. Clicking either time field selects its entire current value for immediate replacement. Enter `1000`, Tab, `1200` for 10:00–12:00; leaving either field formats four digits as `HH:MM`.
@@ -122,3 +122,9 @@ Changing a completed entry's time checks the destination against completed recor
 ## Merge duplicate tasks
 
 When the same work was tracked under two identities, such as an imported Clockify task and its GitHub issue URL, use **Merge tasks** in Settings. See [Merge tasks](settings.md#merge-tasks).
+
+## Quick description editing in Calendar and Timeline
+
+Hover a time entry in Activity's Calendar or Timeline to open its compact details card. The description field is always available, even when empty (with the **Add description...** placeholder). Enter saves, Shift+Enter inserts a newline, Escape cancels an unsaved edit, and leaving the field saves it. The details card stays open while the description is being edited.
+
+**Track again** is the main action; **Edit** and **Delete** are separate visible icon buttons with tooltips.

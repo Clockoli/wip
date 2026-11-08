@@ -2,7 +2,7 @@
 
 Filter tracked time by period, person, project, and source, chart it, and export CSV, JSON, or PDF timesheets.
 
-Reports combines tracked time from selected or all time repositories, including teammates' personal branches you can read. Open it from the toolbar panel navigation or the GitHub split-menu arrow.
+Reports combines tracked time from selected or all time repositories, including teammates' personal branches you can read. Open it from Clockoli's page navigation or the GitHub split-menu arrow.
 
 Reports includes records whose Start date falls in the selected inclusive range.
 
@@ -41,6 +41,8 @@ The summary shows:
 Filter by Client, People, Projects, Task sources, and Time repositories. Client filters use project-client assignments from this browser's local settings. Select **All clients** or **Unassigned** if needed. For a GitHub issue or pull request, the **Task source** is `owner/repository`; for another URL it is the hostname. The **Time repository** is the destination that stores the record.
 
 ## Charts
+
+Compact controls beside the graph's axes clarify what each dropdown changes: **Y: Total time** selects the metric measured vertically; **X: Day** selects the horizontal grouping. **Stack by** independently controls the colored segments.
 
 Choose one vertical metric:
 
