@@ -21,7 +21,7 @@ Use **Only select repositories** when granting App access.
 
 ### Check a repository
 
-After sign-in, choose **Create my own repository** or **Join a team**. A Clockoli `/join/#repo=...` invitation tab automatically selects the join path if the extension can see it; several distinct open invitations require an explicit choice. Existing users can also paste the invite URL manually. To connect an existing repository, choose **Join a team** (or the existing-repository shortcut). Paste its URL or `owner/name` and select **Check** (or press Enter). Simply leaving the field does not check it. The **Check** button also retries a check and shows **Checking…** while a check is in progress.
+After sign-in, choose **Create my own repository** or **Join a team**. A Clockoli `/join/?repo=...` (legacy `#repo=` is also supported) invitation tab automatically selects the join path if the extension can see it; several distinct open invitations require an explicit choice. Existing users can also paste the invite URL manually. To connect an existing repository, choose **Join a team** (or the existing-repository shortcut). Paste its URL or `owner/name` and select **Check** (or press Enter). Simply leaving the field does not check it. The **Check** button also retries a check and shows **Checking…** while a check is in progress.
 
 Or type at least two characters of a repository name and choose one of up to eight matching GitHub App-granted suggestions from the dropdown. Choosing a suggestion checks the target but does not connect it; merely typing or seeing a suggestion does neither. The granted catalog is fetched on demand rather than displayed in full when setup opens, and not once per keystroke.
 

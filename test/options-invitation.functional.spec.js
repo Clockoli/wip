@@ -54,7 +54,7 @@ test('a published /join tab survives extension onboarding and selects Join witho
     await context.route('https://clockoli.com/join/**', route =>
       route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>Clockoli join</title>' }));
     const invitationTab = await context.newPage();
-    await invitationTab.goto('https://clockoli.com/join/#repo=acme%2Ftime-data');
+    await invitationTab.goto('https://clockoli.com/join/?repo=acme%2Ftime-data');
 
     const options = await context.newPage();
     const errors = [];

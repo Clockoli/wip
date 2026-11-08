@@ -10,16 +10,32 @@ export function validateJoinRepository(value) {
   return value;
 }
 
-// Matches the public clockoli.com/join fragment contract. Never decode twice.
+// Accept the current ?repo= form and the legacy #repo= form. Both must
+// identify the same repository when present, matching the website contract.
+// URLSearchParams decodes once; never decode the repository a second time.
 export function parseClockoliInvitationUrl(raw) {
-  if (typeof raw !== 'string' || raw.length > 1024) return '';
+  if (typeof raw !== 'string' || raw.length > 2048) return '';
   try {
     const url = new URL(raw);
     if (url.origin !== 'https://clockoli.com' || !['/join', '/join/'].includes(url.pathname)
-        || url.username || url.password || url.search || !url.hash || url.hash.length > 512) return '';
-    const params = new URLSearchParams(url.hash.slice(1));
-    if ([...params].length !== 1 || params.getAll('repo').length !== 1) return '';
-    return validateJoinRepository(params.get('repo'));
+        || url.username || url.password) return '';
+
+    // Query parameters such as utm_source are fine, but repo must be unique.
+    const queryValues = url.searchParams.getAll('repo');
+    if (queryValues.length > 1) return '';
+    const queryRepo = queryValues.length === 1 ? validateJoinRepository(queryValues[0]) : '';
+    if (queryValues.length && !queryRepo) return '';
+
+    let fragmentRepo = '';
+    if (url.hash) {
+      if (url.hash.length > 512) return '';
+      const params = new URLSearchParams(url.hash.slice(1));
+      if ([...params].length !== 1 || params.getAll('repo').length !== 1) return '';
+      fragmentRepo = validateJoinRepository(params.get('repo'));
+      if (!fragmentRepo) return '';
+    }
+    if (queryRepo && fragmentRepo && queryRepo !== fragmentRepo) return '';
+    return queryRepo || fragmentRepo;
   } catch { return ''; }
 }
 
@@ -35,7 +51,7 @@ export function discoverClockoliInvitations(tabs) {
 export function clockoliInvitationLink(repository) {
   const name = validateJoinRepository(repository);
   if (!name) return '';
-  const url = new URL('https://clockoli.com/join');
-  url.hash = new URLSearchParams({ repo: name }).toString();
+  const url = new URL('https://clockoli.com/join/');
+  url.searchParams.set('repo', name);
   return url.href;
 }

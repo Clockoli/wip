@@ -27,7 +27,7 @@ Sign-in uses GitHub's [device flow](https://docs.github.com/en/apps/oauth-apps/b
 
 Choose **Create my own repository** to start with a new private repository, or **Join a team** if someone has shared one with you. Both are first-class onboarding choices.
 
-If you arrived through `https://clockoli.com/join/#repo=owner%2Frepository`, leave that tab open while installing Clockoli. The extension detects the invitation, remembers the repository through sign-in and selects **Join a team**. When several invitation tabs are open, choose which repository to join. The URL itself grants no GitHub permissions and never causes a write without your confirmation. If the tab is unavailable, choose **Join a team** and paste the full Clockoli invitation link manually.
+If you arrived through `https://clockoli.com/join/?repo=owner%2Frepository` (or an older `#repo=` link), leave that tab open while installing Clockoli. The extension detects the invitation, remembers the repository through sign-in and selects **Join a team**. When several invitation tabs are open, choose which repository to join. The URL itself grants no GitHub permissions and never causes a write without your confirmation. If the tab is unavailable, choose **Join a team** and paste the full Clockoli invitation link manually.
 
 1. Paste the repository's GitHub URL (for example, `https://github.com/acme/time-data`) or `owner/name` into the repository field and click **Check** (or press Enter). You can also type at least two characters of a repository name and choose one of the suggestions.
 2. If Clockoli shows **Grant access**, select it. On GitHub, choose **Only select repositories**, add the time repository, and save. Return to Settings: Clockoli checks the repository again by itself.
