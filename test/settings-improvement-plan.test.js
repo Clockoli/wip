@@ -46,7 +46,7 @@ test('step two offers repositories and a manual target with conditional App acce
   assert.doesNotMatch(connect, /id="connect-repository"|id="refresh-repositories"/);
   assert.match(connect, /id="setup-default-destination"/);
   assert.match(connect, /id="finish-setup"[^>]*disabled[^>]*>Finish setup/);
-  assert.doesNotMatch(html, /id="repository-(?:setup|access)-step"|data-repository-choice|id="choose-existing-repository"/);
+  assert.doesNotMatch(html, /id="repository-(?:setup|access)-step"|data-repository-choice/);
   assert.match(script, /\$\('repository-step'\)\.hidden = step !== 2/);
   const access = script.slice(script.indexOf('function renderRepositoryAccess()'), script.indexOf('function repositoryActionKey('));
   assert.match(access, /Boolean\(repositoryTarget\)[\s\S]*discoveryStatus === 'ready'[\s\S]*&& !selectedRepository/);
@@ -224,7 +224,7 @@ test('storage recovery returns to selection under the universal explicit-confirm
 });
 
 test('direct repository selection is accessible and exposes check progress and focused review', () => {
-  assert.match(html, /<label for="repository-target">Enter a repository URL or owner\/name<\/label>[\s\S]*<input id="repository-target"/);
+  assert.match(html, /<label for="repository-target">Invitation link, repository URL, or owner\/name<\/label>[\s\S]*<input id="repository-target"/);
   assert.match(html, /id="repository-target-status"[^>]*role="status"[^>]*aria-live="polite"/);
   assert.match(html, /id="check-repository-target"[^>]*type="button"[^>]*aria-label="Check repository"[^>]*>Check<\/button>/);
   assert.match(html, /id="repository-confirmation"[^>]*tabindex="-1"[^>]*hidden/);
