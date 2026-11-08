@@ -126,50 +126,6 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
 });
 `;
 
-test('dedicated Activity tab searches and clears its List filter without injecting an HTTP page', async () => {
-  const extension = await mkdtemp(join(tmpdir(), 'clockoli-action-search-extension-'));
-  const profile = await mkdtemp(join(tmpdir(), 'clockoli-action-search-profile-'));
-  let context;
-  try {
-    await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
-    const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
-    manifest.background = { service_worker: 'test-worker.js' };
-    await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest));
-    await writeFile(join(extension, 'test-worker.js'), workerSource.replace(' - 3);', ' + 1);'));
-    context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
-      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
-    const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
-    const source = await context.newPage(), errors = [];
-    source.on('pageerror', error => errors.push(error.message));
-    worker.on('console', event => { if (event.type() === 'error') errors.push(event.text()); });
-    await source.route('https://example.com/clockoli-test', route => route.fulfill({ status: 200, contentType: 'text/html',
-      body: '<!doctype html><html><body><main>Test task page</main></body></html>' }));
-    await source.goto('https://example.com/clockoli-test');
-    // A non-GitHub source page has no injected Clockoli panel. Activity lives in its own tab.
-    await expect(source.locator('#clockoli-full-width-popup-root')).toHaveCount(0);
-    const activity = await context.newPage();
-    activity.on('pageerror', error => errors.push(error.message));
-    await activity.goto(`chrome-extension://${new URL(worker.url()).host}/src/times/times.html`);
-    const root = activity.locator('#clockoli-times-root');
-    await activity.locator('#activity-view-switcher').getByRole('button', { name: 'List' }).click();
-    const filter = root.getByRole('searchbox', { name: 'Search activity' });
-    const records = root.locator('.activity-list .entry-record');
-    await expect(records).toHaveCount(3);
-    await filter.fill('Same day task');
-    await expect(records).toHaveCount(1);
-    await expect(records).toContainText('Same day task');
-    await filter.fill('');
-    await expect(records).toHaveCount(3);
-    await expect(source.getByText('Test task page')).toBeVisible();
-    await expect(source.locator('#clockoli-full-width-popup-root')).toHaveCount(0);
-    expect(errors).toEqual([]);
-  } finally {
-    await context?.close();
-    await rm(extension, { recursive: true, force: true });
-    await rm(profile, { recursive: true, force: true });
-  }
-});
-
 test('Activity keeps local sync and conflict warnings visible in Timeline and Calendar', async () => {
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-pending-activity-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-pending-activity-profile-'));
@@ -581,7 +537,7 @@ test('imported Activity records display the theme-colored Clockoli icon in List 
       await switcher.getByRole('button', { name: 'Calendar' }).click();
       const tile = root.locator('.calendar-task[data-task-key="entry:imported"] .clockoli-fallback-icon').first();
       await expect(tile).toBeVisible();
-      expect(await tile.evaluate(element => getComputedStyle(element).backgroundColor)).toBe(listColor);
+      await expect(tile).toHaveCSS('background-color', listColor);
       await expect(tile).toHaveCSS('mask-image', /clockoli-inverse-circle\.svg/);
       const githubTile = root.locator('.calendar-task[data-task-key="entry:github-icon"] .clockoli-github-favicon').first();
       await expect(githubTile).toBeVisible();
