@@ -85,15 +85,25 @@ async function expectWeekHeaderLayout(root) {
   if (await navigation.locator('.week-navigation-label').isHidden()) {
     await expect(section.locator('.calendar-view:visible,.viewport:visible')).toBeVisible();
     await expect(section.locator('.calendar-sticky-header:visible,.day-row:visible')).toBeVisible();
-    const [bounds, left, right, chart, header, ruler] = await Promise.all([
-      section.locator('.timeline-shell').boundingBox(),
-      navigation.getByRole('button', { name: 'Previous week' }).boundingBox(),
-      navigation.getByRole('button', { name: 'Next week' }).boundingBox(),
-      section.locator('.calendar-view:visible,.viewport:visible').boundingBox(),
-      section.locator('.calendar-sticky-header:visible,.day-row:visible').boundingBox(),
-      section.locator('.ruler-row').boundingBox(),
-    ]);
-    expect(bounds && left && right && chart && header).toBeTruthy();
+    // ResizeObserver may reflow the shared timeline after the browser viewport
+    // changes. Wait for a complete header snapshot, not a half-updated layout.
+    let geometry;
+    await expect.poll(async () => {
+      const [bounds, left, right, chart, header, ruler] = await Promise.all([
+        section.locator('.timeline-shell').boundingBox(),
+        navigation.getByRole('button', { name: 'Previous week' }).boundingBox(),
+        navigation.getByRole('button', { name: 'Next week' }).boundingBox(),
+        section.locator('.calendar-view:visible,.viewport:visible').boundingBox(),
+        section.locator('.calendar-sticky-header:visible,.day-row:visible').boundingBox(),
+        section.locator('.ruler-row').boundingBox(),
+      ]);
+      geometry = { bounds, left, right, chart, header, ruler };
+      return { shell: Boolean(bounds), previous: Boolean(left), next: Boolean(right),
+        chart: Boolean(chart), header: Boolean(header) };
+    }, { message: 'Week navigation and calendar header settle after resizing' }).toEqual({
+      shell: true, previous: true, next: true, chart: true, header: true,
+    });
+    const { bounds, left, right, chart, header, ruler } = geometry;
     expect(await navigation.evaluate(element => element.parentElement?.classList.contains('timeline-shell'))).toBe(true);
     if (!ruler) expect(Math.abs((await navigation.boundingBox()).height - header.height)).toBeLessThan(2);
     if (ruler) {
