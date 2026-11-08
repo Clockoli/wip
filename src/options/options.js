@@ -1116,9 +1116,12 @@ function renderRepositoryAccess() {
   } else setLink('modal-new-time-repository', '');
   $('repository-access-target').textContent = repositoryTarget;
   $('repository-access-name').textContent = repositoryTarget;
-  $('repository-access-instruction').textContent = missing
-    ? 'Clockoli cannot access this repository. Check its name and your GitHub access; its existence is not confirmed.'
-    : 'Clockoli needs Contents: Read and write permission for this repository.';
+  const teamInvite = setupPath === 'join' && selectedJoinInvitation
+    && selectedJoinInvitation.toLowerCase() === repositoryTarget.toLowerCase();
+  $('repository-access-instruction').textContent = missing && teamInvite
+    ? 'Clockoli cannot access this team repository yet. Accept the GitHub invitation first. If access is still missing, ask the repository owner to grant Clockoli GitHub App access, then select Check again.'
+    : missing ? 'Clockoli cannot access this repository. Check its name and your GitHub access; its existence is not confirmed.'
+      : 'Clockoli needs Contents: Read and write permission for this repository.';
   const targetStatus = $('repository-target-status');
   const input = $('repository-target');
   renderRepositoryCheckButton();
@@ -2344,6 +2347,9 @@ async function checkRepositoryTarget(rawTarget, fromList = false, keepInput = fa
     updateRepositoryConfirmation();
     $('repository-access-panel').hidden = true;
     const savedChoice = rememberRepositoryTarget(target, !fromList);
+    // The creation path exposes the same Check/review controls once GitHub
+    // has created a repository, without requiring another scenario selection.
+    if (setupPath === 'create') renderJoinSetup();
     if (fromList) $('repository-target').value = '';
     renderRepositoryList(); renderRepositoryAccess();
     await savedChoice;
