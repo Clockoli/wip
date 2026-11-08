@@ -106,7 +106,7 @@ test('invitation tab is picked up on first run and inspected after GitHub author
     state: 'initialized_joinable', eligible: true, canJoin: true, defaultBranch: 'main' };
   const page = harness({
     joinState,
-    inviteTabs: [{ url: 'https://clockoli.com/join/#repo=acme%2Ftime-data' }],
+    inviteTabs: [{ url: 'https://clockoli.com/join/?repo=acme%2Ftime-data' }],
     reply: request => ({
       GET_ONBOARDING_STATE: { ready: false, appConfigured: true, auth: { mode: 'github_app', githubLogin: 'alex' }, config: null, destinations: [] },
       DISCOVER_REPOSITORIES: { repositories: [proposal], installations: [] },
@@ -130,9 +130,9 @@ test('invitation tab is picked up on first run and inspected after GitHub author
 test('multiple tabs require an explicit invitation selection and never silently join', async () => {
   const joinState = { selected: '', ignored: [] };
   const page = harness({ joinState, inviteTabs: [
-    { url: 'https://clockoli.com/join/#repo=acme%2Fdata' },
+    { url: 'https://clockoli.com/join/?repo=acme%2Fdata' },
     { url: 'https://clockoli.com/join/#repo=beta%2Fteam' },
-    { url: 'https://clockoli.com.evil.test/join/#repo=evil%2Fdata' },
+    { url: 'https://clockoli.com.evil.test/join/?repo=evil%2Fdata' },
   ] });
   page.render({ appConfigured: true, auth: { mode: 'github_app', githubLogin: 'alex' }, config: null, destinations: [] });
   await page.context.scanOpenJoinInvitations();
@@ -156,7 +156,7 @@ test('manual Clockoli invitation URL is accepted as an unverified repository cho
   page.render({ appConfigured: true, auth: { mode: 'github_app', githubLogin: 'alex' }, config: null, destinations: [] });
   page.nodes.get('choose-join-team').listeners.click();
   const input = page.nodes.get('repository-target');
-  input.value = 'https://clockoli.com/join/#repo=acme%2Ftime-data';
+  input.value = 'https://clockoli.com/join/?repo=acme%2Ftime-data';
   input.listeners.input();
   await page.nodes.get('check-repository-target').listeners.click();
   assert.equal(joinState.selected, 'acme/time-data');
