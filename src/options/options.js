@@ -412,6 +412,30 @@ function renderTeammateInstructions(container, destination) {
   intro.textContent = `Find a GitHub account for ${destinationLabel(destination)}. Clockoli checks their access before requesting a write invitation.`;
   details.append(summary, intro);
   renderTeammatePicker(details, destination, container);
+  const invitationUrl = clockoliInvitationLink(`${destination.owner}/${destination.repo}`);
+  if (invitationUrl) {
+    const actions = document.createElement('div'); actions.className = 'teammate-invitation-link';
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'secondary';
+    button.textContent = 'Copy Clockoli invitation link';
+    const status = document.createElement('p'); status.className = 'form-feedback'; status.setAttribute('role', 'status');
+    const fallback = document.createElement('input'); fallback.type = 'text'; fallback.readOnly = true;
+    fallback.setAttribute('aria-label', 'Clockoli invitation link'); fallback.value = invitationUrl; fallback.hidden = true;
+    fallback.addEventListener('focus', () => fallback.select());
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      try {
+        await navigator.clipboard.writeText(invitationUrl);
+        status.textContent = 'Invitation link copied. Grant GitHub repository access to your teammate separately.';
+        fallback.hidden = true;
+      } catch {
+        status.textContent = 'Clipboard unavailable. Select and copy the invitation link below.';
+        fallback.hidden = false; fallback.focus();
+      } finally { button.disabled = false; }
+    });
+    const note = document.createElement('p'); note.className = 'help';
+    note.textContent = 'Share this link after sending a GitHub repository invitation. The link alone does not grant access.';
+    actions.append(button, status, fallback, note); details.append(actions);
+  }
   const setup = document.createElement('details'); setup.className = 'teammate-setup';
   const setupSummary = document.createElement('summary'); setupSummary.textContent = 'What your teammate does next';
   const steps = document.createElement('ol'); steps.className = 'teammate-steps';
