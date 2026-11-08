@@ -134,6 +134,29 @@ async function closeOptions(fixture) {
   await rm(fixture.profileDirectory, { recursive: true, force: true });
 }
 
+// The real GitHub tab is not opened by this synthetic worker. Simulate the user
+// opening it and returning to Settings, which triggers the automatic check.
+async function returnFromGitHub(page) {
+  await page.evaluate(() => document.getElementById('open-device-page').addEventListener('click', event => event.preventDefault()));
+  await page.locator('#open-device-page').click();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+}
+
+test('Add time repository scrolls to the repository setup heading', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, browserErrors } = fixture;
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await expect(page.locator('#repository-step')).toBeHidden();
+    await page.locator('#add-time-repository').click();
+    await expect(page.locator('#repository-step-title')).toBeVisible();
+    const top = await page.locator('#repository-step-title').evaluate(node => node.getBoundingClientRect().top);
+    expect(top).toBeGreaterThanOrEqual(-1);
+    expect(top).toBeLessThan(12);
+    expect(browserErrors).toEqual([]);
+  } finally { await closeOptions(fixture); }
+});
+
 test('connected account can reauthorize without signing out or losing its repositories', async () => {
   const fixture = await openOptions();
   try {
@@ -151,7 +174,7 @@ test('connected account can reauthorize without signing out or losing its reposi
     await expect(page.locator('#device-panel')).toBeVisible();
     await expect(page.locator('#device-step')).toBeVisible();
     await worker.evaluate(() => { globalThis.authorizedAgain = true; });
-    await page.locator('#device-done').click();
+    await returnFromGitHub(page);
     await expect(page.locator('#device-panel')).toBeHidden();
     await expect(page.locator('#connected-account')).toHaveText('@octocat');
     await expect(page.locator('.time-repository')).toHaveCount(2);
@@ -173,8 +196,10 @@ test('an authorized attempt survives a transient onboarding read failure without
       globalThis.authorizedAgain = true;
       globalThis.failNextOnboardingRead = true;
     });
-    await page.locator('#device-done').click();
-    await expect(page.locator('#connection-status')).toHaveText('Checking repository access');
+    await returnFromGitHub(page);
+    // A completed authorization can already clear the sign-in warning while
+    // the repository step remains open; both states are valid after recovery.
+    await expect(page.locator('#connection-status')).toHaveText(/^(Checking repository access|Connected)$/);
     await expect(page.locator('#repository-step')).toBeVisible();
     await expect(page.locator('.time-repository')).toHaveCount(2);
     await page.waitForTimeout(5_200);
@@ -209,7 +234,7 @@ test('renewal failure opens sign-in immediately without a duplicate status error
     await expect(page.locator('#device-code')).toHaveValue('ABCD-1234');
     await expect(page.locator('.time-repository')).toHaveCount(2);
     await worker.evaluate(() => { globalThis.authorizedAgain = true; });
-    await page.locator('#device-done').click();
+    await returnFromGitHub(page);
     await expect(page.locator('#reauth-required')).toBeHidden();
     await expect(page.locator('#connected')).toBeVisible();
     await expect(page.locator('#connection-status')).toHaveText('Connected');
@@ -293,7 +318,7 @@ test('rejected reconnect attempt offers a new code without signing out or endles
     await page.locator('#reconnect-github').click();
     await expect(page.locator('#device-panel')).toBeVisible();
     await worker.evaluate(() => { globalThis.rejectNextPoll = true; });
-    await page.locator('#device-done').click();
+    await returnFromGitHub(page);
     await expect(page.locator('#message')).toContainText('Start again.');
     await expect(page.locator('#device-panel')).toBeHidden();
     await expect(page.locator('#reconnect-github')).toBeEnabled();
@@ -345,12 +370,17 @@ test('repository field checks only on explicit Check or Enter, with visible acti
     await page.locator('#add-time-repository').click();
     const existing = page.locator('.existing-repository-option');
     const create = page.locator('.new-repository-option');
-    await expect(existing).toBeVisible();
-    await expect(create).toBeVisible();
-    const [existingBox, createBox] = await Promise.all([existing.boundingBox(), create.boundingBox()]);
-    expect(createBox.y).toBeGreaterThanOrEqual(existingBox.y + existingBox.height);
+    await expect(page.locator('#choose-create-repository')).toBeVisible();
+    await expect(page.locator('#choose-join-team')).toBeVisible();
+    await expect(existing).toBeHidden();
+    await page.locator('#choose-create-repository').click();
     await expect(create.getByRole('link', { name: 'Create a new time repository' })).toBeVisible();
+    await expect(existing).toBeHidden();
     expect(await create.locator('.new-repository-action').evaluate(node => getComputedStyle(node).animationName)).toBe('none');
+    await page.locator('#change-repository-path').click();
+    await page.locator('#choose-join-team').click();
+    await expect(existing).toBeVisible();
+    await expect(create).toBeHidden();
     const input = page.locator('#repository-target');
     const check = page.getByRole('button', { name: 'Check repository', exact: true });
     const status = page.locator('#repository-target-status');
@@ -375,8 +405,7 @@ test('repository field checks only on explicit Check or Enter, with visible acti
     await expect(status).toHaveText('Checked. Ready, but not connected yet. Select "Connect repository" below to start using it.');
     const connect = page.locator('#connect-checked-repository');
     await expect(connect).toBeVisible();
-    expect(await create.locator('.new-repository-action').evaluate(node => getComputedStyle(node).backgroundColor))
-      .not.toBe(await connect.evaluate(node => getComputedStyle(node).backgroundColor));
+    expect(await page.locator('#join-invitation-panel').isVisible()).toBe(false);
     const appearance = locator => locator.evaluate(button => {
       const style = getComputedStyle(button);
       return { background: style.backgroundColor, color: style.color, border: style.borderTopColor };
@@ -392,7 +421,7 @@ test('repository field checks only on explicit Check or Enter, with visible acti
     await page.locator('#repository-step-title').click();
     await expect(status).toBeHidden();
     await check.click();
-    await expect(status).toContainText('Enter a valid GitHub repository URL or owner/name.');
+    await expect(status).toContainText('Enter a valid Clockoli invitation link, GitHub repository URL, or owner/name.');
     await expect(input).toHaveAttribute('aria-invalid', 'true');
     expect(await worker.evaluate(() => globalThis.requests.filter(type => type === 'INSPECT_REPOSITORY').length)).toBe(1);
     await input.fill('acme/check-example');

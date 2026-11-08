@@ -20,10 +20,14 @@ function section(id) {
 
 test('first run has two steps: GitHub sign-in then repository selection regardless of access state', () => {
   assert.match(html, /Step <span id="current-step">1<\/span> of 2/);
-  assert.match(html, /Set up Clockoli[\s\S]*private GitHub repository[\s\S]*Only you and people you grant access to can see it/i);
-  assert.match(html, /id="authorize"[^>]*>Sign in with GitHub<\/button>/);
-  assert.match(html, /try to copy it before opening GitHub[\s\S]*id="device-initial-paste-shortcut"/);
+  assert.match(html, /Welcome to Clockoli![\s\S]*private GitHub repository/i);
+  assert.match(html, /id="authorize"[^>]*>Connect GitHub<\/button>/);
+  assert.match(html, /id="authorize-panel"[\s\S]*id="device-initial-paste-shortcut"/);
+  assert.match(html, /<details[^>]*id="onboarding-why"[\s\S]*<summary>Why GitHub\?<\/summary>/);
   assert.match(html, /<details[^>]*id="connection-details"[\s\S]*<summary>How it works<\/summary>/i);
+  assert.match(styles, /data-clockoli-onboarding="welcome"/);
+  assert.match(styles, /html\[data-clockoli-onboarding="welcome"\] \.setup-progress,/);
+  assert.match(styles, /html\[data-clockoli-onboarding="welcome"\] \.primary-action-block \.help\{display:none\}/);
   assert.doesNotMatch(html, /of [34]|Step [34]/i);
   assert.equal(onboardingStep({ authorized: false }), 1);
   assert.equal(onboardingStep({ authorized: true, repositories: [], repositoryAccessDetected: false }), 2);
@@ -34,7 +38,7 @@ test('first run has two steps: GitHub sign-in then repository selection regardle
 test('step two offers repositories and a manual target with conditional App access, not scenario choices', () => {
   const connect = section('repository-step');
   assert.match(connect, /Connect time repositories/i);
-  assert.match(connect, /id="repository-target-form"[\s\S]*Enter a repository URL or owner\/name[\s\S]*id="repository-target"/);
+  assert.match(connect, /id="repository-target-form"[\s\S]*Invitation link, repository URL, or owner\/name[\s\S]*id="repository-target"/);
   assert.match(connect, /id="repository-list"/);
   assert.match(connect, /<a id="new-time-repository"[^>]*>Create a new time repository<\/a>/);
   assert.match(connect, /id="repository-access-panel"[^>]*hidden/);
@@ -42,7 +46,7 @@ test('step two offers repositories and a manual target with conditional App acce
   assert.doesNotMatch(connect, /id="connect-repository"|id="refresh-repositories"/);
   assert.match(connect, /id="setup-default-destination"/);
   assert.match(connect, /id="finish-setup"[^>]*disabled[^>]*>Finish setup/);
-  assert.doesNotMatch(html, /id="repository-(?:setup|access)-step"|data-repository-choice|id="choose-existing-repository"/);
+  assert.doesNotMatch(html, /id="repository-(?:setup|access)-step"|data-repository-choice/);
   assert.match(script, /\$\('repository-step'\)\.hidden = step !== 2/);
   const access = script.slice(script.indexOf('function renderRepositoryAccess()'), script.indexOf('function repositoryActionKey('));
   assert.match(access, /Boolean\(repositoryTarget\)[\s\S]*discoveryStatus === 'ready'[\s\S]*&& !selectedRepository/);
@@ -220,7 +224,7 @@ test('storage recovery returns to selection under the universal explicit-confirm
 });
 
 test('direct repository selection is accessible and exposes check progress and focused review', () => {
-  assert.match(html, /<label for="repository-target">Enter a repository URL or owner\/name<\/label>[\s\S]*<input id="repository-target"/);
+  assert.match(html, /<label for="repository-target">Invitation link, repository URL, or owner\/name<\/label>[\s\S]*<input id="repository-target"/);
   assert.match(html, /id="repository-target-status"[^>]*role="status"[^>]*aria-live="polite"/);
   assert.match(html, /id="check-repository-target"[^>]*type="button"[^>]*aria-label="Check repository"[^>]*>Check<\/button>/);
   assert.match(html, /id="repository-confirmation"[^>]*tabindex="-1"[^>]*hidden/);

@@ -89,19 +89,36 @@ async function expectWeekHeaderLayout(root) {
     // changes. Wait for a complete header snapshot, not a half-updated layout.
     let geometry;
     await expect.poll(async () => {
-      const [bounds, left, right, chart, header, ruler] = await Promise.all([
+      // Query the *visible* timeline/calendar view, not the first matching
+      // hidden view. Read its header geometry in one browser frame: querying
+      // an absent opposite-mode marker with locator.boundingBox() can wait
+      // for the full Playwright timeout instead of returning null.
+      const [bounds, left, right, view] = await Promise.all([
         section.locator('.timeline-shell').boundingBox(),
         navigation.getByRole('button', { name: 'Previous week' }).boundingBox(),
         navigation.getByRole('button', { name: 'Next week' }).boundingBox(),
-        section.locator('.calendar-view:visible,.viewport:visible').boundingBox(),
-        section.locator('.calendar-sticky-header:visible,.day-row:visible').boundingBox(),
-        section.locator('.ruler-row').boundingBox(),
+        section.locator('.calendar-view:visible,.viewport:visible').first().evaluate(activeView => {
+          const rect = node => {
+            if (!node) return null;
+            const box = node.getBoundingClientRect();
+            return box.width && box.height
+              ? { x: box.x, y: box.y, width: box.width, height: box.height } : null;
+          };
+          return {
+            chart: rect(activeView),
+            header: rect(activeView.querySelector('.calendar-sticky-header,.day-row')),
+            ruler: rect(activeView.querySelector('.ruler-row')),
+            firstDay: rect(activeView.querySelector('.calendar-day-header')),
+          };
+        }),
       ]);
-      geometry = { bounds, left, right, chart, header, ruler };
+      const { chart, header, ruler, firstDay } = view;
+      geometry = { bounds, left, right, chart, header, ruler, firstDay };
       return { shell: Boolean(bounds), previous: Boolean(left), next: Boolean(right),
-        chart: Boolean(chart), header: Boolean(header) };
+        chart: Boolean(chart), header: Boolean(header),
+        dayHeaderOrRuler: Boolean(ruler || firstDay) };
     }, { message: 'Week navigation and calendar header settle after resizing' }).toEqual({
-      shell: true, previous: true, next: true, chart: true, header: true,
+      shell: true, previous: true, next: true, chart: true, header: true, dayHeaderOrRuler: true,
     });
     const { bounds, left, right, chart, header, ruler } = geometry;
     expect(await navigation.evaluate(element => element.parentElement?.classList.contains('timeline-shell'))).toBe(true);
@@ -110,8 +127,7 @@ async function expectWeekHeaderLayout(root) {
       expect(left.x - bounds.x).toBeGreaterThanOrEqual(12);
       expect(bounds.x + bounds.width - right.x - right.width).toBeGreaterThanOrEqual(12);
     } else {
-      const firstDay = await section.locator('.calendar-day-header').first().boundingBox();
-      expect(right.x + right.width).toBeLessThanOrEqual(firstDay.x);
+      expect(right.x + right.width).toBeLessThanOrEqual(geometry.firstDay.x);
       expect(right.x - left.x).toBe(left.width - 1);
     }
     await expect(navigation.locator('.week-navigation-label')).toBeHidden();

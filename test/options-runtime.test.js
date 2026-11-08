@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline } from '../src/options/onboarding-flow.js';
+import { clockoliInvitationLink, discoverClockoliInvitations, parseClockoliInvitationUrl, validateJoinRepository } from '../src/domain/join-invitation.js';
 import { invoicingSettings, normalizeInvoicingSettings, normalizeProjects, parseRateFields } from '../src/domain/local-settings.js';
 import { taskPeriodRange } from '../src/domain/tasks.js';
 import { normalizeStoredTaskIdentity, normalizeTaskUrl } from '../src/domain/values.js';
@@ -39,7 +40,7 @@ function element(tagName = 'div') {
     dataset: {}, style: {}, attributes: {}, children: [], listeners: {}, classList: { toggle() {} },
     append(...children) { for (const child of children) { child.parentNode = this; this.children.push(child); } },
     replaceChildren(...children) { this.children = []; this.textContent = ''; this.append(...children); },
-    setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name) { delete this.attributes[name]; }, focus() { this.focused = true; }, scrollIntoView() { this.scrolled = true; },
+    setAttribute(name, value) { this.attributes[name] = value; }, removeAttribute(name) { delete this.attributes[name]; }, focus() { this.focused = true; }, scrollIntoView(options) { this.scrolled = true; this.scrollOptions = options; },
     showModal() { this.open = true; }, close() { this.open = false; this.listeners.close?.(); },
     querySelectorAll(selector) { const className = selector.startsWith('.') ? selector.slice(1) : ''; const matches = child => className ? child.className.split(' ').includes(className) : child.tagName.toLowerCase() === selector.toLowerCase(); return this.children.flatMap(child => [...(matches(child) ? [child] : []), ...child.querySelectorAll(selector)]); },
     querySelector(selector) { return this.querySelectorAll(selector)[0] || null; },
@@ -51,7 +52,8 @@ function element(tagName = 'div') {
   return node;
 }
 
-function harness({ reply = () => ({}), confirm = () => false, savedChoices = new Map(), collaboratorReplies = false } = {}) {
+function harness({ reply = () => ({}), confirm = () => false, savedChoices = new Map(), collaboratorReplies = false,
+  inviteTabs = [], joinState = { selected: '', ignored: [] } } = {}) {
   const nodes = new Map([...html.matchAll(/id="([^"]+)"/g)].map(([, id]) => [id, element()]));
   for (const [, id, label] of html.matchAll(/<button\b[^>]*id="([^"]+)"[^>]*>([^<]*)<\/button>/g)) nodes.get(id).textContent = label;
   const requests = [], timers = [], windowListeners = {}, documentListeners = {}, tabListeners = {};
@@ -60,10 +62,19 @@ function harness({ reply = () => ({}), confirm = () => false, savedChoices = new
     window: { addEventListener(type, handler) { windowListeners[type] = handler; }, confirm }, URL,
     setTimeout: (callback, delay) => { const timer = { callback, delay, cleared: false }; timers.push(timer); return timer; }, clearTimeout(timer) { if (timer) timer.cleared = true; }, queueMicrotask: callback => callback(),
     onboardingStep, parseRepositoryTarget, selectOnlyEligibleRepository, settleBeforeDeadline, normalizeProjects, parseRateFields, normalizeInvoicingSettings, invoicingSettings, taskPeriodRange, normalizeStoredTaskIdentity, normalizeTaskUrl,
-    ChromeStore: class { async getOnboardingRepositoryChoice(account) { return savedChoices.get(account) || ''; } async saveOnboardingRepositoryChoice(account, name) { savedChoices.set(account, name); } },
+    clockoliInvitationLink, discoverClockoliInvitations, parseClockoliInvitationUrl, validateJoinRepository,
+    ChromeStore: class {
+      async getOnboardingRepositoryChoice(account) { return savedChoices.get(account) || ''; }
+      async saveOnboardingRepositoryChoice(account, name) { savedChoices.set(account, name); }
+      async getJoinInvitation() { return joinState.selected; }
+      async getIgnoredJoinInvitations() { return [...joinState.ignored]; }
+      async saveJoinInvitation(name) { joinState.selected = name; joinState.ignored = joinState.ignored.filter(x => x.toLowerCase() !== name.toLowerCase()); }
+      async ignoreJoinInvitation(name) { joinState.ignored.push(name); if (joinState.selected.toLowerCase() === name.toLowerCase()) joinState.selected = ''; }
+      async clearJoinInvitation() { joinState.selected = ''; }
+    },
 
     ClockoliRecovery: { actionFor: () => null },
-    chrome: { tabs: { getCurrent: async () => ({ id: 11, windowId: 1 }), onActivated: { addListener(handler) { tabListeners.activated = handler; } } }, runtime: { sendMessage(request, callback) {
+    chrome: { tabs: { query: async () => inviteTabs, getCurrent: async () => ({ id: 11, windowId: 1 }), onActivated: { addListener(handler) { tabListeners.activated = handler; } } }, runtime: { sendMessage(request, callback) {
       if (request.type === 'RESUME_DEVICE_FLOW') {
         callback({ ok: true, data: null });
         return;
@@ -81,13 +92,128 @@ function harness({ reply = () => ({}), confirm = () => false, savedChoices = new
     } } },
   });
   vm.runInContext(taskSearchSource, context);
-  vm.runInContext(source.replace(/^import .*;\n/gm, '').slice(0, source.replace(/^import .*;\n/gm, '').indexOf('refreshState().then(refreshLocalPreferences)')), context);
+  vm.runInContext(source.replace(/^import .*;\n/gm, '').slice(0, source.replace(/^import .*;\n/gm, '').indexOf('scanOpenJoinInvitations().then(refreshState)')), context);
   return {
-    nodes, requests, timers, context, windowListeners, documentListeners, tabListeners,
+    nodes, requests, timers, context, windowListeners, documentListeners, tabListeners, joinState,
     render(state) { context.nextState = state; vm.runInContext('state = nextState; renderState();', context); },
     submit(id, submitter = null) { return nodes.get(id).listeners.submit({ preventDefault() {}, submitter }); },
   };
 }
+
+test('invitation tab is picked up on first run and inspected after GitHub authorization', async () => {
+  const joinState = { selected: '', ignored: [] };
+  const proposal = { fullName: 'acme/time-data', installationId: 10, repoId: 20,
+    state: 'initialized_joinable', eligible: true, canJoin: true, defaultBranch: 'main' };
+  const page = harness({
+    joinState,
+    inviteTabs: [{ url: 'https://clockoli.com/join/#repo=acme%2Ftime-data' }],
+    reply: request => ({
+      GET_ONBOARDING_STATE: { ready: false, appConfigured: true, auth: { mode: 'github_app', githubLogin: 'alex' }, config: null, destinations: [] },
+      DISCOVER_REPOSITORIES: { repositories: [proposal], installations: [] },
+      INSPECT_REPOSITORY: { repository: proposal },
+    }[request.type] || {}),
+  });
+  page.render({ ready: false, appConfigured: true, auth: null, config: null, destinations: [] });
+  await page.context.scanOpenJoinInvitations();
+  assert.equal(joinState.selected, 'acme/time-data');
+  assert.equal(page.nodes.get('connection-title').textContent, 'Join your team on Clockoli');
+  await page.context.refreshState();
+  assert.equal(page.nodes.get('repository-target').value, 'acme/time-data');
+  assert.equal(page.nodes.get('existing-repository-option').hidden, false);
+  assert.equal(page.nodes.get('join-invitation-panel').hidden, false);
+  assert.equal(page.requests.filter(request => request.type === 'INSPECT_REPOSITORY').length, 1);
+  assert.equal(page.nodes.get('repository-confirmation').open, true);
+  assert.equal(page.nodes.get('confirm-repository-action').textContent, 'Join repository');
+  assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
+});
+
+test('multiple tabs require an explicit invitation selection and never silently join', async () => {
+  const joinState = { selected: '', ignored: [] };
+  const page = harness({ joinState, inviteTabs: [
+    { url: 'https://clockoli.com/join/#repo=acme%2Fdata' },
+    { url: 'https://clockoli.com/join/#repo=beta%2Fteam' },
+    { url: 'https://clockoli.com.evil.test/join/#repo=evil%2Fdata' },
+  ] });
+  page.render({ appConfigured: true, auth: { mode: 'github_app', githubLogin: 'alex' }, config: null, destinations: [] });
+  await page.context.scanOpenJoinInvitations();
+  assert.equal(page.nodes.get('join-invitation-picker-label').hidden, false);
+  assert.equal(page.nodes.get('join-invitation-picker').children.length, 3);
+  assert.equal(page.nodes.get('join-invitation-picker').value, '');
+  assert.equal(page.nodes.get('use-join-invitation').disabled, true);
+  assert.equal(joinState.selected, '');
+  const select = page.nodes.get('join-invitation-picker');
+  select.value = 'beta/team'; await select.listeners.change();
+  assert.equal(joinState.selected, 'beta/team');
+  assert.equal(page.nodes.get('use-join-invitation').disabled, false);
+  await page.nodes.get('dismiss-join-invitation').listeners.click();
+  assert.deepEqual(joinState.ignored, ['beta/team']);
+});
+
+test('manual Clockoli invitation URL is accepted as an unverified repository choice', async () => {
+  const joinState = { selected: '', ignored: [] };
+  const page = harness({ joinState, reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? { repositories: [], installations: [] } : {} });
+  page.render({ appConfigured: true, auth: { mode: 'github_app', githubLogin: 'alex' }, config: null, destinations: [] });
+  page.nodes.get('choose-join-team').listeners.click();
+  const input = page.nodes.get('repository-target');
+  input.value = 'https://clockoli.com/join/#repo=acme%2Ftime-data';
+  input.listeners.input();
+  await page.nodes.get('check-repository-target').listeners.click();
+  assert.equal(joinState.selected, 'acme/time-data');
+  assert.equal(input.value, 'acme/time-data');
+  assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
+});
+
+test('new repository creation exposes Check and confirmation controls after returning from GitHub', async () => {
+  const page = harness({ reply: request => request.type === 'DISCOVER_REPOSITORIES'
+    ? { repositories: [], installations: [] } : {} });
+  page.render({ appConfigured: true, auth: { mode: 'github_app', githubLogin: 'alex' }, config: null, destinations: [] });
+  assert.equal(page.nodes.get('repository-path-choices').hidden, false);
+  page.nodes.get('choose-create-repository').listeners.click();
+  assert.equal(page.nodes.get('new-repository-option').hidden, false);
+  assert.equal(page.nodes.get('existing-repository-option').hidden, true);
+  page.nodes.get('new-repository-target').value = 'https://github.com/acme/clockoli-data';
+  await page.submit('new-repository-target-form');
+  assert.equal(page.nodes.get('existing-repository-option').hidden, false);
+  assert.equal(page.nodes.get('repository-target').value, 'acme/clockoli-data');
+  assert.equal(page.requests.some(request => request.type === 'SELECT_REPOSITORY'), false);
+});
+
+test('initial onboarding is focused until a default repository is connected', () => {
+  const page = harness();
+  page.render({ appConfigured: true, auth: null, config: null, destinations: [] });
+  assert.equal(page.context.document.documentElement.dataset.clockoliOnboarding, 'welcome');
+  assert.equal(page.nodes.get('connection-title').textContent, 'Welcome to Clockoli!');
+  assert.equal(page.nodes.get('authorize').textContent, 'Connect GitHub');
+  assert.match(page.nodes.get('connection-description').textContent, /private GitHub repository you control/);
+
+  page.render({ appConfigured: true, auth: null, config: null, destinations: [],
+    deviceAttempt: { attemptId: 'attempt', status: 'pending', userCode: 'ABCD-1234',
+      verificationUri: 'https://github.com/login/device', expiresAt: Date.now() + 600000,
+      nextPollAt: Date.now() + 300000 } });
+  assert.equal(page.context.document.documentElement.dataset.clockoliOnboarding, 'authorization');
+  assert.equal(page.nodes.get('connection-title').textContent, 'Connect to GitHub');
+
+  page.render({ ...connectedState, config: null, destinations: [] });
+  assert.equal(page.context.document.documentElement.dataset.clockoliOnboarding, 'setup');
+  assert.equal(page.nodes.get('connection-title').textContent, 'GitHub account');
+
+  page.render(connectedState);
+  assert.equal(page.context.document.documentElement.dataset.clockoliOnboarding, '');
+
+  const advanced = harness();
+  advanced.render({ appConfigured: true, auth: null, config: null, destinations: [] });
+  advanced.nodes.get('use-pat-instead').listeners.click();
+  assert.equal(advanced.context.document.documentElement.dataset.clockoliOnboarding, '');
+  for (const id of ['more-settings', 'advanced-settings', 'advanced-pat']) {
+    assert.equal(advanced.nodes.get(id).open, true, `${id} is accessible for advanced setup`);
+  }
+
+  const unavailable = harness();
+  unavailable.render({ appConfigured: false, auth: null, config: null, destinations: [] });
+  assert.equal(unavailable.context.document.documentElement.dataset.clockoliOnboarding, '');
+  assert.equal(unavailable.nodes.get('authorize').disabled, true);
+});
 
 function billingSaveResult(request, current = preferences) {
   return {
@@ -965,7 +1091,11 @@ test('reopening completed setup refreshes the granted catalog before showing sug
   await page.context.discoverRepositories();
   await page.nodes.get('finish-setup').listeners.click();
   granted = [old, added];
+  const heading = page.nodes.get('repository-step-title');
+  assert.equal(heading.scrolled, undefined);
   await page.nodes.get('add-time-repository').listeners.click({ preventDefault() {} });
+  assert.equal(page.nodes.get('repository-step').hidden, false);
+  assert.equal(heading.scrollOptions?.block, 'start', 'the repository heading is aligned with the top of the viewport');
   const input = page.nodes.get('repository-target');
   input.value = 'time'; input.listeners.input();
   await vm.runInContext('discoveryPromise', page.context);
@@ -1255,7 +1385,7 @@ test('unfinished repository names validate on Check, never on blur', async () =>
   await page.nodes.get('check-repository-target').listeners.click();
   assert.equal(page.requests.length, 0);
   assert.equal(input.attributes['aria-invalid'], 'true');
-  assert.match(page.nodes.get('repository-target-status').textContent, /Enter a valid GitHub repository URL/);
+  assert.match(page.nodes.get('repository-target-status').textContent, /Enter a valid Clockoli invitation link, GitHub repository URL/);
   input.value = ''; input.listeners.input();
   await input.listeners.blur();
   assert.equal(input.attributes['aria-invalid'], undefined);

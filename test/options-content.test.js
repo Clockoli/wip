@@ -8,11 +8,13 @@ const worker = await readFile(new URL('../src/background/service-worker.js', imp
 const recovery = await readFile(new URL('../src/domain/recovery-actions.js', import.meta.url), 'utf8');
 const styles = await readFile(new URL('../src/options/options.css', import.meta.url), 'utf8');
 
-test('existing repository connection is the primary onboarding path, creation is secondary', () => {
-  assert.match(source, /class="existing-repository-option"[\s\S]*Connect an existing repository/);
+test('create and join are equal, clickable onboarding choices', () => {
+  assert.match(source, /id="repository-path-choices"/);
+  assert.match(source, /id="choose-create-repository"[^>]*class="repository-path-choice"/);
+  assert.match(source, /id="choose-join-team"[^>]*class="repository-path-choice"/);
   assert.match(source, /id="new-time-repository" class="button-link secondary-link new-repository-action"/);
-  assert.ok(source.indexOf('id="repository-target-form"') < source.indexOf('id="new-time-repository"'));
-  assert.match(styles, /\.existing-repository-option\{[^}]*border:/);
+  assert.match(styles, /\.repository-path-choices\{[^}]*grid-template-columns:repeat\(2/);
+  assert.match(styles, /\.repository-path-choice:hover/);
   assert.doesNotMatch(styles, /new-repository-pulse|\.new-repository-action\{[^}]*animation:/);
 });
 
@@ -37,7 +39,7 @@ test('settings no longer exposes the repository data convention', () => {
 
 test('normal settings route is GitHub App onboarding with resumable authorization and repository selection', () => {
   assert.match(source, /Step <span id="current-step">1<\/span> of 2/i);
-  assert.match(source, /id="authorize"[^>]*>Sign in with GitHub<\/button>/);
+  assert.match(source, /id="authorize"[^>]*>Connect GitHub<\/button>/);
   for (const id of ['device-code', 'install-app', 'repository-list', 'finish-setup']) assert.match(source, new RegExp(`id="${id}"`));
   for (const type of ['START_DEVICE_FLOW', 'RESUME_DEVICE_FLOW', 'POLL_DEVICE_FLOW', 'DISCOVER_REPOSITORIES', 'SELECT_REPOSITORY']) assert.match(script, new RegExp(type));
   for (const code of ['auth_denied', 'device_code_expired', 'device_flow_superseded']) assert.match(script, new RegExp(code));
@@ -50,32 +52,44 @@ test('onboarding names and explains Device activation without hiding GitHub safe
   assert.match(source, /Act on your behalf[\s\S]*only repositories you later grant/i);
 });
 
-test('Device activation copies the code before opening GitHub and offers an immediate completion check', () => {
-  assert.match(source, /id="authorize"[^>]*>Sign in with GitHub<\/button>/i);
-  assert.match(source, /try to copy it before opening GitHub/i);
+test('welcome links to the official Clockoli GitHub App and retains the PAT fallback', () => {
+  assert.match(source, /Can't use the <a href="https:\/\/github\.com\/apps\/clockoli" target="_blank" rel="noreferrer">Clockoli GitHub App<\/a>\?/);
+  assert.match(source, /id="use-pat-instead"[^>]*>Use a personal access token instead<\/button>/);
+});
+
+test('Device activation copies the code before opening GitHub and keeps manual recovery available', () => {
+  assert.match(source, /id="authorize"[^>]*>Connect GitHub<\/button>/i);
+  assert.match(source, /show and copy a one-time code before opening GitHub/i);
   assert.match(source, /id="device-initial-paste-shortcut"/i);
   assert.match(source, /id="device-copy-status"[^>]*aria-live="polite"/i);
   assert.match(source, /id="open-device-page"[^>]*>Open GitHub to enter code/i);
   assert.match(source, /id="device-code"[^>]*readonly[^>]*aria-label="Device activation code"/i);
   assert.match(source, /id="device-handoff-status"[^>]*aria-live="polite"/i);
   assert.match(source, /id="copy-code"[^>]*aria-label="Copy device code"/i);
-  assert.match(source, /id="device-done"[^>]*>Done on GitHub—check now<\/button>/i);
-  assert.match(script, /navigator\.clipboard\.writeText\(attempt\.userCode\)/);
-  assert.match(script, /deviceClipboardState !== 'copied'/);
-  assert.ok(script.indexOf('navigator.clipboard.writeText(attempt.userCode)') < script.indexOf("type: 'OPEN_DEVICE_FLOW_PAGE'"));
-  const startHandler = worker.slice(worker.indexOf("if (message.type === 'START_DEVICE_FLOW')"), worker.indexOf("if (message.type === 'OPEN_DEVICE_FLOW_PAGE')"));
-  assert.doesNotMatch(startHandler, /chrome\.tabs\.create/);
+  assert.doesNotMatch(source, /id="device-done"/);
+  const start = script.slice(script.indexOf("$('authorize').addEventListener('click'"), script.indexOf("$('copy-code').addEventListener('click'"));
+  assert.match(start, /await navigator\.clipboard\.writeText\(attempt\.userCode\)/);
+  assert.match(start, /if \(deviceClipboardState === 'copied' && !deviceGitHubOpened\) scheduleAutomaticDeviceOpen\(attempt\)/);
+  assert.match(script, /if \(state\?\.deviceAttempt\?\.attemptId !== attempt\.attemptId \|\| !deviceOpeningGitHubAutomatically\) return/);
+  assert.match(script, /cancelScheduledDeviceOpen\(\);[\s\S]*deviceGitHubOpened = true/);
+  const workerStart = worker.slice(worker.indexOf("if (message.type === 'START_DEVICE_FLOW')"), worker.indexOf("if (message.type === 'OPEN_DEVICE_FLOW_PAGE')"));
+  assert.doesNotMatch(workerStart, /chrome\.tabs\.create/);
 });
 
-test('Device activation reveals code characters for two seconds, then holds for four seconds before GitHub', () => {
-  assert.match(styles, /#device-code\.code-reveal\{animation:device-code-reveal 2s/);
-  assert.match(styles, /@media\(prefers-reduced-motion:reduce\)\{#device-code\.code-reveal\{animation:none\}\}/);
+test('Device handoff displays the full code immediately, then a five-second countdown', () => {
+  assert.match(source, /id="device-handoff-countdown"[^>]*role="status"[^>]*hidden/);
+  assert.match(source, /Opening GitHub automatically in 5 seconds/);
+  assert.match(source, /id="device-handoff-track"|class="device-handoff-track"/);
+  assert.match(styles, /animation:device-handoff-shrink 5s linear both/);
+  assert.match(styles, /@media\(prefers-reduced-motion:reduce\)\{\.device-handoff-track span\{animation:none\}\}/);
+  assert.match(styles, /\.onboarding-hero\.device-code-active \.trust-list\{display:none\}/);
+  assert.doesNotMatch(styles, /device-code-reveal/);
+  assert.match(script, /const DEVICE_HANDOFF_PAUSE_MS = 5000/);
   const start = script.slice(script.indexOf("$('authorize').addEventListener('click'"), script.indexOf("$('copy-code').addEventListener('click'"));
-  assert.match(start, /renderDeviceAttempt\(attempt\);[\s\S]*device-panel'\)\.scrollIntoView\([\s\S]*classList\.add\('code-reveal'\)/);
-  assert.match(start, /await revealDeviceCode\(attempt\)/);
-  assert.match(script, /2000 \/ attempt\.userCode\.length/);
-  assert.match(start, /await new Promise\(resolve => setTimeout\(resolve, 4000\)\);[\s\S]*OPEN_DEVICE_FLOW_PAGE/);
-  assert.match(start, /state\.deviceAttempt\?\.attemptId !== attempt\.attemptId/);
+  assert.match(start, /renderDeviceAttempt\(attempt\);[\s\S]*device-panel'\)\.scrollIntoView\(/);
+  assert.doesNotMatch(start, /revealDeviceCode|code-reveal|setTimeout\(resolve, 4000\)/);
+  assert.match(script, /deviceAutoOpenTimer = setTimeout\(async \(\) => \{/);
+  assert.match(script, /\}, DEVICE_HANDOFF_PAUSE_MS\)/);
 });
 
 test('Sign in requests the manifest host permissions in its click gesture before starting device flow', () => {
@@ -90,13 +104,14 @@ test('Sign in requests the manifest host permissions in its click gesture before
 test('expected post-activation repository setup is neutral rather than an error', async () => {
   const onboarding = await readFile(new URL('../src/services/github-app-onboarding.js', import.meta.url), 'utf8');
   assert.doesNotMatch(onboarding, /Install Clockoli on a private repository, then check again/);
-  assert.match(source, /Connect an existing repository[\s\S]*Enter a repository URL or owner\/name/i);
+  assert.match(source, /id="existing-repository-option"[\s\S]*Invitation link, repository URL, or owner\/name/i);
 });
 
-test('repository-first choice has no scenario or owner preselection', () => {
+test('two genuine onboarding choices leave GitHub authorization and storage safety unchanged', () => {
+  assert.match(source, /id="choose-create-repository"/);
+  assert.match(source, /id="choose-join-team"/);
   assert.match(source, /id="repository-target"/);
   assert.match(source, /id="new-time-repository"[^>]*>Create a new time repository/i);
-  assert.doesNotMatch(source, /id="repository-setup-step"|id="choose-existing-repository"|id="choose-empty-repository"/);
   assert.doesNotMatch(source, /Use a personal repository|Join an organization repository|Set up an organization repository/i);
   assert.match(script, /configuredDestinations\(\)\.length === 0[\s\S]*discoverRepositories/);
 });
@@ -146,7 +161,7 @@ test('PAT setup remains an explicit advanced compatibility path without direct c
   assert.match(source, /<details[^>]*id="advanced-pat"[\s\S]*Use a personal access token/i);
   assert.doesNotMatch(script, /chrome\.storage|indexedDB|getAuthSnapshot|getPendingAuthSnapshot/);
   assert.deepEqual([...new Set([...script.matchAll(/choiceStore\.(\w+)\s*\(/g)].map(match => match[1]))].sort(),
-    ['getOnboardingRepositoryChoice', 'saveOnboardingRepositoryChoice'],
+    ['getIgnoredJoinInvitations', 'getJoinInvitation', 'getOnboardingRepositoryChoice', 'ignoreJoinInvitation', 'saveJoinInvitation', 'saveOnboardingRepositoryChoice'],
     'direct store access is limited to UI-only repository intent, never credentials');
   assert.match(script, /SAVE_CONFIG/);
   assert.doesNotMatch(source, /Private time-data repository/);
@@ -291,7 +306,7 @@ test('compliance documentation matches any-owner tracking and durable v1 work-it
 
 
 test('repository choice copy is plain language and errors stay visible at the current scroll position', () => {
-  assert.match(source, /Enter a repository URL or owner\/name/i);
+  assert.match(source, /Invitation link, repository URL, or owner\/name/i);
   assert.match(source, /explicitly connect a ready repository, regardless of who owns it/i);
   assert.match(source, /Anyone with read access[\s\S]*stored task URLs, titles, timestamps, and descriptions/i);
   assert.match(styles, /#message\.error\{[^}]*position:fixed/);
@@ -368,7 +383,7 @@ test('setup UI has two steps while docs retain explicit-write safety and multi-r
   const repositoryGuide = await readFile(new URL('../docs/time-data-repository.md', import.meta.url), 'utf8');
   assert.match(source, /Step <span id="current-step">1<\/span> of 2:/);
   assert.doesNotMatch(source, /id="repository-setup-step"|id="repository-access-step"/);
-  for (const label of ['Sign in with GitHub', 'Grant access', 'Finish setup', 'Initialize repository', 'Join repository', 'Set up storage branch', 'More settings', 'Use a personal access token', 'Validate and use PAT']) {
+  for (const label of ['Connect GitHub', 'Grant access', 'Finish setup', 'Initialize repository', 'Join repository', 'Set up storage branch', 'More settings', 'Use a personal access token', 'Validate and use PAT']) {
     assert.ok(gettingStarted.includes(`**${label}**`), label);
   }
   assert.match(gettingStarted, /two guided steps/i);

@@ -66,6 +66,7 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/content/task-timeline-component.js',
   'src/domain/bulk-time.js',
   'src/domain/invoicing.js',
+  'src/domain/join-invitation.js',
   'src/domain/local-settings.js',
   'src/domain/records.js',
   'src/domain/recovery-actions.js',

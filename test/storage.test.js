@@ -29,6 +29,24 @@ class MemoryBackend {
   async deleteMany(keys) { for (const key of keys) this.values.delete(key); }
 }
 
+test('join invitation survives restart and dismissal, and is cleared with local data', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  assert.equal(await store.getJoinInvitation(), '');
+  assert.deepEqual(await store.getIgnoredJoinInvitations(), []);
+  await assert.rejects(store.saveJoinInvitation('../bad'), /Invalid Clockoli invitation/);
+  await store.saveJoinInvitation('acme/time-data');
+  assert.equal(await new ChromeStore(backend).getJoinInvitation(), 'acme/time-data');
+  await store.ignoreJoinInvitation('acme/time-data');
+  assert.equal(await store.getJoinInvitation(), '');
+  assert.deepEqual(await store.getIgnoredJoinInvitations(), ['acme/time-data']);
+  await store.saveJoinInvitation('ACME/time-data');
+  assert.equal(await store.getJoinInvitation(), 'ACME/time-data');
+  assert.deepEqual(await store.getIgnoredJoinInvitations(), []);
+  await store.clearConfig();
+  assert.equal(await store.getJoinInvitation(), '');
+  assert.deepEqual(await store.getIgnoredJoinInvitations(), []);
+});
+
 test('Activity view preference survives a store restart and is cleared with local configuration', async () => {
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   assert.equal(await store.getActivityViewMode(), null);

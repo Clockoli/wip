@@ -12,18 +12,22 @@ You need:
 
 The repository that stores your time is your **time repository**. It is separate from the repositories, documents, and tickets you track, and Clockoli never needs write access to those. See [Key concepts](concepts.md).
 
-Settings opens by itself after installation. To reopen it, select the gear button in the Clockoli panel, or open the extension's details page. Until setup is complete, Settings focuses on the connection card; **More settings** holds Billable rates, Backup & restore (including **Import settings**), and **Advanced**.
+The welcome screen opens automatically after installation. Until you connect a time repository, Clockoli shows only the two setup steps: other navigation and preferences are hidden to help you get started. Clicking the Clockoli toolbar icon or trying to open Activity before finishing setup brings you back to Settings rather than showing an empty tracking page. If the GitHub App isn't an option, expand **Why GitHub?** and select **Use a personal access token instead**. After setup, reopen Settings using the gear button in the Clockoli panel or the extension's details page. **More settings** holds Billable rates, Backup & restore (including **Import settings**), and **Advanced**. If GitHub App sign-in is unavailable in a development build, the regular Settings page remains accessible for the PAT alternative.
 
 ## Step 1: Sign in with GitHub
 
-1. Select **Sign in with GitHub**. If the browser asks for permission to contact GitHub, allow it. Clockoli requests a one-time code and **tries to copy it to the clipboard**. Settings shows either **Code copied to your clipboard** or a clear copying error; it never assumes a copy succeeded.
-2. If copying succeeded, GitHub opens automatically after the code is shown. When GitHub asks for a code, **press ⌘V on macOS or Ctrl+V on Windows/Linux** to paste it; you do not need to retype the code. Confirm that you are on **github.com** and authorizing **Clockoli**, then approve.
-3. If automatic copying failed, **GitHub does not open automatically**. Stay in Settings, choose **Copy**, then **Open GitHub to enter code**. If browser clipboard access is blocked, select the displayed code and copy it with ⌘C (macOS) or Ctrl+C (Windows/Linux), then open GitHub and paste it.
-4. Return to Clockoli. It checks the authorization result automatically; **Done on GitHub—check now** retries immediately. If a tab failed to open, use **Open GitHub to enter code** instead.
+1. Select **Connect GitHub** on the welcome screen. You can expand **Why GitHub?** to read about access and privacy. If the browser asks for permission to contact GitHub, allow it. Clockoli shows the one-time code immediately and **tries to copy it to the clipboard**. It tells you whether copying succeeded.
+2. If copying succeeded, a five-second countdown appears before GitHub opens automatically. You can select **Open GitHub now** to skip the pause. On GitHub, paste the code with **⌘V on macOS or Ctrl+V on Windows/Linux**. Confirm that you are on **github.com** and authorizing **Clockoli**, then approve.
+3. If copying failed, **GitHub does not open automatically**. Select **Copy**, then **Open GitHub to enter code**. If clipboard access is blocked, select the displayed code and copy it with ⌘C (macOS) or Ctrl+C (Windows/Linux).
+4. Return to Clockoli. It shows **Waiting for GitHub authorization** and checks automatically; no manual confirmation is needed. If you closed or missed the GitHub tab, select **Reopen GitHub**. If the tab could not open automatically, select **Open GitHub to enter code** instead.
 
 Sign-in uses GitHub's [device flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow), so you never create or paste a personal access token. Signing in and giving the Clockoli GitHub App access to a repository are separate steps.
 
 ## Step 2: Connect a time repository
+
+Choose **Create my own repository** to start with a new private repository, or **Join a team** if someone has shared one with you. Both are first-class onboarding choices.
+
+If you arrived through `https://clockoli.com/join/#repo=owner%2Frepository`, leave that tab open while installing Clockoli. The extension detects the invitation, remembers the repository through sign-in and selects **Join a team**. When several invitation tabs are open, choose which repository to join. The URL itself grants no GitHub permissions and never causes a write without your confirmation. If the tab is unavailable, choose **Join a team** and paste the full Clockoli invitation link manually.
 
 1. Paste the repository's GitHub URL (for example, `https://github.com/acme/time-data`) or `owner/name` into the repository field and click **Check** (or press Enter). You can also type at least two characters of a repository name and choose one of the suggestions.
 2. If Clockoli shows **Grant access**, select it. On GitHub, choose **Only select repositories**, add the time repository, and save. Return to Settings: Clockoli checks the repository again by itself.
@@ -37,7 +41,7 @@ The first repository you connect becomes your default and completes setup. When 
 
 ### No time repository yet?
 
-Select **Create a new time repository** below the repository field. GitHub opens with the private Clockoli template, suggested as `clockoli-data`. After creating the repository, copy its URL from the GitHub address bar, return to Settings, paste it into the **New repository URL** dialog, and select **Check repository**. Then continue with step 2 above: creating a repository does not grant the Clockoli GitHub App access to it.
+Choose **Create my own repository**, then select **Create a new time repository**. GitHub opens with the private Clockoli template, suggested as `clockoli-data`. After creating the repository, copy its URL from the GitHub address bar, return to Settings, paste it into the **New repository URL** dialog, and select **Check repository**. Then continue with step 2 above: creating a repository does not grant the Clockoli GitHub App access to it.
 
 ### Which repositories work
 

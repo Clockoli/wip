@@ -15,10 +15,11 @@ Initializing an organization repository requires GitHub repository-admin permiss
 1. A repository administrator signs in, chooses a dedicated private time repository from autocomplete or enters its URL, and grants the Clockoli GitHub App access only if needed. The repository may belong to a person or an organization.
 2. If the repository is not initialized, the administrator checks it, reviews the privacy disclosure, and explicitly confirms **Initialize repository**.
 3. The administrator gives each teammate GitHub write access to the repository, either through **Invite teammates** in Settings (below) or directly on GitHub.
-4. Each teammate installs Clockoli, signs in with their own GitHub account, chooses the repository from autocomplete or enters its URL or `owner/name`, and selects **Check** (or presses Enter). If access is missing, they follow the target-specific access instructions and return.
-5. After reviewing the disclosure, the teammate explicitly confirms **Connect repository** if storage is already ready, **Join repository** for a new member, or **Set up storage branch** if they are already a member with a missing branch.
-6. Clockoli creates and verifies each user's personal storage branch, named from their stable GitHub user ID.
-7. Teammates can add the shared repository alongside other personal or organization time repositories and [route projects](projects-and-routing.md) to it.
+4. The teammate opens a Clockoli invitation URL such as `https://clockoli.com/join/#repo=acme%2Ftime-data`, keeps that tab open, installs Clockoli and signs in to GitHub. The extension discovers the invitation and prepares **Join a team** with the exact repository. With several invitation tabs, the teammate chooses one. If automatic pickup is unavailable, they can paste the full invitation link or the GitHub repository URL manually.
+5. The teammate accepts any pending GitHub repository invitation. If Clockoli App access is missing, the repository administrator must grant the App Contents write access. Clockoli checks access again before offering a join action.
+6. After reviewing the disclosure, the teammate explicitly confirms **Connect repository** if storage is already ready, **Join repository** for a new member, or **Set up storage branch** if they are already a member with a missing branch.
+7. Clockoli creates and verifies each user's personal storage branch, named from their stable GitHub user ID.
+8. Teammates can add the shared repository alongside other personal or organization time repositories and [route projects](projects-and-routing.md) to it.
 
 Give reporting-only users read access only if they may inspect all stored work data in that repository.
 
@@ -26,7 +27,7 @@ Give reporting-only users read access only if they may inspect all stored work d
 
 In the connected repository card in Settings, open **Invite teammates** with the + circle beside collaborator avatars. A repository administrator can search by GitHub username and review each result's login, public display name (if set), and avatar. Choose the account and confirm **Check access and invite**.
 
-Clockoli rechecks the selected GitHub user ID, repository coordinates, accepted collaborator access, and pending invitations, then requests GitHub repository **write** access only if neither exists. **About access and invitations** explains the permission scope; **What your teammate does next** contains shareable setup steps and a copy action.
+Clockoli rechecks the selected GitHub user ID, repository coordinates, accepted collaborator access, and pending invitations, then requests GitHub repository **write** access only if neither exists. **About access and invitations** explains the permission scope; **Copy Clockoli invitation link** creates a safe `clockoli.com/join#repo=...` link for the selected repository. It does not grant GitHub access or send an invitation on its own. **What your teammate does next** also contains shareable setup steps.
 
 Inviting requires both the signed-in user's repository-admin rights and **Administration: Read and write** on the Clockoli GitHub App installation. The App owner must enable that permission in the App settings and installations must accept the updated permission request before inviting works. Choose **Only select repositories** and grant the App access to the intended time repository; App permissions apply to every repository selected for that installation, **not** automatically to all repositories in your GitHub account. Organization and enterprise policies may forbid outside collaborators.
 

@@ -31,7 +31,7 @@
   <section class="card connection-card" aria-labelledby="connection-title">
     <div id="message" role="status" aria-live="polite"></div>
     <div class="card-heading">
-      <div><h2 id="connection-title" tabindex="-1">Set up Clockoli</h2><p id="connection-description">Connect your GitHub account so Clockoli can find private time repositories that you can use.</p></div>
+      <div><h2 id="connection-title" tabindex="-1">Welcome to Clockoli!</h2><p id="connection-description">Track your time with one click.</p></div>
       <span id="connection-status" class="badge">Not connected</span>
     </div>
 
@@ -57,6 +57,10 @@
       <p class="help">Clockoli refreshes GitHub access automatically. If renewal fails, reconnect without signing out; your time repositories and pending work stay in place. Repository access is managed separately below.</p>
     </div>
 
+    <div id="invitation-resume" class="notice invitation-resume" hidden>
+      <strong id="invitation-resume-text">Clockoli invitation detected</strong>
+      <button id="resume-join-invitation" type="button">Join team</button>
+    </div>
     <div id="onboarding">
       <div id="onboarding-flow">
         <div id="setup-progress" class="setup-progress" aria-live="polite">
@@ -72,52 +76,81 @@
             <strong>GitHub sign-in required</strong>
             <p>GitHub did not renew Clockoli's access. Sign in again with the same account to continue. Your time repositories and pending work are still here.</p>
           </div>
-          <p class="lead">Clockoli stores tracked time in a private GitHub repository. Only you and people you grant access to can see it.</p>
+          <p class="lead">Keep your time records in a private GitHub repository you control.</p>
           <div id="authorize-panel" class="primary-action-block">
-            <button id="authorize" type="button">Sign in with GitHub</button>
-            <p class="help">Clockoli will get a one-time code and try to copy it before opening GitHub. When GitHub asks for the code, paste it with <kbd id="device-initial-paste-shortcut">Ctrl+V</kbd>. You'll see whether copying succeeded.</p>
+            <button id="authorize" type="button">Connect GitHub</button>
+            <p class="help">We'll show and copy a one-time code before opening GitHub. Paste it there with <kbd id="device-initial-paste-shortcut">Ctrl+V</kbd>.</p>
           </div>
           <div id="device-panel" class="notice device-activation-panel" hidden>
             <p class="device-panel-heading"><strong>Your one-time GitHub sign-in code</strong></p>
             <div class="device-row"><input id="device-code" type="text" readonly aria-label="Device activation code"><button id="copy-code" type="button" class="secondary compact" aria-label="Copy device code">Copy</button></div>
             <p id="device-copy-status" class="device-copy-status" role="status" aria-live="polite"></p>
             <p id="device-handoff-status" class="device-handoff-instruction" aria-live="polite"></p>
-            <p id="device-wait" class="help" aria-live="polite">After approving on GitHub, Clockoli checks automatically every few seconds.</p>
+            <div id="device-handoff-countdown" class="device-handoff-countdown" role="status" aria-live="polite" hidden>
+              <p>Opening GitHub automatically in 5 seconds…</p>
+              <div class="device-handoff-track" aria-hidden="true"><span></span></div>
+            </div>
+            <p id="device-wait" class="help" aria-live="polite">Clockoli checks for authorization automatically.</p>
             <div class="actions">
               <a id="open-device-page" class="button-link secondary-link" target="_blank" rel="noreferrer">Open GitHub to enter code</a>
-              <button id="device-done" type="button" class="secondary">Done on GitHub—check now</button>
             </div>
           </div>
-          <ul class="trust-list">
-            <li>Clockoli requests only the repository access needed to read and write your data.</li>
-            <li>Your GitHub password is never shared with Clockoli.</li>
-            <li>You can disconnect this browser or revoke access at any time.</li>
-          </ul>
-          <details id="connection-details" class="inline-details">
-            <summary>How it works</summary>
-            <p>Clockoli uses GitHub Device activation, so you never need to create or paste a personal access token.</p>
-            <div class="explanation">
-              <strong>Use device codes safely</strong>
-              <p>Only enter a code after starting this connection here. Clockoli requests the code directly from GitHub and displays it locally. On GitHub, verify that the page names Clockoli. Cancel if you did not initiate the flow or received the code from another person.</p>
-            </div>
-            <div class="explanation">
-              <strong>What “Act on your behalf” means</strong>
-              <p>Clockoli can verify your GitHub identity, discover Clockoli App installations available to you, and read or write only repositories you later grant to the App. It cannot change account or organization settings or access ungranted repositories.</p>
-              <p class="help">A “new” or “few users” message on GitHub is an age and adoption notice, not an extra permission.</p>
-            </div>
+          <details id="onboarding-why" class="inline-details onboarding-why">
+            <summary>Why GitHub?</summary>
+            <p>Clockoli saves your time records in a private GitHub repository. Only you and people you grant access to can see them.</p>
+            <ul class="trust-list">
+              <li>Clockoli only needs access to repositories you choose.</li>
+              <li>Your GitHub password is never shared with Clockoli.</li>
+              <li>You can disconnect this browser or revoke access at any time.</li>
+            </ul>
+            <p class="help">Can't use the <a href="https://github.com/apps/clockoli" target="_blank" rel="noreferrer">Clockoli GitHub App</a>? <button id="use-pat-instead" type="button" class="link-button">Use a personal access token instead</button>.</p>
+            <details id="connection-details" class="inline-details">
+              <summary>How it works</summary>
+              <p>Clockoli uses GitHub Device activation, so you never need to create or paste a personal access token.</p>
+              <div class="explanation">
+                <strong>Use device codes safely</strong>
+                <p>Only enter a code after starting this connection here. Clockoli requests the code directly from GitHub and displays it locally. On GitHub, verify that the page names Clockoli. Cancel if you did not initiate the flow or received the code from another person.</p>
+              </div>
+              <div class="explanation">
+                <strong>What “Act on your behalf” means</strong>
+                <p>Clockoli can verify your GitHub identity, discover Clockoli App installations available to you, and read or write only repositories you later grant to the App. It cannot change account or organization settings or access ungranted repositories.</p>
+                <p class="help">A “new” or “few users” message on GitHub is an age and adoption notice, not an extra permission.</p>
+              </div>
+            </details>
           </details>
 
         </section>
 
         <section id="repository-step" class="onboarding-step" aria-labelledby="repository-step-title" hidden>
           <h3 id="repository-step-title" tabindex="-1">Connect time repositories</h3>
-          <div class="existing-repository-option">
-            <h4>Connect an existing repository</h4>
-            <p class="help">Paste its GitHub URL or search by name, then select Check.</p>
+          <div id="repository-path-choices" class="repository-path-choices">
+            <button id="choose-create-repository" type="button" class="repository-path-choice">
+              <strong>Create my own repository</strong>
+              <span>Start tracking in a new private repository you control.</span>
+            </button>
+            <button id="choose-join-team" type="button" class="repository-path-choice">
+              <strong>Join a team</strong>
+              <span>Connect a shared repository you've been invited to use.</span>
+            </button>
+            <button id="choose-existing-repository" type="button" class="link-button">Already have your own Clockoli repository? Connect it.</button>
+          </div>
+          <div id="join-invitation-panel" class="notice join-invitation-panel" hidden>
+            <p id="join-invitation-status" role="status" aria-live="polite"></p>
+            <label id="join-invitation-picker-label" for="join-invitation-picker" hidden>Choose a team invitation
+              <select id="join-invitation-picker"></select>
+            </label>
+            <div class="actions">
+              <button id="use-join-invitation" type="button" class="secondary">Check this invitation</button>
+              <button id="dismiss-join-invitation" type="button" class="link-button">Dismiss invitation</button>
+            </div>
+          </div>
+          <div id="existing-repository-option" class="existing-repository-option" hidden>
+            <h4 id="repository-existing-title">Connect a repository</h4>
+            <p class="help" id="repository-existing-help">Paste a Clockoli invitation link, GitHub repository URL, or owner/name, then select Check.</p>
             <form id="repository-target-form">
-              <label for="repository-target">Enter a repository URL or owner/name</label>
+              <label for="repository-target">Invitation link, repository URL, or owner/name</label>
               <div class="repository-target-control">
-                <input id="repository-target" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Paste URL or type a repository name" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="repository-list" aria-describedby="repository-target-status">
+                <input id="repository-target" maxlength="1024" autocomplete="off" spellcheck="false" placeholder="Paste an invitation link or repository name" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="repository-list" aria-describedby="repository-target-status">
                 <button id="check-repository-target" type="button" class="repository-target-check" aria-label="Check repository" title="Check repository access and storage" disabled>Check</button>
                 <div id="repository-choice-fieldset" class="repository-suggestions" hidden>
                   <div id="repository-list-loading" class="repository-list-loading" role="status" aria-live="polite" hidden><span class="repository-loading-spinner" aria-hidden="true"></span>Finding granted repositories…</div>
@@ -128,8 +161,8 @@
             <p id="repository-target-status" class="repository-check-status" role="status" aria-live="polite" hidden></p>
             <button id="connect-checked-repository" type="button" hidden>Connect repository</button>
           </div>
-          <div class="new-repository-option">
-            <span>Don't have a time repository yet?</span>
+          <div id="new-repository-option" class="new-repository-option" hidden>
+            <span>Start with a new private repository named clockoli-data (you can rename it on GitHub).</span>
             <a id="new-time-repository" class="button-link secondary-link new-repository-action" target="_blank" rel="noreferrer" href="https://github.com/new?name=clockoli-data&amp;description=Private+Clockoli+time+data&amp;visibility=private&amp;template_owner=Clockoli&amp;template_name=data-template">Create a new time repository</a>
           </div>
           <dialog id="new-repository-guidance" class="repository-access-dialog" aria-labelledby="new-repository-guidance-title" aria-describedby="new-repository-guidance-body" hidden>
@@ -156,6 +189,7 @@
             </div>
           </dialog>
 
+          <button id="change-repository-path" class="link-button" type="button" hidden>Choose a different setup option</button>
           <p class="help privacy-disclosure">Anyone with read access to these repositories can see stored task URLs, titles, timestamps, and descriptions. Use a separate repository for each privacy boundary.</p>
     <p id="setup-ready-summary" class="help" role="status"></p>
     <label id="setup-default-destination-label">Default time repository<select id="setup-default-destination"></select></label>
