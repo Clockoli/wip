@@ -60,7 +60,9 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     pendingWrites, pendingCount: pendingWrites.length });
   if (message.type === 'CONSUME_TOOLBAR_TASK_CONTEXT') {
     respond({ ok: true, data: { present: false, value: null } });
-  } else if (message.type === 'LOAD_TIMES' && globalThis.deferOverlapRecent) {
+    return;
+  }
+  if (message.type === 'LOAD_TIMES' && globalThis.deferOverlapRecent) {
     globalThis.finishOverlapRecent = () => respond({ ok: true, data: state() });
     return true;
   }
