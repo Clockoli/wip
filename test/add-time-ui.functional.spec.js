@@ -738,7 +738,7 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       expect(completed).toEqual({ type: 'ADD_TIME', taskUrl, taskTitle: 'Existing task',
         startedAt: expectedTimes[0], endedAt: expectedTimes[1], description: 'Focused work\nReviewed results' });
       await expect(page.locator('.add-time-success')).toBeVisible();
-      await expect(page.locator('.add-time-success')).toHaveText('✓ Saved');
+      await expect(page.locator('.add-time-success')).toHaveText('Saved');
       if (path === 'tasks/tasks.html') {
         await expect.poll(() => worker.evaluate(() => Boolean(globalThis.pendingTasksRespond))).toBe(true);
         await worker.evaluate(() => {

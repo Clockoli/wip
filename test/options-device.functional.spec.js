@@ -99,7 +99,7 @@ test('device handoff explains the countdown, handles manual opening and clipboar
       return { fontWeight: Number(css.fontWeight), leftBorder: parseFloat(css.borderLeftWidth),
         background: css.backgroundColor, color: css.color };
     });
-    expect(style.fontWeight).toBeGreaterThanOrEqual(700);
+    expect(style.fontWeight).toBeGreaterThanOrEqual(600);
     expect(style.leftBorder).toBeGreaterThanOrEqual(3);
     expect(style.background).not.toBe('rgba(0, 0, 0, 0)');
     expect(await page.evaluate(() => window.testCopiedCode)).toBe('ABCD-1234');

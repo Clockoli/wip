@@ -73,6 +73,15 @@ const repositoryCollaborators = new Map();
 let collaboratorAccount = '';
 
 
+function removeIcon() {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16'); svg.setAttribute('width', '16'); svg.setAttribute('height', '16');
+  svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('fill', 'currentColor');
+  const shape = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  shape.setAttribute('d', 'M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z'); svg.append(shape);
+  return svg;
+}
+
 function message(text, kind = '') {
   $('message').textContent = text;
   $('message').className = kind;
@@ -515,9 +524,7 @@ function renderDestinationCard(destination, isDefault) {
   disclosure.setAttribute('class', 'repository-disclosure-icon');
   disclosure.setAttribute('viewBox', '0 0 16 16'); disclosure.setAttribute('aria-hidden', 'true');
   const chevron = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  chevron.setAttribute('d', 'M3 6l5 5 5-5');
-  chevron.setAttribute('fill', 'none'); chevron.setAttribute('stroke', 'currentColor');
-  chevron.setAttribute('stroke-width', '1.75'); chevron.setAttribute('stroke-linecap', 'round'); chevron.setAttribute('stroke-linejoin', 'round');
+  chevron.setAttribute('d', 'M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.939l3.72-3.719a.749.749 0 0 1 1.06 0Z'); chevron.setAttribute('fill', 'currentColor');
   disclosure.append(chevron); headingTitle.append(disclosure, title);
   const people = document.createElement('div'); people.className = 'repository-people';
   const collaborators = document.createElement('div'); collaborators.className = 'repository-collaborators';
@@ -529,9 +536,7 @@ function renderDestinationCard(destination, isDefault) {
     const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     icon.setAttribute('viewBox', '0 0 16 16'); icon.setAttribute('aria-hidden', 'true');
     const cross = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    cross.setAttribute('d', 'M8 3v10M3 8h10');
-    cross.setAttribute('fill', 'none'); cross.setAttribute('stroke', 'currentColor');
-    cross.setAttribute('stroke-width', '1.75'); cross.setAttribute('stroke-linecap', 'round');
+    cross.setAttribute('d', 'M7.75 2a.75.75 0 0 1 .75.75V7h4.25a.75.75 0 0 1 0 1.5H8.5v4.25a.75.75 0 0 1-1.5 0V8.5H2.75a.75.75 0 0 1 0-1.5H7V2.75A.75.75 0 0 1 7.75 2Z'); cross.setAttribute('fill', 'currentColor');
     icon.append(cross); add.append(icon);
     add.addEventListener('click', event => {
       event.preventDefault(); event.stopPropagation();
@@ -1512,7 +1517,7 @@ function addClientRow(client = null) {
     input.addEventListener('input', () => { row.dataset.touched = 'true'; if (className === 'client-name') refreshProjectClients(); });
     label.append(input); row.append(label);
   }
-  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-client'; remove.textContent = '✕'; remove.setAttribute('aria-label', value.name ? `Remove client ${value.name}` : 'Remove this client');
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-client'; remove.append(removeIcon()); remove.setAttribute('aria-label', value.name ? `Remove client ${value.name}` : 'Remove this client');
   const save = document.createElement('button'); save.type = 'submit'; save.formNoValidate = true; save.className = 'primary save-client'; save.textContent = 'Save';
   remove.addEventListener('click', () => { row.remove(); for (const rateRow of $('rates-list').querySelectorAll('.rate-row')) if (rateRow.dataset.clientId === value.id) rateRow.remove(); refreshProjectClients(); refreshRateClients(); }); row.append(remove, save); $('clients-list').append(row); refreshProjectClients(); refreshRateClients();
 }
@@ -1538,7 +1543,7 @@ function addProjectRow(project = { name: '', substrings: [], client: '' }) {
   const actions = document.createElement('div'); actions.className = 'project-actions';
   const up = document.createElement('button'); up.type = 'button'; up.className = 'secondary move-project-up'; up.textContent = '↑'; up.setAttribute('aria-label', `Move project ${project.name || 'row'} up`); up.addEventListener('click', () => moveProjectRow(row, -1));
   const down = document.createElement('button'); down.type = 'button'; down.className = 'secondary move-project-down'; down.textContent = '↓'; down.setAttribute('aria-label', `Move project ${project.name || 'row'} down`); down.addEventListener('click', () => moveProjectRow(row, 1));
-  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-project'; remove.textContent = '✕'; remove.setAttribute('aria-label', project.name ? `Remove project ${project.name}` : 'Remove this project');
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-project'; remove.append(removeIcon()); remove.setAttribute('aria-label', project.name ? `Remove project ${project.name}` : 'Remove this project');
   remove.addEventListener('click', () => { row.remove(); refreshProjectOrderControls(); });
   actions.append(up, down, remove); row.append(nameLabel, substringsLabel, destinationLabelElement, clientLabel, actions); $('projects-list').append(row); wireAutoGrow(substrings); renderDestinationControls(localPreferences || {}); refreshProjectOrderControls(); refreshProjectClients();
 
@@ -1821,7 +1826,7 @@ function renderMergeQueue() {
     const targetTitle = document.createElement('span'); targetTitle.textContent = mergeTaskLabel(pair.target);
     const targetUrl = document.createElement('small'); targetUrl.className = 'merge-queue-task-url'; targetUrl.textContent = pair.target.taskUrl;
     target.append(targetTitle, targetUrl);
-    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-project merge-pair-remove'; remove.textContent = '✕';
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-project merge-pair-remove'; remove.append(removeIcon());
     remove.setAttribute('aria-label', `Remove merge pair ${mergeTaskLabel(pair.source)} to ${mergeTaskLabel(pair.target)}`);
     remove.addEventListener('click', () => { mergePairs = mergePairs.filter(item => item !== pair); renderMergeQueue(); });
     row.append(source, arrow, target, remove); list.append(row);

@@ -1009,12 +1009,12 @@ test('Activity calendar metrics and view switcher fit the desktop and mobile lay
     });
     expect(listControls.searchRight).toBeLessThan(listControls.navigationLeft);
     expect(listControls.navigationRight).toBeLessThan(listControls.refreshLeft);
-    expect(listControls.previousWidth).toBe(46);
-    expect(listControls.previousHeight).toBe(50);
-    expect(listControls.nextWidth).toBe(46);
-    expect(listControls.nextHeight).toBe(50);
-    expect(listControls.previousGap).toBe(12);
-    expect(listControls.nextGap).toBe(12);
+    expect(listControls.previousWidth).toBe(32);
+    expect(listControls.previousHeight).toBe(32);
+    expect(listControls.nextWidth).toBe(32);
+    expect(listControls.nextHeight).toBe(32);
+    expect(listControls.previousGap).toBe(8);
+    expect(listControls.nextGap).toBe(8);
     await quickStartPage.setViewportSize({ width: 420, height: 720 });
     const narrowControls = await panelToolbar.evaluate(toolbar => {
       const nav = toolbar.querySelector('.week-navigation').getBoundingClientRect();
@@ -1030,7 +1030,7 @@ test('Activity calendar metrics and view switcher fit the desktop and mobile lay
     await quickStartPage.setViewportSize({ width: 1774, height: 900 });
     await expect(githubPanel.locator('.popup-list-total')).toBeHidden();
     await expect(githubPanel.locator('.today-list .section-head')).toHaveCount(0);
-    await expect(githubPanel.locator('.today-list .entry-record').first()).toHaveCSS('border-top-left-radius', '10px');
+    await expect(githubPanel.locator('.today-list .entry-record').first()).toHaveCSS('border-top-left-radius', '6px');
     await localSearch.fill('Earlier day task');
     await expect(githubPanel.locator('.today-list .entry-record')).toHaveCount(1);
     await localSearch.fill('Archived task');
@@ -1480,7 +1480,7 @@ test('toolbar popup shares Activity summary, chart navigation, and List controls
     await expect(root.locator('.today-list .section-head')).toHaveCount(0);
     await expect(root.locator('.popup-list-total')).toBeHidden();
     await expect(root.locator('.today-list .entry-record').first()).toHaveCSS('border-top-width', '1px');
-    await expect(root.locator('.today-list .entry-record').first()).toHaveCSS('border-top-left-radius', '10px');
+    await expect(root.locator('.today-list .entry-record').first()).toHaveCSS('border-top-left-radius', '6px');
     const reads = await worker.evaluate(() => globalThis.trackingMessages.length);
     await refresh.click();
     await expect.poll(() => worker.evaluate(() => globalThis.trackingMessages.length)).toBeGreaterThan(reads);
@@ -1708,7 +1708,7 @@ test('Tracking now stacks task details and places Start, Duration and Stop on th
     expect(await worker.evaluate(() => active.startedAt)).toBe(`${day}T12:00:17Z`);
     await strip.getByRole('button', { name: 'Save start' }).click();
     await expect.poll(() => worker.evaluate(() => active.startedAt)).toBe(`${day}T10:00:00.000Z`);
-    await expect(strip.locator('.running-status-start-saved')).toHaveText('✓ Saved');
+    await expect(strip.locator('.running-status-start-saved')).toHaveText('Saved');
     const payloads = await worker.evaluate(() => globalThis.activeEditPayloads);
     expect(payloads.at(-1)).toEqual({ original: { id: 'running', startedAt: `${day}T12:00:17Z` }, startedAt: `${day}T10:00:00.000Z` });
     await start.fill('0900');
@@ -2131,6 +2131,11 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     const popupWorkerSource = workerSource
       .replace('day.setDate(day.getDate() - ((day.getDay() + 6) % 7) - 3);',
         'day.setDate(day.getDate() - ((day.getDay() + 6) % 7));')
+      // Keep both entries mid-afternoon on Monday in local time, far from the local week start in every zone.
+      .replace("const taskUrl = 'https://example.com/activity-test';",
+        "const localAt = (hour, minute = 0) => new Date(day.getFullYear(), day.getMonth(), day.getDate(), hour, minute).toISOString();\nconst taskUrl = 'https://example.com/activity-test';")
+      .replace("startedAt: date + 'T08:00:00Z', endedAt: date + 'T08:30:00Z'", 'startedAt: localAt(15), endedAt: localAt(15, 30)')
+      .replace("startedAt: date + 'T07:00:00Z', endedAt: date + 'T07:30:00Z'", 'startedAt: localAt(14), endedAt: localAt(14, 30)')
       .replace("message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT'", "message.type === 'LOAD_WEEK'")
       .replace("if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK') respond({ ok: true, data: state() });",
         "if (message.type === 'LOAD_WEEK') { if (globalThis.autoReplyWeeks) respond({ ok: true, data: { ...state(), recent } }); else (globalThis.weekReplies ||= []).push(respond); return true; }\n  if (message.type === 'LOAD_TIMES') respond({ ok: true, data: { ...state(), recent } });")
@@ -2201,7 +2206,11 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     await source.hover();
     const from = await source.boundingBox();
     await page.mouse.down();
-    await page.mouse.move(from.x + from.width / 2 - 90, from.y + from.height / 2, { steps: 8 });
+    // Drop the entry just clear of its neighbor's drawn block so it passes the neighbor
+    // and the pointer stays inside the popup.
+    const CLEAR_NEIGHBOR_PX = 4;
+    const neighborBox = await neighbor.boundingBox();
+    await page.mouse.move(neighborBox.x - from.width / 2 - CLEAR_NEIGHBOR_PX, from.y + from.height / 2, { steps: 8 });
     await page.mouse.up();
     await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(1);
     expect(await worker.evaluate(() => globalThis.editPayloads[0].original.id)).toBe('record');
@@ -2254,7 +2263,7 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     await page.close();
     await worker.evaluate(() => {
       const first = recent.find(entry => entry.id === 'record');
-      first.startedAt = date + 'T08:00:00Z'; first.endedAt = date + 'T08:30:00Z';
+      first.startedAt = localAt(15); first.endedAt = localAt(15, 30);
       globalThis.editPayloads = [];
     });
     const github = await context.newPage();
@@ -2497,7 +2506,7 @@ test('Activity List icon switches from Start to Stop and back in the extension p
         firstRadius: getComputedStyle(buttons[0]).borderTopLeftRadius,
         adjacent: boxes.every((box, index) => !index || box.left - boxes[index - 1].right <= 4) };
     });
-    expect(tabAppearance.gap).toBe('2px');
+    expect(tabAppearance.gap).toBe('1px');
     expect(tabAppearance.icons).toBe(3);
     expect(tabAppearance.selectedBackground).not.toBe('rgba(0, 0, 0, 0)');
     expect(tabAppearance.firstRadius).not.toBe('0px');
@@ -2581,7 +2590,7 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     await runningDescription.pressSequentially('Second line');
     await expect(runningDescription).toHaveValue('First line\nSecond line');
     await runningDescription.press('Enter');
-    await expect(strip.locator('.running-status-description-saved')).toHaveText('✓ Saved');
+    await expect(strip.locator('.running-status-description-saved')).toHaveText('Saved');
     await expect.poll(() => worker.evaluate(() => globalThis.trackingMessages.filter(type => type === 'QUEUE_ACTIVE_START_EDIT').length)).toBe(1);
     await runningDescription.fill('Finished work\nReviewed changes');
     await page.screenshot({ path: join(tmpdir(), 'clockoli-running-status-desktop.png') });

@@ -739,7 +739,7 @@ test('query/hash churn cannot trigger authenticated GitHub refreshes', async () 
   const { actions, avatarSlot } = makeHeader();
   const document = {
     documentElement: new FakeNode('html'),
-    createElement: tag => new FakeNode(tag),
+    createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
     createElementNS: (namespace, tag) => new FakeNode(tag),
     createTextNode: text => ({ textContent: text }),
     getElementById: id => documentNodes.get(id) ?? null,
@@ -819,7 +819,7 @@ test('stopping renders local stopped state without a stale remote refresh', asyn
   const { actions, avatarSlot } = makeHeader();
   const document = {
     documentElement: new FakeNode('html'),
-    createElement: tag => new FakeNode(tag),
+    createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
     createElementNS: (namespace, tag) => new FakeNode(tag),
     createTextNode: text => ({ textContent: text }),
     getElementById: id => documentNodes.get(id) ?? null,
@@ -900,7 +900,7 @@ test('a delayed Stop response cannot unlock recent entries after GitHub SPA navi
   const { actions } = makeHeader();
   const document = {
     documentElement: new FakeNode('html'),
-    createElement: tag => new FakeNode(tag),
+    createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
     createElementNS: (namespace, tag) => new FakeNode(tag),
     createTextNode: text => ({ textContent: text }),
     getElementById: id => documentNodes.get(id) ?? null,
@@ -968,7 +968,7 @@ test('header control mounts when GitHub renders the authenticated header after t
   let headerReady = false;
   const document = {
     documentElement: new FakeNode('html'),
-    createElement: tag => new FakeNode(tag),
+    createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
     createElementNS: (namespace, tag) => new FakeNode(tag),
     createTextNode: text => ({ textContent: text }),
     getElementById: id => documentNodes.get(id) ?? null,
@@ -1015,7 +1015,7 @@ test('header menu blocks Start and resolves a pending entry conflict', async () 
   let resolved = false;
   const document = {
     documentElement: new FakeNode('html'),
-    createElement: tag => new FakeNode(tag),
+    createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
     createElementNS: (namespace, tag) => new FakeNode(tag),
     createTextNode: text => ({ textContent: text }),
     getElementById: id => documentNodes.get(id) ?? null,
@@ -1171,7 +1171,7 @@ test('header control mounts before the avatar in GitHub current top-nav-right he
   const { right, topBarActions, avatarSlot } = makeModernHeader();
   const document = {
     documentElement: new FakeNode('html'),
-    createElement: tag => new FakeNode(tag),
+    createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
     createElementNS: (namespace, tag) => new FakeNode(tag),
     createTextNode: text => ({ textContent: text }),
     getElementById: id => documentNodes.get(id) ?? null,
@@ -2202,7 +2202,8 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
 }
 
 test('popup entries remain read-only until a complete week read succeeds', async () => {
-  const now = new Date(2026, 9, 16, 12).getTime();
+  // The entry is stored in UTC, so a UTC "now" keeps it in the past in every local zone.
+  const now = Date.parse('2026-10-16T12:00:00Z');
   const entry = activityEntry('popup-entry', '2026-10-16', '08');
   const state = { configured: true, active: null, pendingWrites: [] };
   let partial = false, failed = false, delayedReply = null;
@@ -2468,7 +2469,7 @@ test('active strip shows a green check and saves its description when clicked', 
   const description = menu.querySelector('.strip-description');
   description.value = '  Saved   on blur  '; description.oninput();
   const save = menu.walk().find(node => node.className === 'save-check' && node.getAttribute('aria-label') === 'Save description');
-  assert.equal(save.hidden, false); assert.equal(save.textContent, '✓');
+  assert.equal(save.hidden, false); assert.equal(save.querySelector('svg')?.getAttribute('class'), 'octicon octicon-check');
   await save.onclick({ isTrusted: true });
   const edit = harness.messages.find(message => message.type === 'QUEUE_ACTIVE_START_EDIT');
   assert.equal(edit.payload.description, 'Saved on blur');
@@ -4352,6 +4353,7 @@ async function runningStatusHarness(initial, onReconnect, { onAuthExpired, onAut
       node.select = () => { node.selectionStart = 0; node.selectionEnd = String(node.value || '').length; };
       return node;
     },
+    createElementNS: (_namespace, tag) => new FakeNode(tag),
     getElementById: () => null,
     addEventListener: (type, fn) => events.set(type, fn), removeEventListener: type => events.delete(type),
   };
@@ -5078,7 +5080,7 @@ test('Activity shows a green save check inside URL, title, and description field
     assert.deepEqual(checks.map(node => node.getAttribute('aria-label')), ['Save task URL', 'Save task title', 'Save description']);
     const input = root.querySelector(`.${fieldClass}`); input.value = value; input.oninput({});
     const check = checks.find(node => node.getAttribute('aria-label') === saveLabel);
-    assert.equal(check.textContent, '✓');
+    assert.equal(check.querySelector('svg')?.getAttribute('class'), 'octicon octicon-check');
     await check.onclick({ isTrusted: true });
     const edit = h.messages.find(message => message.type === 'QUEUE_ENTRIES_EDIT').payload.entries[0];
     assert.equal(edit.edits[expected[0]], expected[1]);
@@ -5168,4 +5170,15 @@ test('Activity does not claim first use when the history lookup fails or trackin
     await h.loadSelectedTimes();
     assert.equal(h.renderActivity().querySelector('.activity-empty').querySelector('p').textContent, 'No time in this range.');
   }
+});
+
+test('GitHub tab titles keep the issue or pull request title and its number', () => {
+  const helper = source.match(/  function githubTabTitle\(title\) \{[\s\S]*?\n  \}\n/)[0];
+  const githubTabTitle = vm.runInNewContext(`(${helper.trim()})`);
+  assert.equal(githubTabTitle('Fix/align UI with GitHub by donhardman · Pull Request #76 · Clockoli/clockoli'), 'Fix/align UI with GitHub #76');
+  assert.equal(githubTabTitle('Written by hand by alice · Pull Request #9 · acme/app'), 'Written by hand #9');
+  assert.equal(githubTabTitle('Crash on save · Issue #12 · acme/app'), 'Crash on save #12');
+  assert.equal(githubTabTitle('acme/app: Example repository · GitHub'), 'acme/app: Example repository');
+  assert.equal(githubTabTitle('Support ticket 2291'), 'Support ticket 2291');
+  assert.equal(githubTabTitle(undefined), '');
 });

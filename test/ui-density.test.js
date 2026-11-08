@@ -14,9 +14,9 @@ function renderer(name, nextName) {
 test('Activity groups scan-first rows in bordered days with contextual controls', () => {
   assert.match(content, /\.activity-list \.entry \{[^}]*border:1px solid var\(--borderColor-default/);
   assert.match(content, /\.activity-list \.entry-date-header \{[^}]*border-bottom:1px solid var\(--borderColor-muted/);
-  assert.match(content, /\.entry-record \{ position:relative; padding:14px 110px 14px 14px; border:0; border-bottom:1px solid var\(--borderColor-muted/);
+  assert.match(content, /\.entry-record \{ position:relative; padding:8px 110px 8px 16px; border:0; border-bottom:1px solid var\(--borderColor-muted/);
   assert.match(content, /\.entry-record \+ \.entry-record \{ margin-top:0/);
-  assert.match(content, /\.entry-actions \{ position:absolute; top:12px; right:14px;[^}]*opacity:0/);
+  assert.match(content, /\.entry-actions \{ position:absolute; top:8px; right:8px;[^}]*opacity:0/);
   assert.match(content, /\.entry-editing \.inline-time-range \{ display:block/,
     'direct time fields remain available only after the explicit edit action');
 });
@@ -44,5 +44,5 @@ test('GitHub header has no separate navigation dropdown', () => {
 
 test('shared tracking navigation fits all actions at 320px without a hidden horizontal scroller', () => {
   assert.match(content, /@media\(max-width:520px\)[\s\S]*?\.header-navigation \{[^}]*display:grid[^}]*grid-template-columns:repeat\(4,minmax\(0,1fr\)\)[^}]*overflow:visible/s);
-  assert.match(content, /@media\(max-width:520px\)[\s\S]*?\.header-navigation \.reports-button \{[^}]*min-width:0[^}]*justify-content:center[^}]*font-size:10px[^}]*white-space:nowrap/s);
+  assert.match(content, /@media\(max-width:520px\)[\s\S]*?\.header-navigation \.reports-button \{[^}]*min-width:0[^}]*justify-content:center[^}]*font-size:12px[^}]*white-space:nowrap/s);
 });
