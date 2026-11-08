@@ -370,12 +370,17 @@ test('repository field checks only on explicit Check or Enter, with visible acti
     await page.locator('#add-time-repository').click();
     const existing = page.locator('.existing-repository-option');
     const create = page.locator('.new-repository-option');
-    await expect(existing).toBeVisible();
-    await expect(create).toBeVisible();
-    const [existingBox, createBox] = await Promise.all([existing.boundingBox(), create.boundingBox()]);
-    expect(createBox.y).toBeGreaterThanOrEqual(existingBox.y + existingBox.height);
+    await expect(page.locator('#choose-create-repository')).toBeVisible();
+    await expect(page.locator('#choose-join-team')).toBeVisible();
+    await expect(existing).toBeHidden();
+    await page.locator('#choose-create-repository').click();
     await expect(create.getByRole('link', { name: 'Create a new time repository' })).toBeVisible();
+    await expect(existing).toBeHidden();
     expect(await create.locator('.new-repository-action').evaluate(node => getComputedStyle(node).animationName)).toBe('none');
+    await page.locator('#change-repository-path').click();
+    await page.locator('#choose-join-team').click();
+    await expect(existing).toBeVisible();
+    await expect(create).toBeHidden();
     const input = page.locator('#repository-target');
     const check = page.getByRole('button', { name: 'Check repository', exact: true });
     const status = page.locator('#repository-target-status');
@@ -400,8 +405,7 @@ test('repository field checks only on explicit Check or Enter, with visible acti
     await expect(status).toHaveText('Checked. Ready, but not connected yet. Select "Connect repository" below to start using it.');
     const connect = page.locator('#connect-checked-repository');
     await expect(connect).toBeVisible();
-    expect(await create.locator('.new-repository-action').evaluate(node => getComputedStyle(node).backgroundColor))
-      .not.toBe(await connect.evaluate(node => getComputedStyle(node).backgroundColor));
+    expect(await page.locator('#join-invitation-panel').isVisible()).toBe(false);
     const appearance = locator => locator.evaluate(button => {
       const style = getComputedStyle(button);
       return { background: style.backgroundColor, color: style.color, border: style.borderTopColor };
@@ -417,7 +421,7 @@ test('repository field checks only on explicit Check or Enter, with visible acti
     await page.locator('#repository-step-title').click();
     await expect(status).toBeHidden();
     await check.click();
-    await expect(status).toContainText('Enter a valid GitHub repository URL or owner/name.');
+    await expect(status).toContainText('Enter a valid Clockoli invitation link, GitHub repository URL, or owner/name.');
     await expect(input).toHaveAttribute('aria-invalid', 'true');
     expect(await worker.evaluate(() => globalThis.requests.filter(type => type === 'INSPECT_REPOSITORY').length)).toBe(1);
     await input.fill('acme/check-example');
