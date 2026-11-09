@@ -58,10 +58,6 @@ a.quick-title:hover, a.quick-entry-title:hover { text-decoration: underline; }
   font: inherit;
 }
 .quick-description::placeholder { color: var(--control-fgColor-placeholder, #59636e); }
-.quick-description-actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; min-height: 26px; padding-top: 4px; }
-.quick-description-status { color: var(--fgColor-muted, #59636e); font-size: 12px; }
-.quick-description-save { min-height: 28px; padding: 4px 10px; font-size: 12px; }
-.quick-description-save[hidden], .quick-description-actions[hidden] { display: none; }
 .quick-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; box-sizing: border-box; border: 1px solid var(--borderColor-default, #d1d9e0); border-radius: 7px; min-height: 38px; padding: 8px 12px; font-weight: 600; text-align: center; text-decoration: none; background: var(--button-default-bgColor-rest, #f6f8fa); color: var(--fgColor-default, #1f2328); }
 .quick-button:hover:not(:disabled) { background: var(--button-default-bgColor-hover, #eff2f5); }
 .quick-button-primary { background: var(--button-primary-bgColor-rest, #1f883d); color: var(--button-primary-fgColor-rest, #fff); border-color: var(--button-primary-borderColor-rest, #1f232826); }

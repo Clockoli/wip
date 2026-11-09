@@ -9,7 +9,6 @@ let loadVersion = 0;
 let setupOpened = false;
 let descriptionDraft = null;
 let descriptionSaving = null;
-let descriptionStatus = '';
 let rendering = false;
 
 function el(tag, text, className) {
@@ -78,23 +77,12 @@ function draftDescription(active = state.active) {
   return descriptionDraft?.key === activeKey(active)
     ? normalizedDescription(descriptionDraft.value) : normalizedDescription(active?.description);
 }
-function updateDescriptionControls() {
-  const save = root.querySelector('.quick-description-save');
-  const status = root.querySelector('.quick-description-status');
-  if (!save || !status) return;
-  const dirty = draftDescription() !== normalizedDescription(state.active?.description);
-  save.hidden = !dirty && !descriptionSaving;
-  save.disabled = Boolean(descriptionSaving) || busy || !dirty;
-  status.textContent = descriptionSaving ? 'Saving…' : descriptionStatus;
-  status.parentElement.hidden = save.hidden && !status.textContent;
-}
 function saveDescription() {
   if (descriptionSaving) return descriptionSaving;
   const active = state.active;
   const key = activeKey(active);
   if (!active || busy || !descriptionDraft || descriptionDraft.key !== key
       || draftDescription(active) === normalizedDescription(active.description)) return Promise.resolve();
-  descriptionStatus = '';
   descriptionSaving = (async () => {
     // A later keystroke while saving must not be lost.
     while (state.active && activeKey(state.active) === key) {
@@ -106,15 +94,12 @@ function saveDescription() {
       if (activeKey(state.active) !== key) break;
       state.active = { ...state.active, description };
     }
-    if (activeKey(state.active) === key) descriptionStatus = 'Saved';
   })().catch(error => {
     message = error?.message || 'Could not save description.';
   }).finally(() => {
     descriptionSaving = null;
-    updateDescriptionControls();
     if (message) render();
   });
-  updateDescriptionControls();
   return descriptionSaving;
 }
 function blocked() {
@@ -172,7 +157,6 @@ function render() {
       const key = activeKey(active);
       if (descriptionDraft?.key !== key) {
         descriptionDraft = { key, value: active.description || '' };
-        descriptionStatus = '';
       }
       const descriptionWrap = el('div', null, 'quick-description-wrap');
       const description = el('textarea', null, 'quick-description');
@@ -184,8 +168,6 @@ function render() {
       description.addEventListener('input', () => {
         if (descriptionDraft?.key !== key) return;
         descriptionDraft.value = description.value;
-        descriptionStatus = '';
-        updateDescriptionControls();
       });
       description.addEventListener('keydown', event => {
         if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
@@ -196,14 +178,7 @@ function render() {
       description.addEventListener('blur', () => {
         if (!rendering) void saveDescription();
       });
-      const descriptionActions = el('div', null, 'quick-description-actions');
-      const descriptionFeedback = el('span', null, 'quick-description-status');
-      descriptionFeedback.setAttribute('role', 'status');
-      descriptionFeedback.setAttribute('aria-live', 'polite');
-      const descriptionSave = button('Save', 'quick-button quick-description-save', () => saveDescription());
-      descriptionSave.addEventListener('mousedown', event => event.preventDefault());
-      descriptionActions.append(descriptionFeedback, descriptionSave);
-      descriptionWrap.append(description, descriptionActions);
+      descriptionWrap.append(description);
       card.append(descriptionWrap);
       const stop = button(busy ? 'Saving…' : 'Stop and save', 'quick-button quick-button-primary quick-button-wide', async () => {
         await mutate({ type: 'STOP', description: draftDescription() }, 'stop');
@@ -268,7 +243,6 @@ function render() {
   }
   root.append(content);
   content.scrollTop = scrollTop;
-  updateDescriptionControls();
   const footer = el('footer', null, 'quick-footer');
   footer.append(button('Open Activity in a new tab ↗', 'quick-button', () => send({ type: 'OPEN_TIMES' }).catch(showError)));
   root.append(footer);
@@ -327,7 +301,6 @@ async function mutate(request, kind) {
     else if (kind === 'stop') {
       state.active = null;
       descriptionDraft = null;
-      descriptionStatus = '';
       if (result?.entry) state.recent = [{ ...result.entry, destinationId: result.destinationId }, ...state.recent];
     }
     render();

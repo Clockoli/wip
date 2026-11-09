@@ -79,7 +79,7 @@ test('toolbar quick popup stays minimal and uses the shared tracker commands', a
     await expect(root.getByRole('button', { name: 'Start tracking this page' })).toBeDisabled();
     await expect(root.locator('.quick-entry')).toHaveCount(2);
     await expect(root.getByRole('button', { name: 'Track again: Review PR #42' })).toBeVisible();
-    await expect(root.locator('.quick-description-actions')).toHaveCount(0);
+    await expect(root.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
     await expect(root.getByRole('button', { name: 'Open Activity in a new tab' })).toBeVisible();
     await expect(root.locator('.timeline-shell, .calendar-task, .activity-list, .menu, .header-navigation, .timeline-view-modes')).toHaveCount(0);
     for (const width of [390, 320]) {
@@ -91,17 +91,16 @@ test('toolbar quick popup stays minimal and uses the shared tracker commands', a
     await root.getByRole('button', { name: 'Track again: Review PR #42' }).click();
     await expect(root.getByText('Tracking', { exact: true })).toHaveCount(0);
     await expect(root.getByRole('timer', { name: 'Elapsed time' })).toHaveText(/\d\d:\d\d:\d\d/);
-    await expect(root.locator('.quick-description-actions')).toBeHidden();
+    await expect(root.locator('.quick-description-actions')).toHaveCount(0);
     const description = root.getByRole('textbox', { name: 'Description' });
     await expect(description).toHaveAttribute('placeholder', 'Add description…');
     await description.fill('Reviewed code');
-    await expect(root.getByRole('button', { name: 'Save', exact: true })).toBeVisible();
+    await expect(root.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
     await description.press('Shift+Enter');
     await description.type('and tests');
     await expect(description).toHaveValue('Reviewed code\nand tests');
     await description.press('Enter');
-    await expect(root.getByText('Saved', { exact: true })).toBeVisible();
-    await expect(root.getByRole('button', { name: 'Save', exact: true })).toBeHidden();
+    await expect.poll(() => worker.evaluate(() => active?.description)).toBe('Reviewed code\nand tests');
     const edit = (await worker.evaluate(() => globalThis.quickCalls)).find(call => call.type === 'QUEUE_ACTIVE_START_EDIT');
     expect(edit.payload).toMatchObject({ description: 'Reviewed code\nand tests',
       original: { id: 'restarted' } });
@@ -109,12 +108,9 @@ test('toolbar quick popup stays minimal and uses the shared tracker commands', a
     await description.blur();
     await expect.poll(async () => (await worker.evaluate(() => globalThis.quickCalls))
       .filter(call => call.type === 'QUEUE_ACTIVE_START_EDIT').length).toBe(2);
-    await expect(root.getByText('Saved', { exact: true })).toBeVisible();
-    await description.fill('Saved with the button');
-    await root.getByRole('button', { name: 'Save', exact: true }).click();
-    await expect.poll(async () => (await worker.evaluate(() => globalThis.quickCalls))
-      .filter(call => call.type === 'QUEUE_ACTIVE_START_EDIT').length).toBe(3);
-    await expect(root.getByText('Saved', { exact: true })).toBeVisible();
+    await expect.poll(() => worker.evaluate(() => active?.description)).toBe('Updated on blur');
+    await description.fill('Final description via Stop');
+    await expect(root.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
     await expect(root.getByRole('button', { name: 'Stop and save' })).toBeEnabled();
     await expect(root.getByRole('button', { name: 'Track again: Review PR #42' })).toBeDisabled();
     const calls = await worker.evaluate(() => globalThis.quickCalls);
@@ -125,8 +121,8 @@ test('toolbar quick popup stays minimal and uses the shared tracker commands', a
     await expect(root.getByText('Not tracking', { exact: true })).toHaveCount(0);
     await expect(root.locator('.quick-entry')).toHaveCount(3);
     const stop = (await worker.evaluate(() => globalThis.quickCalls)).find(call => call.type === 'STOP');
-    expect(stop).toEqual({ type: 'STOP', description: 'Saved with the button' });
-    expect(await worker.evaluate(() => recent[0].description)).toBe('Saved with the button');
+    expect(stop).toEqual({ type: 'STOP', description: 'Final description via Stop' });
+    expect(await worker.evaluate(() => recent[0].description)).toBe('Final description via Stop');
     // Simulate a shorter container while keeping the real popup's explicit height
     // (Chrome's action popup auto-sizes to that height at first open).
     await page.setViewportSize({ width: 390, height: 320 });
