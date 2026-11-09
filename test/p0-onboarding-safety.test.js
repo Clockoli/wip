@@ -71,7 +71,7 @@ test('all setup gates and initial report loading use the shared product language
     assert.match(source, /Set up Clockoli/);
   }
   assert.match(reportsHtml, /Loading time data…/);
-  assert.match(reportsJs, /showProgress\('Loading time data…'/);
+  assert.match(reportsJs, /showProgress\(state\.range \? 'Refreshing time data…' : 'Loading time data…'/);
 });
 
 test('README directs installation to Settings and the full getting-started guide', () => {

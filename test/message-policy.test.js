@@ -2,12 +2,26 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
-import { assertMessageAllowed, addTimeForSender, dayRangeForSender, issueForStart, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch,
+import { assertMessageAllowed, addTimeForSender, cachedViewRequest, dayRangeForSender, issueForStart, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch,
   requestedStartDestinationId, weekRangeForSender } from '../src/background/message-policy.js';
 
 const origin = 'chrome-extension://abc/';
 const content = { url: 'https://github.com/acme/frontend/issues/123', tab: { id: 1 } };
 const extension = { url: `${origin}src/popup/popup.html` };
+
+test('cached report and task views are limited to their extension pages and exact date scopes', () => {
+  const range = { startDate: '2026-09-01', endDate: '2026-09-07', reportingUtc: false };
+  const request = { type: 'GET_CACHED_VIEW', kind: 'reports', range };
+  assert.deepEqual(cachedViewRequest(request, { url: `${origin}src/reports/reports.html` }, origin), { kind: 'reports', range });
+  for (const sender of [content, extension, { url: `${origin}src/tasks/tasks.html` }])
+    assert.throws(() => cachedViewRequest(request, sender, origin));
+  for (const invalid of [{ ...request, extra: true }, { ...request, range: { ...range, startDate: '2026-02-30' } },
+    { ...request, range: { ...range, reportingUtc: 'false' } }, { ...request, range: { ...range, endDate: '2026-08-01' } }])
+    assert.throws(() => cachedViewRequest(invalid, { url: `${origin}src/reports/reports.html` }, origin));
+  const tasks = { type: 'GET_CACHED_VIEW', kind: 'tasks', range: { startDate: range.startDate, endDate: range.endDate } };
+  assert.equal(cachedViewRequest(tasks, { url: `${origin}src/tasks/tasks.html` }, origin).kind, 'tasks');
+  assert.throws(() => cachedViewRequest({ ...tasks, range }, { url: `${origin}src/tasks/tasks.html` }, origin));
+});
 const issue = { type: 'issue', owner: 'acme', repo: 'frontend', number: 123, url: 'https://github.com/acme/frontend/issues/123' };
 
 test('Add time accepts only the two extension pages and a bounded canonical URL payload', () => {

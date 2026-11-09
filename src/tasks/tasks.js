@@ -12,7 +12,7 @@ const TASK_COLORS = ['#e76f51','#2a9d8f','#b8860b','#5f8f52','#d66b2c','#477ca8'
 const $ = id => document.getElementById(id);
 const state = { tasks: [], searchCandidates: [], searchLoaded: false, searchLoading: false, searchRefreshPending: false, searchId: 0,
   timeRepositoryCount: 0,
-  active: null, pendingWrites: [], configured: false, requestId: 0, busyUrl: '', loading: false, range: null, partial: false };
+  active: null, pendingWrites: [], configured: false, requestId: 0, mutationRevision: 0, busyUrl: '', loading: false, range: null, partial: false };
 let tick = null;
 let pendingRefresh = null;
 let pendingRender = false;
@@ -201,6 +201,7 @@ function makeTimerButton(task) {
       await reconcileTaskState(activeBeforeAction).catch(() => {});
       setError(error);
     } finally {
+      state.mutationRevision += 1;
       state.busyUrl = '';
       if (restoreFocus && document.activeElement === document.body) {
         button.disabled = false; button.focus({ preventScroll: true });
@@ -362,6 +363,7 @@ async function reconcileTaskState(previousActive) {
 
 async function load() {
   const requestId = ++state.requestId, range = taskPeriodRange($('period').value, localDateValue()); state.range = range;
+  const mutationRevision = state.mutationRevision;
   const keepResults = state.configured && !$('tasks-content').hidden;
   state.loading = true; setError(); $('loading').hidden = keepResults; $('setup').hidden = true; updateRefreshControl();
   try {
@@ -372,7 +374,11 @@ async function load() {
       state.tasks = []; state.active = null; state.pendingWrites = []; state.timeRepositoryCount = 0;
       render({ force: true }); return;
     }
-    state.tasks = result.tasks ?? []; state.active = result.active ?? null; state.pendingWrites = result.pendingWrites ?? []; state.partial = Boolean(result.partial);
+    state.tasks = result.tasks ?? [];
+    if (mutationRevision === state.mutationRevision) {
+      state.active = result.active ?? null; state.pendingWrites = result.pendingWrites ?? [];
+    }
+    state.partial = Boolean(result.partial);
     state.timeRepositoryCount = result.sourceRepositories?.length ?? result.readStatus?.length ?? 0;
     if (taskSearch.query) void loadSearchCandidates(true);
     const failed = (result.readStatus || []).filter(item => item.status === 'error').length;
@@ -426,7 +432,22 @@ try {
   savedPeriod = localStorage.getItem(PERIOD_KEY) || savedPeriod;
 } catch { /* use default */ }
 $('period').value = PERIODS.has(savedPeriod) ? savedPeriod : 'two-weeks';
-void load();
+async function initializeTasks() {
+  const periodValue = $('period').value, range = taskPeriodRange(periodValue, localDateValue());
+  try {
+    const cached = await send({ type: 'GET_CACHED_VIEW', kind: 'tasks', range });
+    if (state.requestId === 0 && $('period').value === periodValue && cached?.configured && Array.isArray(cached.tasks)) {
+      state.tasks = cached.tasks; state.active = cached.active ?? null;
+      state.pendingWrites = cached.pendingWrites ?? []; state.configured = true;
+      state.partial = Boolean(cached.partial); state.range = range;
+      $('partial-status').hidden = false;
+      $('partial-status').textContent = 'Showing previously loaded tasks while refreshing. Results may have changed.';
+      render({ force: true });
+    }
+  } catch { /* a missing or unreadable snapshot must not block the live read */ }
+  if (state.requestId === 0) void load();
+}
+void initializeTasks();
 
 mountRunningStatus($('running-status'), { send, onChange: load });
 const addTimeDialog = mountAddTime($('add-time-button'), { send, onAdded: load });

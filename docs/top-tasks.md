@@ -26,4 +26,6 @@ Use **Add time** next to the page tabs to add a completed entry or start a timer
 
 The page reads the current user's monthly paths from the selected destinations before hydrating optional GitHub issue/PR titles. Destinations load independently, so available tasks may remain visible with partial-read status. Metadata is bounded and cached; inaccessible metadata falls back to the stored URL/title rather than hiding tracked time.
 
+For a previously loaded period, the last local task list appears while a fresh read runs; the Refresh icon indicates progress. You can search or start a cached task without waiting for the list refresh. Its totals may be outdated until the read finishes; a failure leaves the previous list and an error visible. The current running timer and pending-write status are read from local tracking state, not trusted from an old task snapshot.
+
 If your own task is missing from the unfiltered list, check the selected period. Search can find older and teammate tasks, but Top tasks shows only your own time; use [Reports](reports.md) for teammates' time.

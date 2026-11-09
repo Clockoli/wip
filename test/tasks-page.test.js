@@ -198,6 +198,23 @@ test('Top tasks reuses the result-header refresh spinner while existing results 
   assert.equal(page.nodes['refresh-tasks'].disabled, false);
 });
 
+test('Top tasks shows a previous visit while refresh is pending and can start a cached task', async () => {
+  let finishReload, starts = 0;
+  const page = await tasksHarness({ respond: message => {
+    if (message.type === 'GET_CACHED_VIEW') return { configured: true, tasks: [taskA], active: null, pendingWrites: [], range: taskPeriodRange('two-weeks', '2026-09-05') };
+    if (message.type === 'LOAD_TASKS') return new Promise(resolve => { finishReload = resolve; });
+    if (message.type === 'START') { starts++; return { taskUrl: taskA.taskUrl, startedAt: '2026-09-05T10:00:00Z' }; }
+  } });
+  assert.equal(page.rows().length, 1);
+  assert.equal(page.nodes['tasks-content'].hidden, false);
+  assert.equal(page.nodes['refresh-tasks'].classList.contains('syncing'), true);
+  await page.rows()[0].querySelector('.timer-button').click();
+  assert.equal(starts, 1);
+  finishReload({ configured: true, tasks: [taskB], active: null, pendingWrites: [] });
+  await page.settle();
+  assert.deepEqual(page.order(), [taskB.taskUrl]);
+});
+
 test('Top tasks Stop button shows seconds only during the first minute', () => {
   assert.match(js, /if \(current && seconds < 60\) return `\$\{Math\.floor\(seconds\)\}s`/);
   assert.match(js, /Stop: \$\{formatDuration\(currentElapsedSeconds\(\), \{ current: true \}\)\}/);
@@ -577,12 +594,12 @@ test('empty, unmatched, and unconfigured states each give the appropriate next a
 test('filter keyboard flow launches exactly one idle match, clears on Escape, and never stops a running match', async () => {
   const page = await tasksHarness({ tasks: [taskA, taskB] });
   const filter = page.nodes['task-filter']; assert.equal(page.document.activeElement, filter);
-  await filter.dispatch('keydown', { key: 'Enter' }); assert.equal(page.messages.length, 1);
+  await filter.dispatch('keydown', { key: 'Enter' }); assert.equal(page.messages.filter(message => message.type !== 'GET_CACHED_VIEW').length, 1);
   filter.value = 'missing'; await filter.dispatch('input'); await filter.dispatch('keydown', { key: 'Enter' });
-  assert.equal(page.messages.filter(message => !['SEARCH_TASKS'].includes(message.type)).length, 1);
+  assert.equal(page.messages.filter(message => !['SEARCH_TASKS', 'GET_CACHED_VIEW'].includes(message.type)).length, 1);
   filter.value = 'Fix'; await filter.dispatch('input');
   await filter.dispatch('keydown', { key: 'Enter', isComposing: true });
-  assert.equal(page.messages.filter(message => message.type !== 'SEARCH_TASKS').length, 1);
+  assert.equal(page.messages.filter(message => !['SEARCH_TASKS', 'GET_CACHED_VIEW'].includes(message.type)).length, 1);
   await filter.dispatch('keydown', { key: 'Enter' }); await page.settle();
   assert.equal(page.messages.at(-1).type, 'START'); assert.equal(page.messages.at(-1).taskUrl, taskA.taskUrl);
   await filter.dispatch('keydown', { key: 'Enter' }); assert.equal(page.messages.filter(message => message.type === 'STOP').length, 0);
@@ -599,7 +616,7 @@ test('launching a different task uses the durable stop-before-start switch and r
     } });
     page.nodes['task-filter'].value = 'Fix'; await page.nodes['task-filter'].dispatch('input');
     await page.nodes['task-filter'].dispatch('keydown', { key: 'Enter' }); await page.settle();
-    assert.deepEqual(page.messages.map(message => message.type), fail
+    assert.deepEqual(page.messages.filter(message => message.type !== 'GET_CACHED_VIEW').map(message => message.type), fail
       ? ['LOAD_TASKS', 'SEARCH_TASKS', 'SWITCH_TASK', 'GET_PAGE_STATE'] : ['LOAD_TASKS', 'SEARCH_TASKS', 'SWITCH_TASK']);
     assert.equal(page.rows()[0].querySelector('.timer-button')['aria-label'], fail ? 'Start' : 'Stop: 0s');
     if (fail) assert.equal(page.nodes.error.hidden, false);
@@ -616,10 +633,10 @@ test('blocking conflicts reject keyboard launches and rows put title before mute
   assert.match(css, /\.task-row\.running\{[^}]*background:color-mix\(in srgb,var\(--task-color\) 12%,var\(--bgColor-default\)\)/);
   assert.doesNotMatch(css, /\.task-row\.running\{[^}]*animation/);
   await page.nodes['task-filter'].dispatch('keydown', { key: 'Enter' }); await page.rows()[0].querySelector('.timer-button').click();
-  assert.equal(page.messages.length, 1);
+  assert.equal(page.messages.filter(message => message.type !== 'GET_CACHED_VIEW').length, 1);
   const idle = await tasksHarness({ tasks: [taskA], pendingWrites: [{ status: 'conflict' }] });
   await idle.nodes['task-filter'].dispatch('keydown', { key: 'Enter' }); await idle.settle();
-  assert.equal(idle.messages.length, 1);
+  assert.equal(idle.messages.filter(message => message.type !== 'GET_CACHED_VIEW').length, 1);
 });
 
 test('timer mutations keep the focused control and row mounted through busy state', async () => {
@@ -639,5 +656,5 @@ test('Enter waits while multiple visible rows are retained under the pointer dur
   const page = await tasksHarness({ respond: message => message.type === 'LOAD_TASKS' ? { configured: true, tasks: refreshed ? [taskA] : [taskA, taskB] } : undefined });
   page.rows()[0].hovered = true; refreshed = true; await page.load();
   await page.nodes['task-filter'].dispatch('keydown', { key: 'Enter' }); await page.settle();
-  assert.deepEqual(page.messages.map(message => message.type), ['LOAD_TASKS', 'LOAD_TASKS']);
+  assert.deepEqual(page.messages.filter(message => message.type !== 'GET_CACHED_VIEW').map(message => message.type), ['LOAD_TASKS', 'LOAD_TASKS']);
 });
