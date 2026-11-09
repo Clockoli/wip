@@ -34,6 +34,7 @@ import { ExchangeRateService } from '../services/exchange-rates.js';
 import { TaskMetadataService } from '../services/task-metadata.js';
 import { mergeTaskCatalogIndexes, taskCandidates } from '../services/task-catalog.js';
 import { InstallationDiscoveryService, RepositoryInitializer } from '../services/github-app-onboarding.js';
+import { readyRepositoryMemberIds } from '../services/repository-team-status.js';
 import { OnboardingCoordinator } from '../services/onboarding-coordinator.js';
 import { RepositoryInvitationService } from '../services/repository-invitations.js';
 import { withRepositoryRecovery } from '../services/repository-operation-recovery.js';
@@ -1046,13 +1047,20 @@ async function handle(message, sender) {
     const github = githubForConfig(config);
     await github.assertDestinationReachable();
     const collaborators = await github.listRepositoryCollaborators();
+    const readyUserIds = await readyRepositoryMemberIds(github, config.defaultBranch, collaborators.users);
     try {
       const pending = await github.listRepositoryPendingInvitations();
-      return { ...collaborators, pendingUsers: pending.users, pendingHasMore: pending.hasMore,
+      return { ...collaborators, readyUserIds, pendingUsers: pending.users, pendingHasMore: pending.hasMore,
         ...(pending.incomplete ? { pendingUnavailable: true } : {}) };
     } catch {
-      return { ...collaborators, pendingUnavailable: true };
+      return { ...collaborators, readyUserIds, pendingUnavailable: true };
     }
+  }
+  if (message.type === 'CHECK_REPOSITORY_INVITE_ACCESS') {
+    if (Object.keys(message).length !== 2 || typeof message.destinationId !== 'string') throw new Error('Invalid invitation access check');
+    const invitation = await repositoryInvitationService(message.destinationId);
+    await invitation.assertAdminAccess();
+    return { canInvite: true };
   }
   if (message.type === 'SEARCH_INVITEE_USERS' || message.type === 'INVITE_REPOSITORY_USER') {
     const payload = message.payload;
