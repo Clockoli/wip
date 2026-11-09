@@ -18,7 +18,7 @@ test('toolbar opens Activity in its own tab and hands off only the clicked URL',
   assert.equal(manifest.permissions.includes('storage'), false);
   assert.match(worker, /chrome\.action\.onClicked\.addListener\(tab => \{[\s\S]*toggleActionSurface\(tab\)/);
   assert.match(worker, /actionContextBackend\.setMany\(\{ \[ACTION_CONTEXT_KEY\]: toolbarTaskContext\(tab\) \}\)/);
-  const handler = worker.slice(worker.indexOf('async function openActivityFromTab('), worker.indexOf("void chrome.action.setPopup({ popup: '' })"));
+  const handler = worker.slice(worker.indexOf('async function openActivityFromTab('), worker.indexOf("async function applyToolbarClickMode(mode)"));
   assert.doesNotMatch(handler, /chrome\.scripting|chrome\.tabs\.sendMessage|TOGGLE_FULL_WIDTH_POPUP/);
   assert.match(content, /renderActionSourceContext\(\)/);
   const times = read('src/times/times.html');
@@ -66,13 +66,55 @@ test('interface width persists and only options may write it', async () => {
   assert.throws(() => assertMessageAllowed('SET_TOOLBAR_DISPLAY_MODE', { url: `${origin}src/options/options.html` }, origin), /not allowed/);
 });
 
-test('worker clears any previously configured action popup on startup', async () => {
-  const calls = [];
-  const context = vm.createContext({ chrome: { action: { setPopup: async value => { calls.push(value); } } }, console });
-  const init = worker.match(/void chrome\.action\.setPopup\(\{ popup: '' \}\)\.catch\([^\n]+;/)?.[0];
+test('worker restores the saved toolbar behavior after restart', async () => {
+  const apply = worker.match(/async function applyToolbarClickMode\(mode\) \{[\s\S]*?\n\}/)?.[0];
+  const init = worker.match(/void store\.getToolbarClickMode\(\)\.then\(applyToolbarClickMode\)\.catch\([^\n]+;/)?.[0];
+  assert.ok(apply);
   assert.ok(init);
-  vm.runInContext(init, context);
-  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ popup: '' }]);
+  for (const [mode, expected] of [['tab', ''], ['popup', 'src/popup/popup.html']]) {
+    const calls = [];
+    const context = vm.createContext({
+      store: { getToolbarClickMode: async () => mode },
+      chrome: { action: { setPopup: async value => { calls.push(value.popup); } } }, console,
+    });
+    vm.runInContext(`const TOOLBAR_POPUP_PATH = 'src/popup/popup.html';\n${apply}\n${init}`, context);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(calls, [expected]);
+  }
+});
+
+test('toolbar click mode is local, defaults to Activity, and validates changes', async () => {
+  const values = new Map();
+  const backend = {
+    async getMany(keys) { return Object.fromEntries(keys.map(key => [key, values.get(key)])); },
+    async mutateMany(keys, update) {
+      const { set, result } = update(await this.getMany(keys));
+      for (const [key, value] of Object.entries(set)) values.set(key, value);
+      return result;
+    },
+  };
+  const store = new ChromeStore(backend);
+  assert.equal(await store.getToolbarClickMode(), 'tab');
+  assert.equal((await store.getLocalPreferences()).toolbarClickMode, 'tab');
+  await assert.rejects(() => store.setToolbarClickMode('unknown'), /toolbar click mode/i);
+  assert.equal(values.size, 0);
+  await store.setToolbarClickMode('popup');
+  assert.equal(await new ChromeStore(backend).getToolbarClickMode(), 'popup');
+  assert.equal((await store.getLocalPreferences()).toolbarClickMode, 'popup');
+  await store.setToolbarClickMode('tab');
+  assert.equal(await store.getToolbarClickMode(), 'tab');
+  const origin = 'chrome-extension://clockoli/';
+  assert.doesNotThrow(() => assertMessageAllowed('SET_TOOLBAR_CLICK_MODE', { url: origin + 'src/options/options.html' }, origin));
+  assert.throws(() => assertMessageAllowed('SET_TOOLBAR_CLICK_MODE',
+    { url: 'https://github.com/acme/app/issues/1', tab: { id: 3 } }, origin), /not allowed/i);
+  assert.match(worker, /sender\?\.url !== chrome\.runtime\.getURL\('src\/options\/options\.html'\)[\s\S]*?Invalid toolbar click mode request/);
+  assert.match(worker, /Object\.keys\(message\)\.sort\(\)\.join\(','\) !== 'mode,type'/);
+  const options = read('src/options/options.html');
+  const controller = read('src/options/options.js');
+  assert.match(options, /id="toolbar-click-mode"/);
+  assert.match(options, /value="tab">Open Activity in a new tab/);
+  assert.match(options, /value="popup">Open quick popup/);
+  assert.match(controller, /type: 'SET_TOOLBAR_CLICK_MODE', mode: control\.value/);
 });
 
 test('compact popup loads the shared timeline component before its tracking controller', () => {
@@ -122,7 +164,7 @@ async function actionHarness({ delivered = false, failure = 0, existingTabs = []
     } },
   } });
   const helper = worker.match(/async function openTimesPage\(\) \{[\s\S]*?\n\}/)?.[0] || '';
-  vm.runInContext(`const ACTION_CONTEXT_KEY = 'clockoli-toolbar-task-context';\nlet openingTimesPage = null;\n${helper}\n${worker.slice(worker.indexOf('async function shouldOpenOnboarding('), worker.indexOf("void chrome.action.setPopup({ popup: '' })"))}`, context);
+  vm.runInContext(`const ACTION_CONTEXT_KEY = 'clockoli-toolbar-task-context';\nlet openingTimesPage = null;\n${helper}\n${worker.slice(worker.indexOf('async function shouldOpenOnboarding('), worker.indexOf("async function applyToolbarClickMode(mode)"))}`, context);
   return { calls, setupReads, setSetup: next => { currentSetup = next; },
     toggle: tab => context.toggleActionSurface(tab), openActivity: () => context.openTimesPage() };
 }
