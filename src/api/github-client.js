@@ -594,8 +594,16 @@ export class GitHubClient {
     }).sort((a, b) => a.branch.localeCompare(b.branch));
   }
 
-  async listBranches(prefix, options = {}) {
-    return (await this.listBranchesWithSha(prefix, options)).map(item => item.branch);
+  async listBranches(prefix, { maxBranches = 1000, signal } = {}) {
+    // Keep the existing name-only API independent of the SHA-aware variant.
+    const normalized = String(prefix || '');
+    validateBranch(`${normalized}probe`);
+    const base = `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`;
+    const body = await this.request(`${base}/git/matching-refs/heads/${encodePath(normalized)}`, { signal });
+    if (!Array.isArray(body) || body.length > maxBranches) throw new GitHubApiError('Clockoli user branch discovery exceeded its bounded result budget.', 422, 'branch_discovery_budget');
+    const fullPrefix = `refs/heads/${normalized}`;
+    return body.map(item => String(item?.ref || '')).filter(ref => ref.startsWith(fullPrefix))
+      .map(ref => validateBranch(ref.slice('refs/heads/'.length))).sort();
   }
 
   assertCanonicalCoordinates(repository) {
