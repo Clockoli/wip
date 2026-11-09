@@ -2643,6 +2643,22 @@ test('teammate picker does not invite when confirmation is cancelled', async () 
   assert.equal(page.requests.some(request => request.type === 'INVITE_REPOSITORY_USER'), false);
 });
 
+test('a failed GitHub teammate search does not leave later searches styled as an error', async () => {
+  let attempts = 0;
+  const page = harness({ reply: request => request.type === 'SEARCH_INVITEE_USERS'
+    ? ++attempts === 1 ? new Error('GitHub temporarily unavailable') : { users: [] } : {} });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  const picker = page.nodes.get('time-repository-list').querySelector('.teammate-picker');
+  const input = picker.querySelector('.teammate-search'), feedback = picker.querySelector('.teammate-feedback');
+  input.value = 'Bo'; input.listeners.input();
+  await page.timers.filter(timer => timer.delay === 250).at(-1).callback();
+  assert.match(feedback.className, /error/);
+  input.value = 'Al'; input.listeners.input();
+  assert.doesNotMatch(feedback.className, /error/);
+  await page.timers.filter(timer => timer.delay === 250).at(-1).callback();
+  assert.equal(feedback.textContent, 'No matching GitHub users.');
+});
+
 test('an earlier teammate search cannot reopen suggestions after a user is selected', async () => {
   let finishEarlierSearch;
   const page = harness({ reply: request => request.type === 'SEARCH_INVITEE_USERS'
