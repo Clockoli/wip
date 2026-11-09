@@ -254,7 +254,7 @@
       resizeEnd: editable && !running,
       edit: editable || running,
       start: !item?.isStartDisabled,
-      stop: (running || item?.isCurrentTask) && !item?.isStopDisabled,
+      stop: running && !item?.isStopDisabled,
       delete: !item?.isDeleteDisabled,
     };
   }
@@ -1032,7 +1032,7 @@
       if (!item) { existing?.remove(); return; }
       renderCompactDetails(item);
       const permissions = permissionsFor(item);
-      const mode = item.isCurrentTask ? 'current' : item.isRunning || item.endedAt == null ? 'running' : 'completed';
+      const mode = item.isRunning || item.endedAt == null ? 'running' : 'completed';
       const savedDescription = item.savedDescription ?? item.description ?? '';
       if (existing?.dataset.itemId === String(key) && existing.dataset.mode === mode) {
         const description = existing.querySelector('.clockoli-timeline-description');
@@ -1141,7 +1141,7 @@
         button.addEventListener('click', () => runAction(button, 'edit-form', () => props.onEntryEdit(sourceItem(key), button)));
         actions.append(button);
       }
-      if ((item.isRunning || item.endedAt == null || item.isCurrentTask) && typeof props.onStop === 'function') {
+      if (mode === 'running' && typeof props.onStop === 'function') {
         const button = document.createElement('button');
         button.type = 'button'; button.className = 'clockoli-timeline-action primary';
         button.textContent = 'Stop and save'; button.prepend(actionIcon('stop'));
