@@ -1532,6 +1532,8 @@ for (const mode of ['timeline', 'calendar']) {
   });
 
   test(`${mode} uses the details card instead of black start and end hover badges`, async ({ page }) => {
+    // Keep the fixture within one local day so both resize handles belong to the same block.
+    await page.clock.setFixedTime(new Date('2026-10-14T12:00:00Z'));
     await mount(page);
     if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
     const record = page.locator(`#timeline ${mode === 'calendar' ? '.calendar-task' : '.task'}[data-task-key="entry:a"]`).first();
