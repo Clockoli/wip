@@ -457,7 +457,10 @@ test('Copy invitation link and switching browser tabs preserve the expanded repo
     await expect(invitation).toBeVisible();
     await expect(invitation).toHaveAttribute('open', '');
     await invitation.locator('.teammate-setup > summary').click();
-    await invitation.locator('.teammate-invitation-link button').click();
+    const copy = invitation.getByRole('button', { name: 'Copy Clockoli invitation message' });
+    await expect(copy).toBeVisible();
+    await expect(invitation.getByRole('button', { name: 'Copy instructions' })).toHaveCount(0);
+    await copy.click();
     await expect(invitation.locator('.teammate-invitation-link .form-feedback')).not.toBeEmpty();
     await expect(repository).toHaveAttribute('open', '');
     await expect(invitation).toHaveAttribute('open', '');
