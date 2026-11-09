@@ -17,7 +17,7 @@
   }
 
   applyWidth(localStorage.getItem(CACHE_KEY));
-  // Settings also sets the attribute directly, so cache every change, whatever its source.
+  // Other pages cache attribute changes; Settings updates the cache without changing its own width.
   new MutationObserver(() => localStorage.setItem(CACHE_KEY, root.dataset.clockoliWidth))
     .observe(root, { attributes: true, attributeFilter: ['data-clockoli-width'] });
   chrome.runtime.onMessage.addListener(message => {

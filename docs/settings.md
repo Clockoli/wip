@@ -8,7 +8,9 @@ The welcome screen opens after first installation. Until you connect a time repo
 
 ## GitHub account
 
-The connection card handles GitHub sign-in and the first time repository; see [Getting started](getting-started.md#step-1-sign-in-with-github). Before setup is complete, Settings focuses on this card.
+The connection card handles GitHub sign-in and the first time repository; see [Getting started](getting-started.md#step-1-sign-in-with-github). Before setup is complete, Settings focuses on this card. When connected, its single status badge appears opposite the **GitHub account** heading, above the account name.
+
+If a running timer prevents changing GitHub authentication, a compact warning appears inside the **GitHub account** card, after the account summary and before the account action buttons—not again in **Time repositories**. Stop the timer before retrying; your current connection and time repositories remain in place.
 
 **Sign out on this browser** removes local sign-in while preserving local tracking data and the repository configuration. It does not revoke GitHub sign-in, change the GitHub App installation, or delete repository data.
 
@@ -26,7 +28,7 @@ Each connected repository has a card with its status, a **Default** badge for th
 
 ## Interface width
 
-Choose whether Activity, Reports, Top tasks, and the content inside the toolbar panel use a centered column (default) or the available screen width. Settings itself always uses a centered 820px column. The panel shell always spans the page width; it remains at most 70% of the viewport height (and at most 720px) in either width mode, scrolling internally when needed. This device-local preference is not included in repository data or settings exports.
+Choose whether Activity, Reports, Top tasks, and the content inside the toolbar panel use a centered column (default) or the available screen width. Settings always keeps its default centered column (up to 1280px), and its tracking bar does not switch to Full layout there. The panel shell always spans the page width; it remains at most 70% of the viewport height (and at most 720px) in either width mode, scrolling internally when needed. This device-local preference is not included in repository data or settings exports.
 
 ## Toolbar button
 

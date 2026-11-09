@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Clockoli Settings</title>
   <script src="../ui/theme.js"></script>
-  <script src="../ui/interface-width.js"></script>
   <script src="../ui/task-search.js"></script>
   <link rel="stylesheet" href="options.css">
   <link rel="stylesheet" href="../styles/page-tabs.css">
@@ -29,12 +28,10 @@
 <div id="running-status"></div>
 <main class="settings-main">
   <section class="card connection-card" aria-labelledby="connection-title">
-    <div id="message" role="status" aria-live="polite"></div>
     <div class="card-heading">
       <div><h2 id="connection-title" tabindex="-1">Welcome to Clockoli!</h2><p id="connection-description">Track your time with one click.</p></div>
       <span id="connection-status" class="badge">Not connected</span>
     </div>
-
     <div id="build-warning" class="notice error-notice" hidden>
       This development build does not include the public Clockoli GitHub App client ID. Open More settings, then Advanced to use a personal access token instead.
     </div>
@@ -47,8 +44,10 @@
     <div id="connected" hidden>
       <div class="account-summary">
         <div><span class="status-dot" aria-hidden="true"></span><strong id="connected-account">—</strong></div>
-        <span id="connected-status" class="badge ready">Connected</span>
       </div>
+    </div>
+    <div id="message" role="status" aria-live="polite"></div>
+    <div id="connected-actions" hidden>
       <div class="connected-secondary-actions account-actions">
         <button id="reconnect-github" type="button" class="secondary">Reconnect GitHub</button>
         <a id="manage-authorization" class="button-link secondary-link" href="https://github.com/settings/apps/authorizations" target="_blank" rel="noreferrer">Manage GitHub authorization</a>

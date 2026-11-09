@@ -91,7 +91,12 @@ function removeIcon() {
 
 function message(text, kind = '') {
   $('message').textContent = text;
-  $('message').className = kind;
+  $('message').className = kind === 'error' && isAuthTimerWarning(text)
+    ? 'error auth-guard' : kind;
+}
+
+function isAuthTimerWarning(text) {
+  return typeof text === 'string' && text.startsWith('Stop the active timer before changing GitHub authentication');
 }
 
 function renderAddonSettings(settings, hasClockifyAccess = false) {
@@ -839,9 +844,9 @@ function renderDestinationCards() {
   chooser.disabled = repositoryActionApplying || Boolean(state?.candidateAuth);
   $('finish-setup').hidden = !showOnboarding || destinations.length === 0;
   $('finish-setup').disabled = !canFinishRepositorySetup();
-  $('setup-ready-summary').hidden = !destinations.length && !authorizationBlock
+  $('setup-ready-summary').hidden = !destinations.length && !(authorizationBlock && !isAuthTimerWarning(authorizationBlock.message))
     && !repositoryInputDirty && repositoryCanBeSelected(selectedRepository);
-  $('setup-ready-summary').textContent = state?.candidateAuth && authorizationBlock
+  $('setup-ready-summary').textContent = state?.candidateAuth && authorizationBlock && !isAuthTimerWarning(authorizationBlock.message)
     ? authorizationBlock.message
     : destinations.length
       ? `Connected repositories are listed above with their status. Default: ${destinationLabel(destinations.find(destination => destination.id === fallback))}. Choose a ready default, or check another repository.`
@@ -1059,6 +1064,7 @@ function renderState() {
   const repositoryFlowOpen = Boolean(state?.candidateAuth || authExpired || reconnectingGitHub || state?.deviceAttempt)
     || (state?.auth?.mode === 'github_app' && (showOnboarding || destinations.length === 0));
   $('connected').hidden = !accountConnected || authExpired;
+  $('connected-actions').hidden = $('connected').hidden;
   $('onboarding').hidden = accountConnected && !repositoryFlowOpen;
   $('time-repositories').hidden = !accountConnected;
   $('display-settings').hidden = !state.config && destinations.length === 0;
@@ -1080,8 +1086,6 @@ function renderState() {
     : authExpired ? 'Sign-in required' : accountConnected ? (state.auth?.mode === 'pat' ? 'Connected with PAT' : 'Connected') : (state.candidateAuth ? 'Setup in progress' : 'Not connected');
   $('connection-status').className = `badge${accountConnected && !authExpired ? ' ready' : ''}`;
   $('connection-status').hidden = initialSetup;
-  $('connected-status').textContent = authExpired ? 'Sign-in required' : 'Connected';
-  $('connected-status').className = `badge${authExpired ? '' : ' ready'}`;
   $('reauth-required').hidden = !authExpired || Boolean(state.deviceAttempt || state.candidateAuth);
   $('authorize').textContent = authExpired ? 'Sign in again with GitHub' : 'Connect GitHub';
   $('connection-title').textContent = welcome ? selectedJoinInvitation ? 'Join your team on Clockoli' : 'Welcome to Clockoli!'
@@ -1642,9 +1646,10 @@ async function discoverRepositories({ silent = false } = {}) {
     if (result.blocked) {
       if (!silent) { discoveryStatus = 'error'; renderRepositoryLoading(); }
       renderDestinationCards();
-      if (!silent) message(result.blocked.message, 'error');
+      if (!silent || isAuthTimerWarning(result.blocked.message)) message(result.blocked.message, 'error');
       return result;
     }
+    if (silent && $('message').className === 'error auth-guard') message('');
     if (silent) {
       if (pendingConfirmation || repositoryActionApplying || !repositoryPollingActive()) return;
       repositories = result.repositories.map(repository => {
@@ -2847,7 +2852,8 @@ $('interface-width').addEventListener('change', async () => {
     const result = await send({ type: 'SET_INTERFACE_WIDTH', width: control.value });
     localPreferences = result.preferences;
     control.value = localPreferences.interfaceWidth;
-    document.documentElement.dataset.clockoliWidth = control.value;
+    try { localStorage.setItem('clockoli-interface-width', control.value); }
+    catch { /* Other pages can still read the saved preference from the worker. */ }
     formFeedback('interface-width-feedback', 'Interface width saved.', 'success');
   } catch (error) {
     control.value = previous;

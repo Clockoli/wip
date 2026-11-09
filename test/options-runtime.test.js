@@ -57,7 +57,10 @@ function harness({ reply = () => ({}), confirm = () => false, savedChoices = new
   const nodes = new Map([...html.matchAll(/id="([^"]+)"/g)].map(([, id]) => [id, element()]));
   for (const [, id, label] of html.matchAll(/<button\b[^>]*id="([^"]+)"[^>]*>([^<]*)<\/button>/g)) nodes.get(id).textContent = label;
   const requests = [], timers = [], windowListeners = {}, documentListeners = {}, tabListeners = {};
+  const presentationCache = new Map();
   const context = vm.createContext({
+    localStorage: { getItem: key => presentationCache.get(key) ?? null,
+      setItem: (key, value) => presentationCache.set(key, String(value)) },
     document: { documentElement: { dataset: {} }, getElementById: id => nodes.get(id), createElement: tag => element(tag), createElementNS: (_, tag) => element(tag), addEventListener(type, handler) { documentListeners[type] = handler; }, removeEventListener(type) { delete documentListeners[type]; } },
     window: { addEventListener(type, handler) { windowListeners[type] = handler; }, confirm }, URL,
     setTimeout: (callback, delay) => { const timer = { callback, delay, cleared: false }; timers.push(timer); return timer; }, clearTimeout(timer) { if (timer) timer.cleared = true; }, queueMicrotask: callback => callback(),
@@ -242,7 +245,7 @@ test('queue diagnostics saves immediately without submitting unrelated draft set
   assert.equal(page.nodes.get('diagnostics-feedback').textContent, 'Queue diagnostics saved.');
 });
 
-test('interface width saves separately, updates the page and reverts on failure', async () => {
+test('interface width saves separately without changing Settings width and reverts on failure', async () => {
   assert.match(html, /id="interface-width"/);
   const page = harness({ reply: request => request.type === 'SET_INTERFACE_WIDTH'
     ? { preferences: { ...preferences, interfaceWidth: request.width } } : {} });
@@ -254,7 +257,8 @@ test('interface width saves separately, updates the page and reverts on failure'
   control.value = 'full';
   await control.listeners.change();
   assert.deepEqual(JSON.parse(JSON.stringify(page.requests.at(-1))), { type: 'SET_INTERFACE_WIDTH', width: 'full' });
-  assert.equal(page.context.document.documentElement.dataset.clockoliWidth, 'full');
+  assert.equal(page.context.document.documentElement.dataset.clockoliWidth, undefined);
+  assert.equal(page.context.localStorage.getItem('clockoli-interface-width'), 'full');
   assert.doesNotMatch(html, /id="toolbar-display-mode"/);
 
   const failed = harness({ reply: request => request.type === 'SET_INTERFACE_WIDTH' ? new Error('No storage') : {} });
@@ -264,6 +268,7 @@ test('interface width saves separately, updates the page and reverts on failure'
   failed.nodes.get('interface-width').value = 'full';
   await failed.nodes.get('interface-width').listeners.change();
   assert.equal(failed.nodes.get('interface-width').value, 'contained');
+  assert.equal(failed.context.localStorage.getItem('clockoli-interface-width'), null);
 });
 
 test('ready discovery populates both default options without selection writes and preserves silent DOM', async () => {
