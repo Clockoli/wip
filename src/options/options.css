@@ -119,3 +119,12 @@ select{appearance:none;padding-right:32px;background-image:url("data:image/svg+x
 .repository-more-members>summary:focus-visible{outline:2px solid var(--focus-outlineColor);outline-offset:2px}
 .repository-more-members>.repository-team-member{margin-top:8px}
 .repository-more-members>.repository-view-all{display:inline-block;margin-top:10px}
+
+/* Keep account selection beside search, and separate the optional share link from the invite action. */
+.teammate-picker .teammate-feedback{margin:8px 0}
+.teammate-invitation-link{margin-top:16px;padding-top:12px;border-top:1px solid var(--borderColor-muted)}
+.teammate-invitation-link .form-feedback{margin:8px 0}
+.repository-team .repository-manage-feedback:not(:empty){margin:12px 0;padding:8px 12px;border-left:3px solid var(--borderColor-default);background:var(--bgColor-default)}
+.repository-team .repository-manage-feedback.success{border-left-color:var(--fgColor-open)}
+.repository-team .repository-manage-feedback.warning{border-left-color:var(--fgColor-attention,#9a6700)}
+.repository-team .repository-manage-feedback.error{border-left-color:var(--fgColor-danger)}
