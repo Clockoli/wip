@@ -732,10 +732,43 @@ function canFinishRepositorySetup() {
     && readySetupDestination(configuredDestinations().find(destination => destination.id === defaultDestinationId()));
 }
 
+function destinationCardIdentity(destination, isDefault) {
+  return JSON.stringify([
+    state?.auth?.mode || '', state?.auth?.githubUserId || state?.auth?.githubLogin?.toLowerCase() || '',
+    destination.id, destination.owner, destination.repo, destination.installationId,
+    destination.initialized, destination.label, isDefault,
+    destination.settingsUrl, destination.manageAccessUrl, destination.installationSettingsUrl,
+    destination.repositoryUrl, destination.url, destination.removalBlockers,
+  ]);
+}
+
+function refreshDestinationCardSummary(article, destination, isDefault) {
+  const badges = article.querySelector('.repository-badges');
+  const replacement = document.createElement('div');
+  appendBadge(replacement, destinationStatus(destination), destinationNeedsAttention(destination) ? 'attention' : 'ready');
+  if (isDefault) appendBadge(replacement, 'Default', 'default');
+  badges.replaceChildren(...replacement.children);
+  const metadata = article.querySelector('.repository-metadata');
+  const updated = repositoryMetadata(destination);
+  metadata.replaceChildren(...updated.children);
+}
+
+function restoreDestinationCardDisclosure(previous, current) {
+  current.open = previous.open;
+  for (const selector of ['.teammate-instructions', '.teammate-setup', '.teammate-permissions',
+    '.repository-team-help', '.repository-removal']) {
+    const prior = previous.querySelector(selector), next = current.querySelector(selector);
+    if (!prior || !next) continue;
+    next.open = prior.open;
+    // Keep the explicitly opened invitation form visible after a harmless status update.
+    if (selector === '.teammate-instructions') next.hidden = prior.hidden;
+  }
+}
+
 function renderDestinationCards() {
   const destinations = configuredDestinations();
-  closeActiveAvatarMenu?.();
-  const root = $('time-repository-list'); root.replaceChildren();
+  const root = $('time-repository-list');
+  const previous = new Map([...root.children].map(article => [article.dataset.destinationId, article]));
   $('time-repositories-empty').hidden = destinations.length > 0;
   $('add-time-repository').hidden = state?.auth?.mode === 'pat';
   $('pat-repository-limitation').hidden = state?.auth?.mode !== 'pat';
@@ -757,9 +790,32 @@ function renderDestinationCards() {
     : destinations.length
       ? `Connected repositories are listed above with their status. Default: ${destinationLabel(destinations.find(destination => destination.id === fallback))}. Choose a ready default, or check another repository.`
       : 'Check a repository first, then choose the offered setup action. Repository changes require confirmation.';
+  const articles = [];
   for (const destination of [...destinations].sort((a, b) => destinationLabel(a).localeCompare(destinationLabel(b)))) {
-    const article = renderDestinationCard(destination, destination.id === fallback);
-    root.append(article);
+    const isDefault = destination.id === fallback;
+    const identity = destinationCardIdentity(destination, isDefault);
+    const old = previous.get(destination.id);
+    const article = old?.dataset.cardIdentity === identity ? old : renderDestinationCard(destination, isDefault);
+    article.dataset.cardIdentity = identity;
+    if (old && old !== article && old.dataset.cardIdentity?.slice(0, 0) === ''
+        && old.dataset.destinationId === destination.id) {
+      // Only restore expansion for the same GitHub account and repository.
+      if (old.dataset.repositoryAccount === `${state?.auth?.mode || ''}:${state?.auth?.githubUserId || state?.auth?.githubLogin?.toLowerCase() || ''}`
+          && old.dataset.repositoryCoordinates === `${destination.owner}/${destination.repo}`) {
+        restoreDestinationCardDisclosure(old, article);
+      }
+    }
+    article.dataset.repositoryAccount = `${state?.auth?.mode || ''}:${state?.auth?.githubUserId || state?.auth?.githubLogin?.toLowerCase() || ''}`;
+    article.dataset.repositoryCoordinates = `${destination.owner}/${destination.repo}`;
+    if (article === old) refreshDestinationCardSummary(article, destination, isDefault);
+    articles.push(article);
+  }
+  if (articles.length !== root.children.length || articles.some((article, index) => article !== root.children[index])) {
+    closeActiveAvatarMenu?.();
+    root.replaceChildren(...articles);
+  }
+  for (const [article, destination] of articles.map(article => [article,
+    destinations.find(value => value.id === article.dataset.destinationId)])) {
     if (state?.auth) void loadRepositoryCollaborators(article, destination, root);
   }
 }
