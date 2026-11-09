@@ -77,7 +77,7 @@ test('worker restores the saved toolbar behavior after restart', async () => {
       store: { getToolbarClickMode: async () => mode },
       chrome: { action: { setPopup: async value => { calls.push(value.popup); } } }, console,
     });
-    vm.runInContext(`const TOOLBAR_POPUP_PATH = 'src/popup/popup.html';\n${apply}\n${init}`, context);
+    vm.runInContext(`const TOOLBAR_POPUP_PATH = 'src/popup/quick.html';\n${apply}\n${init}`, context);
     await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(calls, [expected]);
   }
