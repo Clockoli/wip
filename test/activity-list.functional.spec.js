@@ -2271,6 +2271,8 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     const github = await context.newPage();
     github.on('pageerror', error => errors.push(error.message));
     await github.setViewportSize({ width: 600, height: 650 });
+    // This page must use the same completed Monday fixture times as the toolbar popup.
+    await github.clock.install({ time: currentWeekFriday() });
     await github.route('https://github.com/acme/app/issues/42', route => route.fulfill({
       status: 200, contentType: 'text/html',
       body: '<!doctype html><html><body><header><div class="AppHeader-actions"><img class="avatar" alt="User"></div></header><main><h1>Test issue</h1></main></body></html>',
