@@ -2131,11 +2131,12 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     const popupWorkerSource = workerSource
       .replace('day.setDate(day.getDate() - ((day.getDay() + 6) % 7) - 3);',
         'day.setDate(day.getDate() - ((day.getDay() + 6) % 7));')
-      // Keep both entries mid-afternoon on Monday in local time, far from the local week start in every zone.
+      // Keep Monday's sample records early enough to precede the CI clock, but far enough
+      // from midnight for both Timeline and Calendar reordering to stay within the week.
       .replace("const taskUrl = 'https://example.com/activity-test';",
         "const localAt = (hour, minute = 0) => new Date(day.getFullYear(), day.getMonth(), day.getDate(), hour, minute).toISOString();\nconst taskUrl = 'https://example.com/activity-test';")
-      .replace("startedAt: date + 'T08:00:00Z', endedAt: date + 'T08:30:00Z'", 'startedAt: localAt(15), endedAt: localAt(15, 30)')
-      .replace("startedAt: date + 'T07:00:00Z', endedAt: date + 'T07:30:00Z'", 'startedAt: localAt(14), endedAt: localAt(14, 30)')
+      .replace("startedAt: date + 'T08:00:00Z', endedAt: date + 'T08:30:00Z'", 'startedAt: localAt(3), endedAt: localAt(3, 30)')
+      .replace("startedAt: date + 'T07:00:00Z', endedAt: date + 'T07:30:00Z'", 'startedAt: localAt(2), endedAt: localAt(2, 30)')
       .replace("message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT'", "message.type === 'LOAD_WEEK'")
       .replace("if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK') respond({ ok: true, data: state() });",
         "if (message.type === 'LOAD_WEEK') { if (globalThis.autoReplyWeeks) respond({ ok: true, data: { ...state(), recent } }); else (globalThis.weekReplies ||= []).push(respond); return true; }\n  if (message.type === 'LOAD_TIMES') respond({ ok: true, data: { ...state(), recent } });")
@@ -2153,6 +2154,8 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     page.on('pageerror', error => errors.push(error.message));
     worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.setViewportSize({ width: 420, height: 650 });
+    // Monday's sample entries must already be completed, even when CI runs on Monday morning.
+    await page.clock.install({ time: currentWeekFriday() });
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
     const root = page.locator('#clockoli-popup-root');
     const source = root.locator('.task-timeline-host .task[data-task-key="entry:record"]');
@@ -2263,7 +2266,7 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     await page.close();
     await worker.evaluate(() => {
       const first = recent.find(entry => entry.id === 'record');
-      first.startedAt = localAt(15); first.endedAt = localAt(15, 30);
+      first.startedAt = localAt(3); first.endedAt = localAt(3, 30);
       globalThis.editPayloads = [];
     });
     const github = await context.newPage();
@@ -2454,6 +2457,18 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     await bulk.locator('summary').click();
     const examples = bulk.locator('.bulk-time-examples');
     await expect(examples).toBeVisible();
+    const bulkSpacing = await bulk.evaluate(element => {
+      const border = element.getBoundingClientRect();
+      const content = [element.querySelector('.bulk-time-examples'), element.querySelector('.bulk-time-input'),
+        [...element.querySelectorAll('button')].find(button => button.textContent === 'Add time')]
+        .map(node => node.getBoundingClientRect());
+      return { left: Math.min(...content.map(box => box.left)) - border.left,
+        right: border.right - Math.max(...content.map(box => box.right)),
+        bottom: border.bottom - content[2].bottom };
+    });
+    expect(bulkSpacing.left).toBeGreaterThanOrEqual(12);
+    expect(bulkSpacing.right).toBeGreaterThanOrEqual(12);
+    expect(bulkSpacing.bottom).toBeGreaterThanOrEqual(12);
     await expect(examples).toContainText('2026/08/21 https://example.com/task Search relevance 6:00');
     await expect(examples).toContainText('2026-08-22 https://github.com/acme/app/issues/42 Fix ranking 6.5');
     const bulkInput = bulk.getByRole('textbox', { name: 'Bulk time entries' });
