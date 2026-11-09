@@ -51,20 +51,23 @@ class Element {
   select() {}
 }
 
-function setup() {
+function setup(send = async () => { throw Error('unexpected send'); }) {
   const previous = { document: globalThis.document, ClockoliTaskSearch: globalThis.ClockoliTaskSearch };
   const body = new Element();
   globalThis.document = { body, createElement: tag => new Element(tag), createElementNS: (_namespace, tag) => new Element(tag), createTextNode: text => Object.assign(new Element('#text'), { textContent: text }) };
   globalThis.ClockoliTaskSearch = { mount: () => ({ query: '', matches: () => [] }) };
   const button = new Element('button'); body.append(button);
-  const dialog = mountAddTime(button, { send: async () => { throw Error('unexpected send'); }, container: body });
+  const dialog = mountAddTime(button, { send, container: body });
   const walk = node => [node, ...node.children.flatMap(walk)];
   const byId = id => walk(dialog).find(child => child.id === id);
-  const start = byId('add-time-start'), end = byId('add-time-end'), date = byId('add-time-date');
+  const start = byId('add-time-start'), end = byId('add-time-end'),
+    date = byId('add-time-date'), endDate = byId('add-time-end-date');
   const description = byId('add-time-description');
   const save = dialog.children.at(-1).children.at(-1);
   const restore = () => { globalThis.document = previous.document; globalThis.ClockoliTaskSearch = previous.ClockoliTaskSearch; };
-  return { dialog, search: byId('add-time-task'), start, end, date, description, save, restore };
+  return { dialog, button, search: byId('add-time-task'), start, end, date, endDate, description,
+    duration: walk(dialog).find(node => node.className === 'add-time-duration'),
+    dayRange: byId('add-time-day-range'), save, restore };
 }
 
 const entry = { taskUrl: 'https://example.com/task', taskTitle: 'Task', description: 'Keep this',
@@ -123,7 +126,7 @@ test('start boundary edits use :01, preserve end ISO, and reset ordinary form', 
     assert.equal(ui.start.parentElement.hidden, false);
     assert.equal(ui.end.parentElement.hidden, false);
     assert.equal(ui.date.parentElement.hidden, false);
-    assert.equal(ui.end.parentElement.children[0].textContent, 'End (optional)');
+    assert.equal(ui.end.parentElement.children[0].textContent, 'Time');
     assert.equal(ui.start.maxLength, 5);
     assert.equal(ui.start.value, '10:15');
   } finally { ui.restore(); }
@@ -263,6 +266,61 @@ test('manual End survives an empty intermediate Date before shifting the interva
     await ui.save.listeners.click[0]();
     assert.equal(new Date(payload.endedAt) - new Date(payload.startedAt),
       new Date(2026, 9, 18, 12) - new Date(completed.startedAt));
+  } finally { ui.restore(); }
+});
+
+test('new time infers overnight End date, previews duration, and respects a manual End date', async () => {
+  const calls = [];
+  const ui = setup(async value => { calls.push(value); return { accepted: true }; });
+  try {
+    ui.button.fire('click');
+    assert.equal(ui.save.textContent, 'Start timer');
+    assert.equal(ui.endDate.disabled, true);
+    ui.search.value = 'https://example.com/task';
+    ui.date.value = '2026-10-18'; ui.date.fire('input');
+    ui.start.value = '23:00'; ui.start.fire('input');
+    ui.end.value = '01:00'; ui.end.fire('input');
+    assert.equal(ui.save.textContent, 'Add time');
+    assert.equal(ui.endDate.disabled, false);
+    assert.equal(ui.endDate.value, '2026-10-19');
+    assert.equal(ui.duration.textContent, 'Duration: 2h 0m');
+    assert.equal(ui.duration.hidden, false);
+
+    ui.endDate.value = '2026-10-20'; ui.endDate.fire('input');
+    ui.end.value = '02:00'; ui.end.fire('input');
+    assert.equal(ui.endDate.value, '2026-10-20', 'a manually selected end date must not be overwritten');
+    await ui.save.listeners.click[0]();
+    assert.equal(calls.length, 0);
+    assert.match(ui.dialog.children.find(node => node.className === 'add-time-error').textContent, /24 hours/);
+
+    ui.endDate.value = '2026-10-19'; ui.endDate.fire('input');
+    await ui.save.listeners.click[0]();
+    assert.equal(calls.length, 1);
+    assert.deepEqual([calls[0].startedAt, calls[0].endedAt], [
+      new Date(2026, 9, 18, 23).toISOString(), new Date(2026, 9, 19, 2).toISOString(),
+    ]);
+  } finally { ui.restore(); }
+});
+
+test('new time keeps manual End date, resets it for an empty End, and retains Multiple days checkbox', () => {
+  const ui = setup();
+  try {
+    ui.button.fire('click');
+    ui.date.value = '2026-10-18'; ui.date.fire('input');
+    ui.start.value = '10:00'; ui.start.fire('input');
+    ui.end.value = '12:00'; ui.end.fire('input');
+    ui.endDate.value = '2026-10-19'; ui.endDate.fire('input');
+    ui.start.value = '11:00'; ui.start.fire('input');
+    assert.equal(ui.endDate.value, '2026-10-19');
+    ui.end.value = ''; ui.end.fire('input');
+    assert.equal(ui.endDate.disabled, true);
+    assert.equal(ui.save.textContent, 'Start timer');
+    assert.equal(ui.duration.hidden, true);
+    ui.dayRange.checked = true; ui.dayRange.fire('change');
+    assert.equal(ui.save.textContent, 'Add');
+    assert.equal(ui.dialog.dataset.multipleDays, 'true');
+    ui.dayRange.checked = false; ui.dayRange.fire('change');
+    assert.equal(ui.save.textContent, 'Start timer');
   } finally { ui.restore(); }
 });
 
