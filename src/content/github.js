@@ -4109,7 +4109,6 @@
       replacement?.focus?.({ preventScroll: true });
     }
     if (scroll && scrollTop !== undefined) scroll.scrollTop = scrollTop;
-    focusPopupAction();
   }
 
   function refreshTimelineOverlaps() {
