@@ -799,162 +799,19 @@ test('query/hash churn cannot trigger authenticated GitHub refreshes', async () 
   navigationCheck();
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(messages.length, 8);
-  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
+  const trigger = createdNodes.filter(node => node.tag === 'button' && node.className.includes('trigger-main')).at(-1);
   assert.equal(actions.children.at(-2)?.id, 'clockoli-root');
   assert.equal(actions.children.at(-1), avatarSlot);
   await trigger.onclick({ isTrusted: true });
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.ok(document.getElementById('clockoli-full-width-popup-root'), 'the GitHub icon opens the same full-width action panel as the browser action');
-  assert.equal(messages.some(message => message.type === 'START'), false, 'opening the shared panel does not mutate tracking state');
+  assert.ok(messages.some(message => message.type === 'OPEN_TIMES'), 'the GitHub icon opens Activity');
+  assert.equal(document.getElementById('clockoli-full-width-popup-root'), null, 'no on-page panel is created');
+  assert.equal(messages.some(message => message.type === 'START'), false, 'opening Activity does not start the timer');
 });
 
 
-test('stopping renders local stopped state without a stale remote refresh', async () => {
-  documentNodes.clear(); createdNodes.length = 0;
-  const messages = [];
-  const startedAt = new Date(Date.now() - 60_000).toISOString();
-  const location = {
-    protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/1', href: 'https://github.com/acme/app/issues/1',
-  };
-  const { actions, avatarSlot } = makeHeader();
-  const document = {
-    documentElement: new FakeNode('html'),
-    createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
-    createElementNS: (namespace, tag) => new FakeNode(tag),
-    createTextNode: text => ({ textContent: text }),
-    getElementById: id => documentNodes.get(id) ?? null,
-    querySelector: selector => selector === '.AppHeader-actions' ? actions : null,
-    addEventListener() {},
-  };
-  const active = {
-    issue: { type: 'issue', owner: 'acme', repo: 'app', number: 1, url: 'https://github.com/acme/app/issues/1' },
-    startedAt, description: '',
-  };
-  const stopped = {
-    _path: 'times/2026-08/alice.jsonl', _sha: 'saved-sha', _index: 0, id: '01K3P9VPJ2X4R6T8W0Y2Z4A6BC',
-    issue: active.issue, taskUrl: active.issue.url, taskTitle: 'Current task', description: 'done', entryDate: '2026-08-27',
-    startedAt, endedAt: '2026-08-27T00:05:00Z', durationSeconds: 300, timezone: 'UTC',
-  };
-  const pendingStopped = { ...stopped, _sha: null, _index: -1, _pending: true };
-  const pendingTimers = [], nativeSetTimeout = setTimeout;
-  let pageRequests = 0, stopAccepted = false, pageRequestsWhenStopAccepted = 0;
-  const context = vm.createContext({
-    location, document,
-    chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
-      messages.push(structuredClone(message));
-      if (message.type === 'GET_PAGE_STATE') {
-        pageRequests += 1;
-        const syncingStop = stopAccepted && pageRequests === pageRequestsWhenStopAccepted + 1;
-        callback({ ok: true, data: {
-          configured: true, active: stopAccepted ? null : active, pendingCount: syncingStop ? 1 : 0,
-          pendingWrites: syncingStop ? [{ id: 'pending-1', status: 'pending' }] : [],
-          recent: stopAccepted ? [syncingStop ? pendingStopped : stopped] : [],
-        } });
-      } else if (message.type === 'STOP') { stopAccepted = true; pageRequestsWhenStopAccepted = pageRequests; callback({ ok: true, data: { entry: stopped, pending: true } }); }
-      else if (message.type === 'LOAD_RECENT' && stopAccepted) return;
-      else callback({ ok: true, data: {} });
-    } } },
-    setInterval() { return 1; }, clearInterval() {},
-    setTimeout(callback, delay, ...args) {
-      if (delay === 500) { const timer = { unref() {} }; pendingTimers.push(() => callback(...args)); return timer; }
-      return nativeSetTimeout(callback, delay, ...args);
-    },
-    Promise, Date, console,
-    prompt: () => 'done', confirm: () => true, alert() {},
-  });
-  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
-  await new Promise(resolve => setTimeout(resolve, 0));
-  const activeTrigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
-  assert.match(activeTrigger.className, /running/, 'active timer colors the header icon');
-  assert.match(activeTrigger.className, /running-current/, 'only the matching page rotates the GitHub mark');
-  assert.deepEqual(messages.find(message => message.type === 'SET_ACTION_ICON_FRAME'), { type: 'SET_ACTION_ICON_FRAME', frame: 0 });
-  const trigger = activeTrigger;
-  await trigger.onclick({ isTrusted: true });
-  await new Promise(resolve => setTimeout(resolve, 0));
-  const stop = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Stop and save').at(-1);
-  assert.ok(stop?.onclick, 'Stop handler was rendered in the header menu');
-  const recentBeforeStop = messages.filter(message => message.type === 'LOAD_RECENT').length;
-  const pageStateBeforeStop = messages.filter(message => message.type === 'GET_PAGE_STATE').length;
-  const completed = await Promise.race([stop.onclick({ isTrusted: true }).then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 50))]);
-  assert.equal(completed, true, 'accepted Stop renders without waiting for a remote recent-entry load');
-  await new Promise(resolve => setTimeout(resolve, 0));
-  let pageStateMessages = messages.filter(message => message.type === 'GET_PAGE_STATE');
-  assert.equal(pageStateMessages.length, pageStateBeforeStop + 1, 'Stop first reconciles from the accepted local pending snapshot');
-  assert.equal(pendingTimers.length, 1, 'pending Stop schedules local state reconciliation');
-  await pendingTimers.shift()();
-  await new Promise(resolve => nativeSetTimeout(resolve, 0));
-  pageStateMessages = messages.filter(message => message.type === 'GET_PAGE_STATE');
-  assert.equal(pageStateMessages.length, pageStateBeforeStop + 2, 'background sync completion is observed from local page state');
-  assert.equal(messages.filter(message => message.type === 'LOAD_RECENT').length, recentBeforeStop, 'Stop does not start a remote recent-entry load');
-  assert.equal(pageStateMessages.at(-1)?.type, 'GET_PAGE_STATE');
-});
 
 
-test('a delayed Stop response cannot unlock recent entries after GitHub SPA navigation', async () => {
-  documentNodes.clear(); createdNodes.length = 0;
-  const messages = [], intervals = [];
-  const location = {
-    protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/1', href: 'https://github.com/acme/app/issues/1',
-  };
-  const { actions } = makeHeader();
-  const document = {
-    documentElement: new FakeNode('html'),
-    createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
-    createElementNS: (namespace, tag) => new FakeNode(tag),
-    createTextNode: text => ({ textContent: text }),
-    getElementById: id => documentNodes.get(id) ?? null,
-    querySelector: selector => selector === '.AppHeader-actions' ? actions : null,
-    addEventListener() {},
-  };
-  const startedAt = '2026-08-27T00:00:00Z';
-  const active = {
-    issue: { type: 'issue', owner: 'acme', repo: 'app', number: 1, url: 'https://github.com/acme/app/issues/1' },
-    startedAt, description: '',
-  };
-  const stopped = {
-    _path: 'times/2026-08/alice.jsonl', _sha: 'saved-sha', _index: 0, id: '01K3P9VPJ2X4R6T8W0Y2Z4A6BC',
-    issue: active.issue, taskUrl: active.issue.url, taskTitle: 'Previous task', description: 'done', entryDate: '2026-08-27',
-    startedAt, endedAt: '2026-08-27T00:05:00Z', durationSeconds: 300, timezone: 'UTC',
-  };
-  let pageRequests = 0, stopCallback, stopRequested = false;
-  const context = vm.createContext({
-    location, document,
-    chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
-      messages.push(structuredClone(message));
-      if (message.type === 'GET_PAGE_STATE') {
-        pageRequests += 1;
-        callback({ ok: true, data: {
-          configured: true, active: stopRequested ? null : active, pendingCount: 0, pendingWrites: [],
-          recent: stopRequested ? [stopped] : [],
-        } });
-      } else if (message.type === 'STOP') { stopRequested = true; stopCallback = callback; }
-      else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: { entries: stopRequested ? [stopped] : [], recent: stopRequested ? [stopped] : [] } });
-      else callback({ ok: true, data: {} });
-    } } },
-    setInterval(callback, delay) { intervals.push({ callback, delay }); return intervals.length; }, clearInterval() {}, setTimeout, Promise, Date, console,
-    confirm: () => true, alert() {},
-  });
-  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
-  await new Promise(resolve => setTimeout(resolve, 0));
-  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
-  await trigger.onclick({ isTrusted: true });
-  await new Promise(resolve => setTimeout(resolve, 0));
-  const stop = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Stop and save').at(-1);
-  const stopping = stop.onclick({ isTrusted: true });
-  await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(typeof stopCallback, 'function', 'Stop remains pending while navigation starts');
-
-  location.pathname = '/acme/app/issues/2'; location.href = 'https://github.com/acme/app/issues/2';
-  intervals.find(item => item.delay === 750).callback();
-  await new Promise(resolve => setTimeout(resolve, 0));
-  const readsBeforeDelayedStop = messages.filter(message => ['GET_PAGE_STATE', 'LOAD_RECENT'].includes(message.type)).length;
-  stopCallback({ ok: true, data: { entry: stopped, pending: true } });
-  await stopping;
-  const readsAfterDelayedStop = messages.filter(message => ['GET_PAGE_STATE', 'LOAD_RECENT'].includes(message.type)).length;
-  assert.equal(readsAfterDelayedStop, readsBeforeDelayedStop, 'the delayed Stop response cannot refresh or unlock data on the new route');
-});
 
 
 test('header control mounts when GitHub renders the authenticated header after the content script', async () => {
@@ -1005,162 +862,13 @@ test('header control mounts when GitHub renders the authenticated header after t
 });
 
 
-test('header menu blocks Start and resolves a pending entry conflict', async () => {
-  documentNodes.clear(); createdNodes.length = 0;
-  const messages = [];
-  const location = {
-    protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7',
-  };
-  const { actions } = makeHeader();
-  let resolved = false;
-  const document = {
-    documentElement: new FakeNode('html'),
-    createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
-    createElementNS: (namespace, tag) => new FakeNode(tag),
-    createTextNode: text => ({ textContent: text }),
-    getElementById: id => documentNodes.get(id) ?? null,
-    querySelector: selector => selector === '.AppHeader-actions' ? actions : null,
-    addEventListener() {},
-  };
-  const pending = { id: 'pending-1', status: 'conflict', stage: 'createEntry' };
-  const context = vm.createContext({
-    location, document,
-    chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
-      messages.push(structuredClone(message));
-      if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: resolved ? 0 : 1, pendingWrites: resolved ? [] : [pending] } });
-      else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: [] });
-      else if (message.type === 'RESOLVE_PENDING') { resolved = true; callback({ ok: true, data: true }); }
-      else callback({ ok: true, data: {} });
-    } } },
-    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console,
-    confirm: () => true, alert() {},
-  });
-  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
-  await new Promise(resolve => setTimeout(resolve, 0));
-  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
-  await trigger.onclick({ isTrusted: true });
-  await new Promise(resolve => setTimeout(resolve, 0));
-  const start = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Start tracking this task').at(-1);
-  const retry = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Retry entry sync').at(-1);
-  assert.equal(start.disabled, true, 'pending entry prevents another timer');
-  assert.ok(retry?.onclick, 'entry conflict exposes its recovery action');
-  await retry.onclick({ isTrusted: true });
-  await new Promise(resolve => setTimeout(resolve, 0));
-  assert.deepEqual(messages.find(message => message.type === 'RESOLVE_PENDING'), { type: 'RESOLVE_PENDING', id: 'pending-1' });
-  assert.equal(resolved, true);
-});
 
 
-test('missing-active conflicts explicitly warn before discarding an unsaved completion', async () => {
-  documentNodes.clear(); createdNodes.length = 0;
-  const messages = []; let confirmed = false;
-  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
-  const { actions } = makeHeader();
-  const pending = { id: 'pending-1', status: 'conflict', stage: 'verifyActive', conflictReason: 'active_missing_no_completion' };
-  const document = {
-    documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
-    createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
-    querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
-  };
-  const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
-      messages.push(structuredClone(message));
-      if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 1, pendingWrites: [pending] } });
-      else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: [] });
-      else callback({ ok: true, data: {} });
-    } } },
-    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console,
-    confirm(message) { confirmed = /discard this unsaved completion/i.test(message); return true; }, alert() {},
-  });
-  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
-  await new Promise(resolve => setTimeout(resolve, 0));
-  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
-  await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  assert.ok(createdNodes.some(node => node.textContent === 'Completion was not saved'));
-  assert.ok(createdNodes.some(node => /no matching completion exists/i.test(node.textContent)));
-  const discard = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Discard unsaved completion').at(-1);
-  await discard.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(confirmed, true);
-  assert.deepEqual(messages.find(message => message.type === 'RESOLVE_PENDING'),
-    { type: 'RESOLVE_PENDING', id: 'pending-1', action: 'discard_unsaved_completion' });
-});
 
-test('changed Add time conflict offers revalidation and explicit queued-start discard', async () => {
-  documentNodes.clear(); createdNodes.length = 0;
-  const messages = []; let confirmed = false;
-  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
-  const { actions } = makeHeader();
-  const pending = { id: 'pending-1', operation: 'startTimer', status: 'conflict', stage: 'startNext',
-    conflictReason: 'add_time_overlap_changed', subjects: [{ proposed: { taskTitle: 'Meeting',
-      entryDate: '2026-11-02', startedAt: '2026-11-02T12:01:00.000Z' } }] };
-  const document = {
-    documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
-    createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
-    querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
-  };
-  const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
-      messages.push(structuredClone(message));
-      if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 1, pendingWrites: [pending] } });
-      else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: [] });
-      else callback({ ok: true, data: {} });
-    } } },
-    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console,
-    confirm(message) { confirmed = /discard this queued start/i.test(message); return true; }, alert() {},
-  });
-  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
-  await new Promise(resolve => setTimeout(resolve, 0));
-  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
-  await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const retry = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Recheck and retry start').at(-1);
-  const align = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Start after previous entry').at(-1);
-  const discard = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Discard queued start').at(-1);
-  assert.ok(retry?.onclick);
-  assert.ok(align?.onclick);
-  assert.ok(discard?.onclick);
-  await align.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  assert.deepEqual(messages.find(message => message.type === 'RESOLVE_PENDING'),
-    { type: 'RESOLVE_PENDING', id: 'pending-1', action: 'align_queued_start' });
-  messages.length = 0;
-  await discard.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(confirmed, true);
-  assert.deepEqual(messages.find(message => message.type === 'RESOLVE_PENDING'),
-    { type: 'RESOLVE_PENDING', id: 'pending-1', action: 'discard_queued_start' });
-});
 
-test('queued Add time discard reports an unavailable remote check without losing the conflict', async () => {
-  documentNodes.clear(); createdNodes.length = 0;
-  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
-  const { actions } = makeHeader();
-  const pending = { id: 'pending-1', operation: 'startTimer', status: 'conflict', stage: 'startNext', conflictReason: 'add_time_overlap_changed' };
-  const document = {
-    documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
-    createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
-    querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
-  };
-  const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
-      if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 1, pendingWrites: [pending] } });
-      else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: [] });
-      else if (message.type === 'RESOLVE_PENDING') callback({ ok: false, error: { message: 'Cannot verify whether the timer was saved. Reconnect and retry.' } });
-      else callback({ ok: true, data: {} });
-    } } },
-    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console,
-    confirm: () => true, alert() {},
-  });
-  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
-  await new Promise(resolve => setTimeout(resolve, 0));
-  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
-  await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const discard = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Discard queued start').at(-1);
-  await discard.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  assert.ok(createdNodes.some(node => /Cannot verify whether the timer was saved/.test(node.textContent)));
-  assert.ok(createdNodes.some(node => node.textContent === 'Discard queued start'), 'conflict remains actionable');
-});
+
+
+
 
 test('header control mounts before the avatar in GitHub current top-nav-right header', async () => {
   documentNodes.clear(); createdNodes.length = 0;
@@ -1203,54 +911,7 @@ test('header control mounts before the avatar in GitHub current top-nav-right he
 });
 
 
-test('recent rows expose durable titles and unified time-and-metadata editing triggers', async () => {
-  documentNodes.clear(); createdNodes.length = 0;
-  const messages = [];
-  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
-  const { actions } = makeHeader();
-  const entry = {
-    schemaVersion: 1, id: '01K31P0G000000000000000001', user: 'alice',
-    issue: { type: 'issue', owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' },
-    issueTitle: 'Make ranking deterministic', entryDate: '2026-11-01', timezone: 'America/Los_Angeles',
-    startedAt: '2026-11-01T09:00:11.3Z', endedAt: '2026-11-01T09:58:27.12Z', durationSeconds: 3495,
-    description: 'Original note', createdAt: '2026-11-01T09:00:11.3Z', updatedAt: '2026-11-01T09:58:27.12Z',
-    _path: 'times/2026-08/alice.jsonl', _sha: 'one', _index: 0,
-  };
-  const issueTitleNode = new FakeNode('bdi'); issueTitleNode.textContent = 'Make ranking deterministic';
-  const form = { openEdit(value, onEdit) { this.value = value; this.onEdit = onEdit; } };
-  const document = {
-    documentElement: new FakeNode('html'), activeElement: null,
-    createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
-    createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
-    querySelector: selector => selector === '.AppHeader-actions' ? actions : selector.includes('issue-title') ? issueTitleNode : null, addEventListener() {},
-  };
-  const context = vm.createContext({
-    location, document, ClockoliTimeEntryForm: form, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
-      messages.push(structuredClone(message));
-      if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
-      else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: [entry] });
-      else callback({ ok: true, data: {} });
-    } } },
-    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
-  });
-  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
-  await new Promise(resolve => setTimeout(resolve, 0));
-  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
-  await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(createdNodes.findLast(node => node.className.includes('task-title')).textContent, 'Make ranking deterministic');
-  const descriptionControl = createdNodes.findLast(node => node.className.includes('entry-description-editable'));
-  assert.equal(descriptionControl.textContent, 'Original note');
-  await descriptionControl.onclick({ isTrusted: true });
-  assert.equal(form.value.taskUrl, entry.issue.url);
-  assert.equal(form.value.taskTitle, entry.issueTitle);
-  assert.equal(form.value.description, 'Original note');
-  assert.equal(form.value.startedAt, entry.startedAt);
-  assert.equal(form.value.endedAt, entry.endedAt);
-  assert.equal(typeof form.onEdit, 'function');
-  assert.match(source, /entryActionButton\('Edit time', 'edit', async \(_event, node\) => revealTimeEditor\(node\)\)/);
-  assert.match(source, /entryActionButton\('Delete', 'delete', async/);
-});
+
 
 test('Activity hydrates durable IndexedDB records before requesting remote history', () => {
   const start = source.indexOf('  async function loadSelectedTimes(onFailure = null) {');
@@ -1264,414 +925,17 @@ test('Activity hydrates durable IndexedDB records before requesting remote histo
   assert.match(loader, /recentLoaded = true; recentFresh = false;\s*renderUi\(\)/);
 });
 
-test('opening before remote state refresh renders cache immediately and keeps stale rows locked until retry succeeds', async () => {
-  documentNodes.clear(); createdNodes.length = 0;
-  const messages = [];
-  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
-  const { actions } = makeHeader();
-  const cached = {
-    schemaVersion: 1, id: '20260818000000000000000000', user: 'alice',
-    taskUrl: 'https://github.com/acme/app/issues/7', taskTitle: 'Cached entry',
-    issue: { type: 'issue', owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' }, issueTitle: 'Cached entry',
-    entryDate: '2026-08-18', startedAt: '2026-08-18T08:00:00+00:00', endedAt: '2026-08-18T09:00:00+00:00',
-    durationSeconds: 3600, description: '', createdAt: '2026-08-18T09:00:00+00:00', updatedAt: '2026-08-18T09:00:00+00:00',
-    _path: 'times/2026-08/alice.jsonl', _sha: 'cached', _index: 0,
-  };
-  const refreshed = { ...cached, taskTitle: 'Refreshed entry', issueTitle: 'Refreshed entry', _sha: 'fresh' };
-  const cachedStateReplies = [];
-  const remoteStateReplies = [], recentReplies = [];
-  const document = {
-    documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
-    createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
-    querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
-  };
-  const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
-      messages.push(structuredClone(message));
-      if (message.type === 'GET_PAGE_STATE') {
-        if (message.refresh) remoteStateReplies.push(callback);
-        else cachedStateReplies.push(callback);
-      } else if (message.type === 'LOAD_RECENT') recentReplies.push(callback);
-      else callback({ ok: true, data: {} });
-    } } },
-    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
-  });
-  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
-
-  assert.deepEqual(messages[0], { type: 'GET_PAGE_STATE', refresh: false }, 'initial rendering reads local cache before remote active state');
-  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
-  const opening = trigger.onclick({ isTrusted: true });
-  assert.equal(cachedStateReplies.length, 2, 'opening unknown configuration also requests local state');
-  assert.equal(messages.some(message => message.type === 'LOAD_RECENT'), false, 'the panel waits only for the local configured snapshot');
-
-  for (const reply of cachedStateReplies) reply({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [], recent: [cached] } });
-  await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(remoteStateReplies.length >= 1, true, 'the shared action panel refreshes active state after reading the local cache');
-  for (const reply of remoteStateReplies.splice(0)) reply({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [], recent: [cached] } });
-  await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(recentReplies.length >= 1, true, 'the open panel automatically starts a recent refresh');
-  assert.ok(createdNodes.findLast(node => node.tag === 'a' && node.textContent.includes('Cached entry')),
-    'cached entries are visible before either remote request finishes');
-  assert.equal(createdNodes.findLast(node => node.className.includes('entry-delete')).disabled, true,
-    'cached mutation controls stay locked until their current SHA is refreshed');
-  assert.equal(createdNodes.some(node => node.textContent === 'Open the menu again to load entries.'), false);
-
-  for (const reply of recentReplies.splice(0)) reply({ ok: false, error: { message: 'GitHub is offline', code: 'network' } });
-  await opening;
-  await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(createdNodes.findLast(node => node.className.includes('entry-delete')).disabled, true,
-    'a failed automatic refresh keeps stale cached mutation controls locked');
-  assert.equal(messages.filter(message => message.type === 'GET_PAGE_STATE' && message.refresh).length >= 1, true);
-
-  const retry = createdNodes.filter(node => node.getAttribute('aria-label') === 'Refresh').at(-1);
-  const retrying = retry.onclick({ isTrusted: true });
-  await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(recentReplies.length, 1, 'Retry starts one new fresh load');
-  recentReplies.shift()({ ok: true, data: { recent: [refreshed], reportDate: '2026-08-18', todaySeconds: 3600, active: null, pendingCount: 0, pendingWrites: [] } });
-  await retrying;
-  await new Promise(resolve => setTimeout(resolve, 0));
-  assert.ok(createdNodes.findLast(node => node.tag === 'a' && node.textContent.includes('Refreshed entry')));
-  assert.equal(createdNodes.findLast(node => node.className.includes('entry-delete')).disabled, false,
-    'fresh entries become editable only after a successful retry');
-});
 
 
-test('each recent record keeps task identity inside its highlighted time row', async () => {
-  documentNodes.clear(); createdNodes.length = 0;
-  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
-  const { actions } = makeHeader();
-  const issue = number => ({ type: 'issue', owner: 'acme', repo: 'app', number, url: `https://github.com/acme/app/issues/${number}` });
-  const entry = (id, number, start, end, description) => ({
-    schemaVersion: 1, id, user: 'alice', issue: issue(number), issueTitle: `Issue ${number}`,
-    entryDate: '2026-08-18', startedAt: start, endedAt: end,
-    durationSeconds: (new Date(end) - new Date(start)) / 1000, description,
-    createdAt: end, updatedAt: end, timeRepository: 'acme/time', _path: 'times/2026-08/alice.jsonl', _sha: 'same', _index: Number(id.at(-1)),
-  });
-  const entries = [
-    entry('record0', 7, '2026-08-18T12:00:00+00:00', '2026-08-18T12:30:00+00:00', 'Newest pass'),
-    entry('record1', 7, '2026-08-18T11:00:00+00:00', '2026-08-18T11:20:00+00:00', 'Earlier pass'),
-    entry('record2', 8, '2026-08-18T10:00:00+00:00', '2026-08-18T10:15:00+00:00', 'Other task'),
-    entry('record3', 7, '2026-08-18T09:00:00+00:00', '2026-08-18T09:10:00+00:00', 'Nonconsecutive pass'),
-  ];
-  const document = {
-    documentElement: new FakeNode('html'), activeElement: null,
-    createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
-    createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
-    querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
-  };
-  const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
-      if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
-      else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: entries });
-      else callback({ ok: true, data: {} });
-    } } },
-    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
-  });
-  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
-  await new Promise(resolve => setTimeout(resolve, 0));
-  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
-  await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
 
-  const taskLinks = createdNodes.filter(node => node.tag === 'a' && [issue(7).url, issue(8).url].includes(node.href)).slice(-4);
-  assert.equal(taskLinks.length, 4, 'every highlighted time row renders its task title');
-  assert.deepEqual(taskLinks.map(node => node.textContent), ['Issue 7', 'Issue 7', 'Issue 8', 'Issue 7']);
-  assert.deepEqual(createdNodes.filter(node => node.className.includes('task-url') && [issue(7).url, issue(8).url].includes(node.textContent)).slice(-4).map(node => node.textContent),
-    [issue(7).url, issue(7).url, issue(8).url, issue(7).url], 'each highlighted row retains its canonical URL source line');
-  assert.equal(createdNodes.some(node => node.className.includes('time-repository-label')), false,
-    'Activity keeps repository provenance out of individual time rows');
-  assert.equal(createdNodes.filter(node => node.className.includes('entry-record')).slice(-4).length, 4,
-    'each record retains a separate time-detail row');
-  assert.equal(createdNodes.filter(node => node.className.includes('entry-meta')).slice(-4).length, 4);
-  assert.equal(createdNodes.filter(node => node.className.includes('entry-description-editable')).slice(-4).length, 4,
-    'each time record exposes its inline metadata editor affordance');
-  assert.equal(createdNodes.filter(node => node.className.includes('entry-delete')).slice(-4).length, 4,
-    'each time record remains independently deletable');
-});
 
-test('main-panel times are directly editable, relative-day labeled, and overlapping records are highlighted', async () => {
-  documentNodes.clear(); createdNodes.length = 0;
-  const messages = [];
-  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
-  const { actions } = makeHeader();
-  const issue = number => ({ type: 'issue', owner: 'acme', repo: 'app', number, url: `https://github.com/acme/app/issues/${number}` });
-  const entry = (id, number, start, end, index) => ({
-    schemaVersion: 1, id, user: 'alice', issue: issue(number), issueTitle: `Issue ${number}`,
-    entryDate: start.slice(0, 10), startedAt: start, endedAt: end,
-    durationSeconds: (new Date(end) - new Date(start)) / 1000, description: '',
-    createdAt: end, updatedAt: end, _path: 'times/2026-08/alice.jsonl', _sha: 'same', _index: index,
-  });
-  const entries = [
-    entry('today-a', 7, '2026-08-21T14:00:00+00:00', '2026-08-21T15:00:00+00:00', 0),
-    entry('today-b', 8, '2026-08-21T14:30:00+00:00', '2026-08-21T16:00:00+00:00', 1),
-    entry('yesterday', 9, '2026-08-20T12:00:00+00:00', '2026-08-20T12:30:00+00:00', 2),
-    entry('weekday', 10, '2026-08-19T09:00:00+00:00', '2026-08-19T09:15:00+00:00', 3),
-  ];
-  class FixedDate extends Date {
-    constructor(...args) { super(...(args.length ? args : ['2026-08-21T12:00:00'])); }
-    static now() { return new Date('2026-08-21T12:00:00').getTime(); }
-  }
-  const document = {
-    documentElement: new FakeNode('html'), activeElement: null,
-    createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
-    createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
-    querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
-  };
-  const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
-      messages.push(structuredClone(message));
-      if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
-      else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: entries });
-      else if (message.type === 'QUEUE_ENTRIES_EDIT') {
-        assert.equal(createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-16).every(node => node.disabled), false,
-          'inline editors stay usable after a durable queue accepts the edit');
-        for (const request of message.payload.entries) {
-          const position = entries.findIndex(entry => entry.id === request.original.id);
-          entries[position] = { ...entries[position], ...request.edits };
-        }
-        callback({ ok: true, data: { operationId: `queued-${messages.length}` } });
-      }
-      else callback({ ok: true, data: {} });
-    } } },
-    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date: FixedDate, console, confirm: () => true, alert() {},
-  });
-  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
-  await new Promise(resolve => setTimeout(resolve, 0));
-  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
-  await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
 
-  assert.deepEqual(createdNodes.filter(node => node.className === 'entry-day').slice(-4).map(node => node.textContent),
-    ['Today', 'Today', 'Yesterday', 'Wed']);
-  assert.equal(createdNodes.filter(node => node.className.includes('entry-overlap')).slice(-2).length, 2);
-  assert.equal(createdNodes.filter(node => node.className.includes('overlap-warning')).slice(-2).length, 2);
-  const inlineValues = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-16);
-  assert.equal(inlineValues.length, 16, 'every main-panel record exposes Start and Stop hour/minute spinbuttons');
-  assert.equal(createdNodes.filter(node => node.className.includes('inline-save')).slice(-4).every(node => node.hidden), true);
 
-  let firstStopMinute = inlineValues[7];
-  assert.equal(firstStopMinute.onwheel, undefined, 'inline time fields leave wheel scrolling untouched');
-  firstStopMinute.value = ''; firstStopMinute.oninput({});
-  let save = createdNodes.filter(node => node.className.includes('inline-save')).at(-3);
-  await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(messages.some(message => message.type === 'QUEUE_ENTRIES_EDIT'), false, 'an incomplete direct-input draft is never sent');
-  assert.ok(createdNodes.findLast(node => node.className.includes('error') && node.walk().some(child => child.textContent.includes('valid date and time'))));
-  const preservedValues = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-16);
-  assert.equal(preservedValues[7].value, '', 'validation rerender preserves the incomplete direct-input draft');
-  firstStopMinute = preservedValues[7]; firstStopMinute.value = '01'; firstStopMinute.oninput({});
-  save = createdNodes.filter(node => node.className.includes('inline-save')).at(-3);
-  assert.equal(save.hidden, false, 'typing a main-panel value reveals an explicit Save action');
-  await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const edit = messages.findLast(message => message.type === 'QUEUE_ENTRIES_EDIT');
-  assert.equal(edit.payload.entries.length, 2, 'the crossed neighboring Start is saved in the same atomic group');
-  assert.equal(edit.payload.entries[0].originalSha, 'same');
-  assert.equal(edit.payload.entries[0].edits.endedAt, '2026-08-21T15:01:00+00:00');
-  assert.equal(edit.payload.entries[1].edits.startedAt, '2026-08-21T15:01:00+00:00');
 
-  const refreshedInlineValues = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-16);
-  const secondStartMinute = refreshedInlineValues[1];
-  assert.equal(secondStartMinute.onwheel, undefined);
-  secondStartMinute.value = '29'; secondStartMinute.oninput({});
-  const mirroredSave = createdNodes.filter(node => node.className.includes('inline-save')).slice(-4)[0];
-  assert.equal(mirroredSave.hidden, false, 'crossing Start reveals Save on the edited record');
-  await mirroredSave.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const mirroredEdit = messages.findLast(message => message.type === 'QUEUE_ENTRIES_EDIT');
-  assert.equal(mirroredEdit.payload.entries.length, 1, 'the new delta is merged with its earlier durable queued group');
-  assert.equal(mirroredEdit.payload.entries[0].edits.startedAt, '2026-08-21T15:29:00+00:00');
-});
 
-test('directly typed newer Start and previous Stop save as touching intervals without an overlap warning', async () => {
-  documentNodes.clear(); createdNodes.length = 0;
-  const messages = [];
-  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
-  const { actions } = makeHeader();
-  const issue = number => ({ type: 'issue', owner: 'acme', repo: 'app', number, url: `https://github.com/acme/app/issues/${number}` });
-  const makeEntry = (id, number, start, end, index) => ({
-    schemaVersion: 1, id, user: 'alice', issue: issue(number), issueTitle: `Issue ${number}`,
-    entryDate: start.slice(0, 10), startedAt: start, endedAt: end,
-    durationSeconds: (new Date(end) - new Date(start)) / 1000, description: '',
-    createdAt: end, updatedAt: end, _path: 'times/2026-08/alice.jsonl', _sha: 'same', _index: index,
-  });
-  let entries = [
-    makeEntry('older', 7, '2026-08-21T14:00:00.111+00:00', '2026-08-21T15:00:43.324+00:00', 0),
-    makeEntry('newer', 8, '2026-08-21T15:00:06.768+00:00', '2026-08-21T16:00:00.999+00:00', 1),
-    makeEntry('oldest', 6, '2026-08-21T13:00:00.222+00:00', '2026-08-21T14:00:00.000+00:00', 2),
-  ];
-  const document = {
-    documentElement: new FakeNode('html'), activeElement: null,
-    createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
-    createTextNode: value => ({ textContent: value }), getElementById: id => documentNodes.get(id) ?? null,
-    querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
-  };
-  const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
-      messages.push(structuredClone(message));
-      if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
-      else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: entries });
-      else if (message.type === 'QUEUE_ENTRIES_EDIT') {
-        for (const request of message.payload.entries) {
-          const position = entries.findIndex(entry => entry._index === request.index);
-          entries[position] = { ...entries[position], ...request.edits,
-            entryDate: request.edits.startedAt.slice(0, 10),
-            durationSeconds: (new Date(request.edits.endedAt) - new Date(request.edits.startedAt)) / 1000,
-            _sha: 'saved' };
-        }
-        callback({ ok: true, data: entries });
-      } else callback({ ok: true, data: {} });
-    } } },
-    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
-  });
-  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
-  await new Promise(resolve => setTimeout(resolve, 0));
-  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
-  await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const visibleOverlapWarnings = () => createdNodes.filter(node => node.tag === 'shadow').at(-1).walk()
-    .filter(node => node.className?.includes('overlap-warning'));
-  assert.equal(visibleOverlapWarnings().length, 2, 'a seconds-only overlap is initially visible even though both boundaries display 15:00');
 
-  const values = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-12);
-  const newerStartHour = values[0], newerStartMinute = values[1];
-  assert.equal(newerStartMinute.onwheel, undefined);
-  newerStartHour.value = '14'; newerStartHour.oninput({});
-  newerStartMinute.value = '59'; newerStartMinute.oninput({});
-  assert.equal(values[6].value, '14');
-  assert.equal(values[7].value, '59', 'the older Stop mirrors the newer Start immediately');
-  assert.equal(visibleOverlapWarnings().length, 0, 'linked direct-input drafts clear the stale overlap warning before Save');
 
-  newerStartHour.value = '15'; newerStartHour.oninput({});
-  newerStartMinute.value = '01'; newerStartMinute.oninput({});
-  assert.deepEqual([values[6].value, values[7].value], ['15', '00'],
-    'backing out of the crossing restores the older Stop baseline');
-  let save = createdNodes.filter(node => node.className.includes('inline-save')).slice(-2)[0];
-  await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  let request = messages.findLast(message => message.type === 'QUEUE_ENTRIES_EDIT');
-  assert.equal(request.payload.entries.length, 1, 'a restored no-op neighbor is excluded from the grouped mutation');
-  assert.equal(request.payload.entries[0].edits.startedAt, '2026-08-21T15:01:06.768+00:00');
-  assert.equal(entries[0].endedAt, '2026-08-21T15:00:43.324+00:00', 'the older Stop remains exact after the non-crossing save');
 
-  const refreshedValues = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-12);
-  const refreshedStartHour = refreshedValues[0], refreshedStartMinute = refreshedValues[1];
-  refreshedStartHour.value = '14'; refreshedStartHour.oninput({});
-  refreshedStartMinute.value = '59'; refreshedStartMinute.oninput({});
-  assert.deepEqual([refreshedValues[6].value, refreshedValues[7].value], ['14', '59']);
-  save = createdNodes.filter(node => node.className.includes('inline-save')).slice(-2)[0];
-  await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  request = messages.findLast(message => message.type === 'QUEUE_ENTRIES_EDIT');
-  assert.deepEqual(request.payload.entries.map(item => [item.edits.startedAt, item.edits.endedAt]), [
-    ['2026-08-21T14:59:06.768+00:00', '2026-08-21T15:59:00.999+00:00'],
-    ['2026-08-21T14:00:00.111+00:00', '2026-08-21T14:59:06.768+00:00'],
-  ]);
-  assert.equal(visibleOverlapWarnings().length, 0,
-    'the refreshed linked result remains endpoint-touching, not overlapping');
-
-  const cascadeValues = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-12);
-  cascadeValues[0].value = '13'; cascadeValues[0].oninput({});
-  cascadeValues[1].value = '30'; cascadeValues[1].oninput({});
-  assert.deepEqual(cascadeValues.slice(4, 12).map(node => node.value),
-    ['13', '30', '13', '30', '13', '00', '13', '30'],
-    'continuing past an existing link discovers and updates every newly crossed boundary');
-  save = createdNodes.filter(node => node.className.includes('inline-save')).slice(-3)[0];
-  await save.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  request = messages.findLast(message => message.type === 'QUEUE_ENTRIES_EDIT');
-  assert.deepEqual(request.payload.entries.map(item => [item.edits.startedAt, item.edits.endedAt]), [
-    ['2026-08-21T13:30:06.768+00:00', '2026-08-21T14:30:00.999+00:00'],
-    ['2026-08-21T13:30:06.768+00:00', '2026-08-21T13:30:06.768+00:00'],
-    ['2026-08-21T13:00:00.222+00:00', '2026-08-21T13:30:06.768+00:00'],
-  ]);
-  assert.equal(visibleOverlapWarnings().length, 0, 'the cascaded linked save remains non-overlapping');
-});
-
-test('typing in the main-panel description cannot reach GitHub keyboard shortcuts', async () => {
-  documentNodes.clear(); createdNodes.length = 0;
-  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
-  const { actions } = makeHeader();
-  const document = { documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
-    createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
-    querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {} };
-  const active = { issue: { type: 'issue', owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' }, startedAt: '2026-08-18T08:00:00.000Z', description: '' };
-  const context = vm.createContext({ location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
-    callback({ ok: true, data: message.type === 'GET_PAGE_STATE' ? { configured: true, active, pendingCount: 0, pendingWrites: [] } : [] });
-  } } }, setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {} });
-  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context); await new Promise(resolve => setTimeout(resolve, 0));
-  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
-  await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const description = createdNodes.findLast(node => node.tag === 'textarea' && node.placeholder === 'Optional');
-  let stopped = false;
-  description.onkeypress({ target: description, key: 'a', stopPropagation() { stopped = true; } });
-  assert.equal(stopped, true);
-  assert.match(source, /for \(const type of \['keydown', 'keypress', 'keyup'\]\) node\.addEventListener\(type, event => event\.stopPropagation\(\)\)/,
-    'all keyboard events stay inside the content-script shadow control');
-});
-
-test('List deletes locally and shows queued time entries without special status', async () => {
-  documentNodes.clear(); createdNodes.length = 0;
-  const messages = [];
-  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
-  const { actions } = makeHeader();
-  const entry = (id, number, startedAt, endedAt, sha, index = number - 1) => ({
-    schemaVersion: 1, id, entryId: id, user: 'alice',
-    actor: { kind: 'human', id: 'github:1', name: 'alice' },
-    producer: { kind: 'browser_extension', name: 'clockoli-chrome', version: '0.1.29' },
-    taskUrl: `https://github.com/acme/app/issues/${number}`, taskTitle: `Issue ${number}`,
-    issue: { type: 'issue', owner: 'acme', repo: 'app', number, url: `https://github.com/acme/app/issues/${number}` },
-    issueTitle: `Issue ${number}`, entryDate: '2026-08-18', timezone: 'Europe/Moscow', startedAt, endedAt,
-    durationSeconds: (new Date(endedAt) - new Date(startedAt)) / 1000, description: '', metadata: {}, metrics: {},
-    createdAt: startedAt, updatedAt: endedAt, _path: 'times/2026-08/alice.jsonl', _sha: sha, _index: index,
-  });
-  const older = entry('01K31P0G000000000000000001', 1, '2026-08-18T06:00:00.000Z', '2026-08-18T07:00:00.000Z', 'daily', 1);
-  const newer = entry('01K31SE6000000000000000002', 2, '2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z', 'daily', 0);
-  const now = new Date(), reportDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  let loadedRecent = [newer, older], deleteCalls = 0, confirmDelete = true;
-  const document = {
-    documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag),
-    createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
-    querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
-  };
-  const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
-      messages.push(structuredClone(message));
-      if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
-      else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: {
-        recent: loadedRecent, reportDate, todaySeconds: 7200,
-        summaries: [{ key: 'review-window', label: 'Review window', seconds: 7200, startDate: '2026-08-01', endDate: '2026-08-31', displayMs: 2000 }],
-        active: null, pendingCount: 0, pendingWrites: [],
-      } });
-      else if (message.type === 'QUEUE_ENTRY_DELETE') {
-        deleteCalls += 1;
-        callback({ ok: true, data: { operationId: 'delete-' + deleteCalls, pending: true } });
-      } else callback({ ok: true, data: {} });
-    } } },
-    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => confirmDelete, alert() {},
-  });
-  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
-  await new Promise(resolve => setTimeout(resolve, 0));
-  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
-  await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const deletes = createdNodes.filter(node => node.tag === 'button' && node.className.includes('entry-delete')).slice(-2);
-  assert.equal(deletes.length, 2);
-  confirmDelete = false;
-  await deletes[0].onclick({ isTrusted: true });
-  assert.equal(deleteCalls, 0, 'cancelled deletion never enters the local queue');
-  confirmDelete = true;
-  await deletes[0].onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const queued = messages.find(message => message.type === 'QUEUE_ENTRY_DELETE');
-  assert.equal(deleteCalls, 1, 'deletion is queued immediately');
-  assert.equal(messages.some(message => message.type === 'DELETE_ENTRY'), false, 'List never waits for an immediate GitHub deletion');
-  assert.equal(queued.payload.original.id, newer.id);
-  assert.equal(queued.payload.originalSha, newer._sha);
-  const refreshed = createdNodes.filter(node => node.getAttribute('aria-label') === 'Refresh').at(-1);
-  loadedRecent = [{ ...newer, _sha: null, _index: -1, _pending: true }, older];
-  await refreshed.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(createdNodes.some(node => node.className?.includes('entry-pending')), false, 'locally stored entries have no Pending badge');
-  const normalControls = createdNodes.filter(node => node.tag === 'button' && node.className.includes('entry-delete')).at(-1);
-  assert.ok(normalControls, 'queued entries expose the normal Delete action');
-  assert.equal(createdNodes.some(node => node.textContent === 'Pending'), false);
-  assert.equal(createdNodes.some(node => node.className.includes('time-boundary')), false);
-});
 
 test('projected totals tick only in their stored local date range and unknown totals stay unknown', () => {
   const now = Date.parse('2026-08-19T02:00:00.000Z');
@@ -1690,53 +954,9 @@ test('projected totals tick only in their stored local date range and unknown to
 });
 
 
-test('main panel shows today total and opens Reports before Settings', async () => {
-  documentNodes.clear(); createdNodes.length = 0;
-  const messages = [], intervals = [];
-  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
-  const { actions } = makeHeader();
-  const today = new Date(), pad = value => String(value).padStart(2, '0');
-  const date = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
-  const recentEntry = { user: 'alice', entryDate: date, durationSeconds: 5400, issue: { type: 'issue', owner: 'acme', repo: 'app', number: 7, url: 'https://github.com/acme/app/issues/7' }, startedAt: `${date}T08:00:00+00:00`, endedAt: `${date}T09:30:00+00:00`, description: '', _path: `times/${date.slice(0, 7)}/alice.jsonl`, _sha: 'x', _index: 0 };
-  const document = { documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (namespace, tag) => new FakeNode(tag), createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null, querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {} };
-  const context = vm.createContext({ location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
-    messages.push(structuredClone(message));
-    if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: { ...recentEntry, endedAt: undefined, startedAt: `${date}T08:00:00+00:00` }, pendingCount: 0, pendingWrites: [] } });
-    else if (message.type === 'LOAD_RECENT') callback({ ok: true, data: { recent: [recentEntry], todayTrackedMs: 5400000, weekTrackedMs: 7200000, reportDate: date,
-      active: null, pendingCount: 0, pendingWrites: [] } });
-    else callback({ ok: true, data: {} });
-  } } }, setInterval(callback) { intervals.push(callback); return intervals.length; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {} });
-  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context); await new Promise(resolve => setTimeout(resolve, 0));
-  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
-  await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const [total, week] = createdNodes.filter(node => node.className === 'today-total').slice(-2);
-  assert.equal(total.children[0].textContent, 'Today:');
-  assert.equal(total.children[1].textContent, '1h 30m');
-  const tick = intervals.at(-1);
-  for (let index = 0; index < 10; index += 1) tick();
-  assert.equal(total.children[0].textContent, 'Today:');
-  assert.equal(week.children[0].textContent, 'This week:');
-  assert.equal(week.children[1].textContent, '2h 0m');
-  const day = createdNodes.findLast(node => node.className === 'entry-day');
-  const inlineValues = createdNodes.filter(node => node.className.includes('inline-time-value')).slice(-4);
-  const duration = createdNodes.findLast(node => node.className === 'inline-duration');
-  assert.equal(day.textContent, 'Today');
-  assert.deepEqual(inlineValues.map(node => node.value), ['08', '00', '09', '30']);
-  assert.equal(duration.textContent, '1h 30m');
-  assert.doesNotMatch(day.textContent, /acme|\d{1,2}\/\d{1,2}\/\d{4}/);
-  await trigger.onclick({ isTrusted: true });
-  await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(messages.filter(message => message.type === 'LOAD_RECENT').length, 2, 'each menu opening refreshes its atomic today snapshot');
-  const reports = createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Reports');
-  const settings = createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Settings');
-  assert.ok(reports?.onclick); assert.ok(settings);
-  assert.ok(reports.parentElement.children.indexOf(reports) < reports.parentElement.children.indexOf(settings));
-  await reports.onclick({ isTrusted: true });
-  assert.deepEqual(messages.findLast(message => message.type === 'OPEN_REPORTS'), { type: 'OPEN_REPORTS' });
-});
 
-test('single GitHub header icon opens the shared panel and its Top tasks action', async () => {
+
+test('single GitHub header icon opens Activity in its own tab', async () => {
   documentNodes.clear(); createdNodes.length = 0;
   const messages = [];
   const location = { protocol: 'https:', hostname: 'github.com', pathname: '/issues/assigned', href: 'https://github.com/issues/assigned' };
@@ -1761,16 +981,14 @@ test('single GitHub header icon opens the shared panel and its Top tasks action'
   const main = createdNodes.findLast(node => node.tag === 'button' && node.className.includes('trigger-main'));
   const arrow = createdNodes.findLast(node => node.tag === 'button' && node.className.includes('trigger-menu'));
   assert.ok(main?.onclick); assert.equal(arrow, undefined);
-  assert.equal(main.getAttribute('aria-haspopup'), 'dialog');
+  assert.equal(main.getAttribute('aria-haspopup'), null);
   await main.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const tasks = createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Top tasks');
-  assert.ok(tasks?.onclick);
-  await tasks.onclick({ isTrusted: true });
-  assert.deepEqual(messages.findLast(message => message.type === 'OPEN_TASKS'), { type: 'OPEN_TASKS' });
-  assert.equal(messages.some(message => message.type === 'LOAD_RECENT'), true);
+  assert.deepEqual(messages.findLast(message => message.type === 'OPEN_TIMES'), { type: 'OPEN_TIMES' });
+  assert.equal(document.getElementById('clockoli-full-width-popup-root'), null);
+  assert.equal(messages.some(message => message.type === 'LOAD_RECENT'), false);
 });
 
-test('split main segment resolves a generic GitHub URL to an issue URL at activation time', async () => {
+test('GitHub header icon opens Activity after navigating to an issue', async () => {
   documentNodes.clear(); createdNodes.length = 0;
   const messages = [], location = { protocol: 'https:', hostname: 'github.com', pathname: '/issues/assigned', href: 'https://github.com/issues/assigned' };
   const { actions } = makeHeader();
@@ -1786,11 +1004,11 @@ test('split main segment resolves a generic GitHub URL to an issue URL at activa
   const main = createdNodes.findLast(node => node.tag === 'button' && node.className.includes('trigger-main'));
   location.pathname = '/acme/app/issues/7'; location.href = 'https://github.com/acme/app/issues/7';
   await main.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(messages.some(message => message.type === 'LOAD_RECENT'), true);
-  assert.ok(createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Start tracking this task'));
+  assert.deepEqual(messages.findLast(message => message.type === 'OPEN_TIMES'), { type: 'OPEN_TIMES' });
+  assert.equal(document.getElementById('clockoli-full-width-popup-root'), null);
 });
 
-test('split main segment resolves an issue URL to another generic GitHub URL at activation time', async () => {
+test('GitHub header icon opens Activity after navigating away from an issue', async () => {
   documentNodes.clear(); createdNodes.length = 0;
   const messages = [], location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
   const { actions } = makeHeader();
@@ -1801,8 +1019,8 @@ test('split main segment resolves an issue URL to another generic GitHub URL at 
   const main = createdNodes.findLast(node => node.tag === 'button' && node.className.includes('trigger-main'));
   location.pathname = '/issues/assigned'; location.href = 'https://github.com/issues/assigned';
   await main.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  assert.equal(messages.some(message => message.type === 'LOAD_RECENT'), true);
-  assert.ok(createdNodes.findLast(node => node.tag === 'button' && node.textContent === 'Start tracking this task'));
+  assert.deepEqual(messages.findLast(message => message.type === 'OPEN_TIMES'), { type: 'OPEN_TIMES' });
+  assert.equal(document.getElementById('clockoli-full-width-popup-root'), null);
 });
 
 test('header mounting falls back to a complete legacy header when the modern container has no avatar', async () => {
@@ -1830,41 +1048,6 @@ test('header mounting falls back to a complete legacy header when the modern con
 });
 
 
-test('GitHub tracking menu exposes a safe Retry action for transient operation failures', async () => {
-  documentNodes.clear(); createdNodes.length = 0;
-  const messages = [];
-  const location = { protocol: 'https:', hostname: 'github.com', pathname: '/acme/app/issues/7', href: 'https://github.com/acme/app/issues/7' };
-  const { actions } = makeHeader();
-  const document = {
-    documentElement: new FakeNode('html'), createElement: tag => new FakeNode(tag), createElementNS: (_namespace, tag) => new FakeNode(tag),
-    createTextNode: text => ({ textContent: text }), getElementById: id => documentNodes.get(id) ?? null,
-    querySelector: selector => selector === '.AppHeader-actions' ? actions : null, addEventListener() {},
-  };
-  let loadCalls = 0;
-  const context = vm.createContext({
-    location, document, chrome: { runtime: { lastError: null, getManifest: () => ({ permissions: ['favicon'] }), getURL: path => `chrome-extension://clockoli/${path}`, sendMessage(message, callback) {
-      messages.push(structuredClone(message));
-      if (message.type === 'GET_PAGE_STATE') callback({ ok: true, data: { configured: true, active: null, pendingCount: 0, pendingWrites: [] } });
-      else if (message.type === 'LOAD_RECENT') { loadCalls += 1; callback({ ok: true, data: [] }); }
-      else if (message.type === 'START') callback({ ok: false, error: { code: 'error', message: 'Network unavailable' } });
-      else callback({ ok: true, data: {} });
-    } } },
-    setInterval() { return 1; }, clearInterval() {}, setTimeout, Promise, Date, console, confirm: () => true, alert() {},
-  });
-  new vm.Script(recoverySource, { filename: 'src/domain/recovery-actions.js' }).runInContext(context);
-  new vm.Script(domHarnessSource, { filename: 'src/content/github.js' }).runInContext(context);
-  await new Promise(resolve => setTimeout(resolve, 0));
-  const trigger = createdNodes.filter(node => node.tag === 'button' && node.getAttribute('aria-haspopup') === 'dialog').at(-1);
-  await trigger.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const start = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Start tracking this task').at(-1);
-  await start.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  const retry = createdNodes.filter(node => node.tag === 'button' && node.textContent === 'Retry').at(-1);
-  assert.ok(retry?.onclick, 'transient error exposes Retry');
-  const before = loadCalls;
-  await retry.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  assert.ok(loadCalls > before, 'Retry performs a safe tracker refresh');
-  assert.equal(messages.some(message => message.type === 'OPEN_OPTIONS'), false);
-});
 
 
 test('Times bulk import preserves its draft and remains single-flight across rerenders and failure', async () => {
@@ -2255,87 +1438,11 @@ test('tracking from a Projects issue pane sends the direct issue URL and recogni
   assert.ok(!harness.renderMenu({ compact: false }).walk().some(node => node.textContent === 'Save and switch to this task'));
 });
 
-test('header totals-only polling preserves the description draft and updates existing clocks', async () => {
-  const now = new Date(2026, 8, 5, 14).getTime();
-  const active = { id: 'running', taskUrl: 'https://github.com/acme/app/issues/7', startedAt: new Date(now - 60_000).toISOString(), entryDate: '2026-09-05', description: 'Saved description' };
-  const state = { configured: true, active, pendingCount: 1, pendingWrites: [{ id: 'start', operation: 'startTimer', status: 'pending' }], recent: [], todayTrackedMs: 59_000, weekTrackedMs: 59_000 };
-  const h = dailyPanelHarness({ header: true, state, now });
-  await new Promise(resolve => setTimeout(resolve, 0));
-  const headerRoot = h.document.panelShadow;
-  await headerRoot.querySelector('.trigger-main').onclick({ isTrusted: true });
-  const root = h.document.panelShadow;
-  const menu = root.querySelector('.menu'), input = menu.querySelector('.strip-description');
-  const total = menu.querySelector('[data-tracked-total="todayTrackedMs"]');
-  const week = menu.querySelector('[data-tracked-total="weekTrackedMs"]');
-  assert.ok(total, 'today total lives in the shared Statistic panel');
-  assert.equal(week, null, 'the running card does not duplicate weekly totals');
-  const elapsed = menu.querySelector('.running-elapsed');
-  input.value = 'Unsaved draft'; input.oninput?.({ target: input }); input.focus();
-  for (const ms of [60_000, 60_500]) {
-    h.set({ ...state, todayTrackedMs: ms, weekTrackedMs: ms }); h.advance(500);
-    const [id, poll] = [...h.timeouts].find(([, timer]) => timer.delay === 500);
-    h.timeouts.delete(id); await poll.callback();
-    assert.equal(root.querySelector('.strip-description').value, 'Unsaved draft');
-    assert.equal(root.querySelector('.menu'), menu, 'totals-only reads keep the dialog mounted');
-    assert.equal(root.querySelector('.strip-description'), input);
-    assert.equal(h.document.activeElement, input);
-    assert.equal(root.querySelector('[data-tracked-total="todayTrackedMs"]'), total);
-    assert.equal(root.querySelector('[data-tracked-total="weekTrackedMs"]'), week);
-    assert.equal(total.textContent, '1m');
-  }
-  assert.equal(root.querySelector('.running-elapsed'), elapsed);
-  assert.equal(elapsed.textContent, '1m');
-});
 
-test('header description draft survives a required rerender without leaking to a new timer', async () => {
-  const active = { id: 'running', taskUrl: 'https://github.com/acme/app/issues/7', startedAt: new Date().toISOString(), description: 'Saved description' };
-  const state = { configured: true, active, pendingCount: 1, pendingWrites: [{ id: 'start', operation: 'startTimer', status: 'pending' }], recent: [] };
-  const h = dailyPanelHarness({ header: true, state });
-  await new Promise(resolve => setTimeout(resolve, 0));
-  const headerRoot = h.document.panelShadow;
-  await headerRoot.querySelector('.trigger-main').onclick({ isTrusted: true });
-  const root = h.document.panelShadow;
-  const input = root.querySelector('.strip-description');
-  input.value = ''; input.oninput?.({ target: input });
-  h.set({ ...state, active: { ...active, taskTitle: 'Updated title' } });
-  await [...h.timeouts.values()].find(timer => timer.delay === 500).callback();
-  assert.notEqual(root.querySelector('.strip-description'), input, 'metadata changes require a new input');
-  assert.equal(root.querySelector('.strip-description').value, '', 'an intentionally cleared draft survives');
-  h.set({ ...state, active: { ...active, id: 'new-timer', description: 'New timer description' } });
-  await [...h.timeouts.values()].find(timer => timer.delay === 500).callback();
-  assert.equal(root.querySelector('.strip-description').value, 'New timer description');
-});
 
-test('header opening retries failed initial reads and retains Retry until recovery succeeds', async () => {
-  const reads = [];
-  const state = { configured: true, active: null, pendingCount: 0, pendingWrites: [], recent: [] };
-  const h = dailyPanelHarness({ header: true, respond(message, callback) {
-    if (message.type === 'GET_PAGE_STATE') reads.push({ message, callback });
-    else callback({ ok: true, data: state });
-  } });
-  const settle = () => new Promise(resolve => setTimeout(resolve, 0));
-  const reject = read => read.callback({ ok: false, error: { code: 'error', message: 'Worker unavailable' } });
-  reject(reads[0]); await settle(); reject(reads[1]); await settle();
-  assert.equal(reads.length, 2);
-  const headerRoot = h.document.panelShadow;
-  const opening = headerRoot.querySelector('.trigger-main').onclick({ isTrusted: true });
-  const root = h.document.panelShadow;
-  assert.equal(reads.length, 3, 'opening unknown configuration starts a replacement read');
-  assert.equal(reads[2].message.refresh, false, 'opening reads local state first');
-  const retry = () => root.walk().find(node => node.tag === 'button' && node.textContent === 'Retry');
-  assert.ok(retry(), 'initial error stays actionable while the replacement read is pending');
-  reject(reads[2]); await opening;
-  assert.ok(root.walk().some(node => node.textContent === "Couldn't reach GitHub"));
-  assert.ok(!root.walk().some(node => node.textContent === 'Loading…'));
-  assert.ok(retry());
-  const recovering = retry().onclick({ isTrusted: true });
-  assert.equal(reads.length, 4);
-  assert.ok(retry(), 'Retry retains the error until its read succeeds');
-  reads[3].callback({ ok: true, data: state }); await recovering;
-  assert.ok(root.walk().some(node => String(node.className || '').includes('full-width-popup')));
-  assert.equal(retry(), undefined);
-  assert.ok(!root.walk().some(node => node.textContent === 'Loading…'));
-});
+
+
+
 
 test('daily strip shows idle status and panel List keeps its week navigation', () => {
   const now = Date.now(), date = new Date(now), today = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -3433,29 +2540,7 @@ test('Activity keeps the initial Calendar loader visible while its saved view an
   assert.equal(activity.querySelector('.calendar-week-loading').hidden, true);
 });
 
-test('opening GitHub Calendar uses one complete week read without a late spinner', async () => {
-  const now = new Date(2026, 8, 5, 12).getTime();
-  const cached = activityEntry('cached', '2026-09-05', '08');
-  const earlier = activityEntry('earlier', '2026-09-01', '08');
-  const state = { configured: true, active: null, pendingWrites: [], recent: [cached] };
-  let finishWeek;
-  const h = dailyPanelHarness({ state, records: [cached], now, timelineEnabled: true,
-    respond(message, callback) {
-      if (message.type === 'LOAD_WEEK') finishWeek = callback;
-      else callback({ ok: true, data: message.type === 'GET_ACTIVITY_VIEW_MODE' ? { mode: 'calendar' } : state });
-    },
-  });
-  const opening = h.toggleFullWidthPopup();
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(h.messages.filter(message => message.type === 'LOAD_WEEK').length, 1);
-  assert.equal(h.messages.filter(message => message.type === 'LOAD_RECENT').length, 0,
-    'fresh page state already supplies the bounded recent records');
-  assert.equal(h.popupRoot().querySelector('.calendar-week-loading').hidden, true,
-    'cached entries remain visible without a second opening spinner');
-  finishWeek({ ok: true, data: { ...state, recent: [cached, earlier] } });
-  await opening;
-  assert.ok(h.recentEntry('earlier'), 'the complete week is still loaded');
-});
+
 
 test('Activity List restores its week and entries when an arrow read fails', async () => {
   const now = new Date(2026, 8, 5, 12).getTime();
@@ -4129,96 +3214,17 @@ test('delayed Start acceptance preserves manual timeline scroll and does not scr
   assert.equal(editor.scrollToEndCalls, 1, 'only the optimistic transition scrolls to the right edge');
 });
 
-test('opening focuses the primary strip action after local state and closing restores previous focus', async () => {
-  const state = { configured: true, active: null, recent: [], pendingWrites: [] };
-  const harness = dailyPanelHarness({ state, pageUrl: 'https://example.com/task' });
-  const previous = harness.document.createElement('input'); harness.document.body.append(previous); previous.focus();
-  await harness.toggleFullWidthPopup();
-  while (harness.frames.length) harness.frames.shift()();
-  assert.equal(harness.messages[0].type, 'GET_PAGE_STATE'); assert.equal(harness.messages[0].refresh, false);
-  assert.equal(harness.messages[1].type, 'GET_PAGE_STATE'); assert.equal(harness.messages[1].refresh, true);
-  assert.equal(harness.document.activeElement.textContent, 'Track this task');
-  const menu = harness.popupRoot();
-  assert.equal(menu.querySelectorAll('.page-tracking-hint').length, 0);
-  harness.refreshMountedTimeline(); harness.refreshMountedTimeline();
-  assert.equal(menu.querySelectorAll('.page-tracking-hint').length, 0);
-  harness.closeFullWidthPopup();
-  assert.equal(harness.document.activeElement, previous);
-});
 
-test('clicking the GitHub page closes the full-width panel but clicking inside it does not', async () => {
-  const h = dailyPanelHarness({ header: true, state: { configured: true, active: null, recent: [], pendingWrites: [] } });
-  await new Promise(resolve => setTimeout(resolve, 0));
-  const trigger = h.document.panelShadow.querySelector('.trigger-main');
-  await trigger.onclick({ isTrusted: true });
-  const popup = h.document.getElementById('clockoli-full-width-popup-root');
-  assert.ok(popup);
-  h.documentListeners.get('click')({ composedPath: () => [popup, h.document.body] });
-  assert.equal(h.document.getElementById('clockoli-full-width-popup-root'), popup);
-  h.documentListeners.get('click')({ composedPath: () => [trigger, h.document.getElementById('clockoli-root'), h.document.body] });
-  assert.equal(h.document.getElementById('clockoli-full-width-popup-root'), popup, 'the launcher click must not immediately dismiss the panel');
-  const pageInput = h.document.createElement('input'); h.document.body.append(pageInput); pageInput.focus();
-  h.documentListeners.get('click')({ composedPath: () => [h.document.body] });
-  assert.equal(h.document.getElementById('clockoli-full-width-popup-root'), null);
-  assert.equal(h.document.activeElement, pageInput, 'clicking elsewhere must not return focus to the launcher');
-});
 
-test('switching tabs dismisses the GitHub panel without restoring focus; returning requires a fresh open', async () => {
-  const h = dailyPanelHarness({ header: true, state: { configured: true, active: null, recent: [], pendingWrites: [] } });
-  await new Promise(resolve => setTimeout(resolve, 0));
-  const launcherShadow = h.document.panelShadow;
-  await launcherShadow.querySelector('.trigger-main').onclick({ isTrusted: true });
-  assert.ok(h.document.getElementById('clockoli-full-width-popup-root'));
-  const focused = h.document.activeElement;
 
-  h.document.hidden = true;
-  h.documentListeners.get('visibilitychange')();
-  assert.equal(h.document.getElementById('clockoli-full-width-popup-root'), null);
-  assert.equal(h.document.activeElement, focused, 'tab switch must not focus a hidden tab');
-  h.document.hidden = false;
-  h.documentListeners.get('visibilitychange')();
-  assert.equal(h.document.getElementById('clockoli-full-width-popup-root'), null);
 
-  const readsBeforeReopen = h.messages.filter(message => message.type === 'GET_PAGE_STATE').length;
-  await launcherShadow.querySelector('.trigger-main').onclick({ isTrusted: true });
-  assert.ok(h.document.getElementById('clockoli-full-width-popup-root'));
-  assert.ok(h.messages.filter(message => message.type === 'GET_PAGE_STATE').length > readsBeforeReopen);
-});
 
-test('switching tabs dismisses the injected toolbar panel on other HTTP(S) pages', async () => {
-  const h = dailyPanelHarness({ header: true, actionSurface: true, pageUrl: 'https://example.com/task', state: { configured: true, active: null, recent: [], pendingWrites: [] } });
-  await new Promise(resolve => setTimeout(resolve, 0));
-  assert.ok(h.document.getElementById('clockoli-full-width-popup-root'));
-  h.document.hidden = true;
-  h.documentListeners.get('visibilitychange')();
-  assert.equal(h.document.getElementById('clockoli-full-width-popup-root'), null);
-});
 
-test('losing window focus dismisses an open panel even while the document remains visible', async () => {
-  for (const actionSurface of [false, true]) {
-    const h = dailyPanelHarness({ header: true, actionSurface, state: { configured: true, active: null, recent: [], pendingWrites: [] } });
-    await new Promise(resolve => setTimeout(resolve, 0));
-    if (!actionSurface) await h.document.panelShadow.querySelector('.trigger-main').onclick({ isTrusted: true });
-    assert.ok(h.document.getElementById('clockoli-full-width-popup-root'));
-    h.document.hidden = false;
-    const focused = h.document.activeElement;
-    assert.equal(typeof h.windowListeners.get('blur'), 'function');
-    h.windowListeners.get('blur')();
-    assert.equal(h.document.getElementById('clockoli-full-width-popup-root'), null);
-    assert.equal(h.document.activeElement, focused);
-  }
-});
 
-test('background tab-activation message dismisses an open panel with no visibility or blur event', async () => {
-  for (const actionSurface of [false, true]) {
-    const h = dailyPanelHarness({ header: true, actionSurface, state: { configured: true, active: null, recent: [], pendingWrites: [] } });
-    await new Promise(resolve => setTimeout(resolve, 0));
-    if (!actionSurface) await h.document.panelShadow.querySelector('.trigger-main').onclick({ isTrusted: true });
-    assert.ok(h.document.getElementById('clockoli-full-width-popup-root'));
-    h.runtimeListeners[0]({ type: 'DISMISS_FULL_WIDTH_POPUP' }, {}, () => {});
-    assert.equal(h.document.getElementById('clockoli-full-width-popup-root'), null);
-  }
-});
+
+
+
+
 
 test('daily panel never exposes a routine waiting status and keeps conflicts actionable', async () => {
   const harness = dailyPanelHarness({ state: { configured: true, active: null, showQueueDiagnostics: true, pendingWrites: [{ id: 'queued', status: 'pending', operation: 'completeTimer' }], pendingCount: 1 } });
