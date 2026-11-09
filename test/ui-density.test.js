@@ -39,10 +39,10 @@ test('Activity groups List search, week navigation, and Refresh below view contr
 
 test('GitHub header has no separate navigation dropdown', () => {
   assert.doesNotMatch(content, /renderNavigationMenu|navigation-menu|trigger-menu|TRIANGLE_PATH/);
-  assert.match(content, /main\.addEventListener\('click', async event => \{[\s\S]*?await send\(\{ type: 'OPEN_TIMES' \}\)/);
+  assert.match(content, /main\.addEventListener\('click', async event => \{[\s\S]*?await send\(\{ type: 'OPEN_PREFERRED_SURFACE' \}\)/);
 });
 
-test('GitHub launcher leaves navigation to standalone Activity', () => {
-  assert.match(content, /main\.addEventListener\('click', async event => \{[\s\S]*?await send\(\{ type: 'OPEN_TIMES' \}\)/);
+test('GitHub launcher delegates to the selected toolbar surface', () => {
+  assert.match(content, /main\.addEventListener\('click', async event => \{[\s\S]*?await send\(\{ type: 'OPEN_PREFERRED_SURFACE' \}\)/);
   assert.doesNotMatch(content, /fullWidthPopupOpen|renderFullWidthPopup|toggleFullWidthPopup/);
 });

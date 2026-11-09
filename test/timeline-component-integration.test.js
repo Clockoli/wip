@@ -482,7 +482,7 @@ test('running entry actions remain in Activity rather than a GitHub overlay', ()
   const timeline = read('src/content/task-timeline-component.js');
   assert.match(content, /onStop: item => \{[\s\S]*?entry\?\._active \? stopTimelineEntry\(entry\) : false/);
   assert.match(timeline, /button\.textContent = 'Stop and save'/);
-  assert.match(content, /main\.addEventListener\('click', async event => \{[\s\S]*?await send\(\{ type: 'OPEN_TIMES' \}\)/);
+  assert.match(content, /main\.addEventListener\('click', async event => \{[\s\S]*?await send\(\{ type: 'OPEN_PREFERRED_SURFACE' \}\)/);
   assert.doesNotMatch(content, /full-width-popup/);
 });
 

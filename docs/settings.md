@@ -28,6 +28,17 @@ Each connected repository has a card with its status, a **Default** badge for th
 
 Choose whether Activity, Reports, Top tasks, and the content inside the toolbar panel use a centered column (default) or the available screen width. Settings itself always uses a centered 820px column. The panel shell always spans the page width; it remains at most 70% of the viewport height (and at most 720px) in either width mode, scrolling internally when needed. This device-local preference is not included in repository data or settings exports.
 
+## Toolbar button
+
+Choose what clicking the browser toolbar icon does:
+
+- **Open Activity in a new tab** (default): reuse the Activity tab and pass the clicked page's task context to it.
+- **Open quick popup**: show a lightweight tracker with start/stop, the running timer, an editable running description (saved with Stop and save, or earlier with Enter or blur; Shift+Enter adds a line), four recent entries, and an **Open Activity** button for the full view. The popup has no menus, Timeline, Calendar, or List controls. The popup closes automatically when focus moves elsewhere.
+
+The choice applies immediately and survives browser and extension worker restarts. It stays on this browser and is not included in GitHub data or exported settings. Before setup is complete, opening Clockoli takes you to Settings.
+
+The Clockoli button shown on GitHub pages uses the same choice. When set to quick popup, it opens the browser action popup where supported (Chrome 127+); if the browser cannot open it, Activity is the fallback. In the quick popup, the **Open Activity in a new tab** button stays visible while entries scroll.
+
 ## Projects and routing
 
 Ordered URL rules choose the time repository for each new Start. See [Projects and routing](projects-and-routing.md).
@@ -77,7 +88,7 @@ Seller details, numbering, payment terms, tax, and notes. Client details are man
 - invoicing details such as seller, clients, and payment terms;
 - credential-free repository references and, for routed installations, the default destination.
 
-Backups contain client-specific rate cards but exclude credentials, device codes, active timers, pending writes, and tracked time. The Activity view and interface width preferences stay on this browser and are not included. See [Settings backup exclusions](data-and-privacy.md#settings-backup-exclusions).
+Backups contain client-specific rate cards but exclude credentials, device codes, active timers, pending writes, and tracked time. The Activity view, interface width, and toolbar click preferences stay on this browser and are not included. See [Settings backup exclusions](data-and-privacy.md#settings-backup-exclusions).
 
 Import validates the entire file and restores routes to destinations already configured in this browser. It reports missing repositories and their routes as not restored; other eligible routes can still be restored. A reference in the backup does not verify current access, and the imported default does not replace this browser's current default. Import does not test access, add a repository, or reconnect GitHub, so add any missing repository first. Before connecting, **Import settings** is reachable through **More settings** → **Backup & restore**.
 

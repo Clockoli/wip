@@ -238,6 +238,17 @@
     <p id="interface-width-feedback" class="form-feedback" role="status" aria-live="polite"></p>
   </section>
 
+  <section class="card" aria-labelledby="toolbar-click-mode-title">
+    <div class="card-heading"><div><h2 id="toolbar-click-mode-title">Toolbar button</h2><p>Choose what happens when you click the Clockoli icon in your browser toolbar.</p></div></div>
+    <label for="toolbar-click-mode">On click</label>
+    <select id="toolbar-click-mode" aria-describedby="toolbar-click-mode-help">
+      <option value="tab">Open Activity in a new tab</option>
+      <option value="popup">Open quick popup</option>
+    </select>
+    <p id="toolbar-click-mode-help" class="help">The quick popup lets you start or stop tracking and use recent entries without leaving your tab. It closes when you switch tabs or click outside. Use Activity in the popup to open the full view.</p>
+    <p id="toolbar-click-mode-feedback" class="form-feedback" role="status" aria-live="polite"></p>
+  </section>
+
   <section id="display-settings" class="card" aria-labelledby="display-title" hidden>
     <div class="card-heading">
       <div><h2 id="display-title">Projects and routing</h2><p>Clockoli matches task URLs from top to bottom. Each project sends new time to its selected time repository.</p></div>

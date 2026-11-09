@@ -56,6 +56,7 @@ const destinationValidationCache = new Map();
 const STATIC_ACTION_ICON = { 16: 'src/assets/clockoli-16.png', 32: 'src/assets/clockoli-32.png' };
 const ACTION_ICON_FRAMES = 8;
 const ACTION_CONTEXT_KEY = 'clockoli-toolbar-task-context';
+const TOOLBAR_POPUP_PATH = 'src/popup/quick.html';
 // Reuse Clockoli's privileged IndexedDB; do not expand extension permissions.
 const actionContextBackend = new IndexedDbBackend();
 const currentCredentialProvider = new CredentialBroker({ clientId: GITHUB_APP_CLIENT_ID, store });
@@ -1060,6 +1061,10 @@ async function handle(message, sender) {
     else await openTimesPage();
     return { ok: true };
   }
+  if (message.type === 'OPEN_PREFERRED_SURFACE') {
+    await openPreferredSurfaceFromGitHub(sender);
+    return { ok: true };
+  }
   if (message.type === 'GET_ONBOARDING_STATE') return onboardingState();
   if (message.type === 'START_DEVICE_FLOW') return deviceFlow().start();
   if (message.type === 'OPEN_DEVICE_FLOW_PAGE') {
@@ -1183,6 +1188,14 @@ async function handle(message, sender) {
     const preferences = await store.getLocalPreferences();
     broadcastLocalPreferencesChanged(preferences.revision);
     return { preferences };
+  }
+  if (message.type === 'SET_TOOLBAR_CLICK_MODE') {
+    if (sender?.url !== chrome.runtime.getURL('src/options/options.html')
+        || Object.keys(message).sort().join(',') !== 'mode,type'
+        || !['tab', 'popup'].includes(message.mode)) throw new Error('Invalid toolbar click mode request');
+    const mode = await store.setToolbarClickMode(message.mode);
+    await applyToolbarClickMode(mode);
+    return { preferences: await store.getLocalPreferences() };
   }
   if (message.type === 'GET_LOCAL_PREFERENCES') return store.getLocalPreferences();
   if (message.type === 'GET_ACTIVITY_VIEW_MODE' || message.type === 'SET_ACTIVITY_VIEW_MODE') {
@@ -1744,7 +1757,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     } catch (error) { operation = Promise.reject(error); }
   } else {
     const direct = readOnly || DIRECT_DEVICE_FLOW_MESSAGES.has(message?.type) || message?.type === 'CONFIRM_CLOCKIFY_MIGRATION'
-      || ['OPEN_OPTIONS', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'CONSUME_TOOLBAR_TASK_CONTEXT'].includes(message?.type)
+      || ['OPEN_OPTIONS', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_PREFERRED_SURFACE', 'CONSUME_TOOLBAR_TASK_CONTEXT'].includes(message?.type)
       || ['CLOCKIFY_ARM_CAPTURE', 'CLOCKIFY_ARM_CSV_CAPTURE', 'CLOCKIFY_IS_CAPTURE_ARMED', 'CLOCKIFY_DISARM_CAPTURE', 'CLOCKIFY_YEAR_OBSERVED', 'CLOCKIFY_CAPTURED_CSV', 'CLOCKIFY_CAPTURED_REPORT', 'CLOCKIFY_CSV_EMAIL_OFFER'].includes(message?.type);
     const acceptsLocally = [
       'START', 'STOP', 'SWITCH_TASK', 'DISCARD_ACTIVE', 'ADD_TIME', 'ADD_DAY_RANGE', 'BULK_ADD_TIMES',
@@ -2015,7 +2028,35 @@ async function toggleActionSurface(tab) {
   return openActivityFromTab(tab);
 }
 
-void chrome.action.setPopup({ popup: '' }).catch(() => console.warn('Could not restore toolbar panel.'));
+async function openPreferredSurfaceFromGitHub(sender) {
+  // Never trust request-supplied task URLs. Both sender URLs are browser-provided.
+  const tab = sender?.tab;
+  if (!tab || !/^https:\/\/github\.com(?:\/|$)/.test(sender.url || '')
+      || !/^https:\/\/github\.com(?:\/|$)/.test(tab.url || '')) {
+    throw new Error('The toolbar shortcut requires a GitHub page');
+  }
+  const mode = await store.getToolbarClickMode();
+  if (mode === 'popup') {
+    if (await shouldOpenOnboarding()) return chrome.runtime.openOptionsPage();
+    try {
+      // Chrome 127+ supports opening the action popup; older browsers use Activity.
+      await applyToolbarClickMode('popup');
+      if (typeof chrome.action.openPopup !== 'function') throw new Error('Action popup API unavailable');
+      await chrome.action.openPopup(Number.isInteger(tab.windowId) ? { windowId: tab.windowId } : {});
+      return;
+    } catch (error) {
+      console.warn('Could not open Clockoli quick popup; opening Activity instead.', error);
+    }
+  }
+  return openActivityFromTab(tab);
+}
+
+async function applyToolbarClickMode(mode) {
+  await chrome.action.setPopup({ popup: mode === 'popup' ? TOOLBAR_POPUP_PATH : '' });
+}
+
+// The extension has no default popup. Restore the saved choice on worker startup.
+void store.getToolbarClickMode().then(applyToolbarClickMode).catch(() => console.warn('Could not configure toolbar click behavior.'));
 chrome.runtime.onInstalled.addListener(details => {
   scheduleSync();
   if (details.reason === 'install') void chrome.runtime.openOptionsPage();

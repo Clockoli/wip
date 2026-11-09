@@ -18,7 +18,7 @@ test('toolbar opens Activity in its own tab and hands off only the clicked URL',
   assert.equal(manifest.permissions.includes('storage'), false);
   assert.match(worker, /chrome\.action\.onClicked\.addListener\(tab => \{[\s\S]*toggleActionSurface\(tab\)/);
   assert.match(worker, /actionContextBackend\.setMany\(\{ \[ACTION_CONTEXT_KEY\]: toolbarTaskContext\(tab\) \}\)/);
-  const handler = worker.slice(worker.indexOf('async function openActivityFromTab('), worker.indexOf("void chrome.action.setPopup({ popup: '' })"));
+  const handler = worker.slice(worker.indexOf('async function openActivityFromTab('), worker.indexOf("async function applyToolbarClickMode(mode)"));
   assert.doesNotMatch(handler, /chrome\.scripting|chrome\.tabs\.sendMessage|TOGGLE_FULL_WIDTH_POPUP/);
   assert.match(content, /renderActionSourceContext\(\)/);
   const times = read('src/times/times.html');
@@ -66,16 +66,73 @@ test('interface width persists and only options may write it', async () => {
   assert.throws(() => assertMessageAllowed('SET_TOOLBAR_DISPLAY_MODE', { url: `${origin}src/options/options.html` }, origin), /not allowed/);
 });
 
-test('worker clears any previously configured action popup on startup', async () => {
-  const calls = [];
-  const context = vm.createContext({ chrome: { action: { setPopup: async value => { calls.push(value); } } }, console });
-  const init = worker.match(/void chrome\.action\.setPopup\(\{ popup: '' \}\)\.catch\([^\n]+;/)?.[0];
+test('worker restores the saved toolbar behavior after restart', async () => {
+  const apply = worker.match(/async function applyToolbarClickMode\(mode\) \{[\s\S]*?\n\}/)?.[0];
+  const init = worker.match(/void store\.getToolbarClickMode\(\)\.then\(applyToolbarClickMode\)\.catch\([^\n]+;/)?.[0];
+  assert.ok(apply);
   assert.ok(init);
-  vm.runInContext(init, context);
-  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ popup: '' }]);
+  for (const [mode, expected] of [['tab', ''], ['popup', 'src/popup/quick.html']]) {
+    const calls = [];
+    const context = vm.createContext({
+      store: { getToolbarClickMode: async () => mode },
+      chrome: { action: { setPopup: async value => { calls.push(value.popup); } } }, console,
+    });
+    vm.runInContext(`const TOOLBAR_POPUP_PATH = 'src/popup/quick.html';\n${apply}\n${init}`, context);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(calls, [expected]);
+  }
 });
 
-test('compact popup loads the shared timeline component before its tracking controller', () => {
+test('toolbar click mode is local, defaults to Activity, and validates changes', async () => {
+  const values = new Map();
+  const backend = {
+    async getMany(keys) { return Object.fromEntries(keys.map(key => [key, values.get(key)])); },
+    async mutateMany(keys, update) {
+      const { set, result } = update(await this.getMany(keys));
+      for (const [key, value] of Object.entries(set)) values.set(key, value);
+      return result;
+    },
+  };
+  const store = new ChromeStore(backend);
+  assert.equal(await store.getToolbarClickMode(), 'tab');
+  assert.equal((await store.getLocalPreferences()).toolbarClickMode, 'tab');
+  await assert.rejects(() => store.setToolbarClickMode('unknown'), /toolbar click mode/i);
+  assert.equal(values.size, 0);
+  await store.setToolbarClickMode('popup');
+  assert.equal(await new ChromeStore(backend).getToolbarClickMode(), 'popup');
+  assert.equal((await store.getLocalPreferences()).toolbarClickMode, 'popup');
+  await store.setToolbarClickMode('tab');
+  assert.equal(await store.getToolbarClickMode(), 'tab');
+  const origin = 'chrome-extension://clockoli/';
+  assert.doesNotThrow(() => assertMessageAllowed('SET_TOOLBAR_CLICK_MODE', { url: origin + 'src/options/options.html' }, origin));
+  assert.throws(() => assertMessageAllowed('SET_TOOLBAR_CLICK_MODE',
+    { url: 'https://github.com/acme/app/issues/1', tab: { id: 3 } }, origin), /not allowed/i);
+  assert.match(worker, /sender\?\.url !== chrome\.runtime\.getURL\('src\/options\/options\.html'\)[\s\S]*?Invalid toolbar click mode request/);
+  assert.match(worker, /Object\.keys\(message\)\.sort\(\)\.join\(','\) !== 'mode,type'/);
+  const options = read('src/options/options.html');
+  const controller = read('src/options/options.js');
+  assert.match(options, /id="toolbar-click-mode"/);
+  assert.match(options, /value="tab">Open Activity in a new tab/);
+  assert.match(options, /value="popup">Open quick popup/);
+  assert.match(controller, /type: 'SET_TOOLBAR_CLICK_MODE', mode: control\.value/);
+});
+
+test('quick popup does not load Activity, Timeline or Calendar controllers', () => {
+  const quick = read('src/popup/quick.html');
+  const js = read('src/popup/quick.js');
+  assert.match(quick, /src="quick\.js"/);
+  assert.doesNotMatch(quick, /github\.js|task-timeline-component|weekly-summary|timeline|calendar/i);
+  assert.doesNotMatch(js, /renderMenu|renderPopupTimeline|activity-view-switcher|calendar-week-navigation/);
+  assert.match(js, /type: 'GET_PAGE_STATE'/);
+  assert.match(js, /type: 'LOAD_RECENT', menuData: true/);
+  assert.match(js, /type: 'START'/);
+  assert.match(js, /type: 'STOP'/);
+  assert.match(js, /type: 'QUEUE_ACTIVE_START_EDIT'/);
+  assert.match(js, /type: 'SWITCH_TASK'/);
+  assert.match(js, /type: 'OPEN_TIMES'/);
+});
+
+test('legacy compact popup loads the shared timeline component before its tracking controller', () => {
   const popup = read('src/popup/popup.html');
   assert.match(popup, /<script src="\.\.\/content\/task-timeline-component\.js"><\/script>/);
   assert.ok(popup.indexOf('task-timeline-component.js') < popup.indexOf('github.js'));
@@ -122,7 +179,7 @@ async function actionHarness({ delivered = false, failure = 0, existingTabs = []
     } },
   } });
   const helper = worker.match(/async function openTimesPage\(\) \{[\s\S]*?\n\}/)?.[0] || '';
-  vm.runInContext(`const ACTION_CONTEXT_KEY = 'clockoli-toolbar-task-context';\nlet openingTimesPage = null;\n${helper}\n${worker.slice(worker.indexOf('async function shouldOpenOnboarding('), worker.indexOf("void chrome.action.setPopup({ popup: '' })"))}`, context);
+  vm.runInContext(`const ACTION_CONTEXT_KEY = 'clockoli-toolbar-task-context';\nlet openingTimesPage = null;\n${helper}\n${worker.slice(worker.indexOf('async function shouldOpenOnboarding('), worker.indexOf("async function applyToolbarClickMode(mode)"))}`, context);
   return { calls, setupReads, setSetup: next => { currentSetup = next; },
     toggle: tab => context.toggleActionSurface(tab), openActivity: () => context.openTimesPage() };
 }
@@ -299,14 +356,57 @@ test('toolbar normalizes Projects issue links and clears context on restricted p
   assert.equal(harness.calls.filter(([kind]) => kind === 'context').at(-1)[1]['clockoli-toolbar-task-context'], null);
 });
 
-test('GitHub page icon opens Activity through the same source-context handoff, never an overlay', () => {
-  assert.match(content, /main\.addEventListener\('click',[\s\S]*?send\(\{ type: 'OPEN_TIMES' \}\)/);
+test('GitHub page icon uses the toolbar click preference without an in-page overlay', () => {
+  assert.match(content, /main\.addEventListener\('click',[\s\S]*?send\(\{ type: 'OPEN_PREFERRED_SURFACE' \}\)/);
   assert.match(worker, /if \(githubPage\) await openActivityFromTab\(sender\.tab\)/);
   assert.doesNotMatch(content, /toggleFullWidthPopup|renderFullWidthPopup|fullWidthPopupOpen|full-width-popup-surface/);
   assert.doesNotMatch(worker, /DISMISS_FULL_WIDTH_POPUP|TOGGLE_FULL_WIDTH_POPUP/);
   const origin = 'chrome-extension://clockoli/';
-  assert.doesNotThrow(() => assertMessageAllowed('OPEN_TIMES', { url: 'https://github.com/acme/repo/issues/7', tab: { id: 9 } }, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('OPEN_PREFERRED_SURFACE',
+    { url: 'https://github.com/acme/repo/issues/7', tab: { id: 9 } }, origin));
+  assert.throws(() => assertMessageAllowed('OPEN_PREFERRED_SURFACE', { url: origin + 'src/times/times.html' }, origin));
   assert.throws(() => assertMessageAllowed('CONSUME_TOOLBAR_TASK_CONTEXT', { url: 'https://github.com/acme/repo/issues/7', tab: { id: 9 } }, origin));
+});
+
+
+test('GitHub page button opens preferred popup and falls back safely', async () => {
+  const helper = worker.match(/async function openPreferredSurfaceFromGitHub\(sender\) \{[\s\S]*?\n\}/)?.[0];
+  assert.ok(helper, 'worker exposes the GitHub button routing helper');
+  const sender = { url: 'https://github.com/acme/project/issues/42',
+    tab: { id: 42, windowId: 9, url: 'https://github.com/acme/project/issues/42' } };
+  async function run(mode, { popupAvailable = true, popupFails = false, onboarding = false, requestSender = sender } = {}) {
+    const calls = [];
+    const chrome = {
+      runtime: { openOptionsPage: async () => calls.push('onboarding') },
+      action: { ...(popupAvailable ? {
+        openPopup: async options => {
+          calls.push(['popup', options.windowId]);
+          if (popupFails) throw new Error('popup unavailable');
+        },
+      } : {}) },
+    };
+    const context = vm.createContext({
+      chrome, console: { warn: () => {} },
+      store: { getToolbarClickMode: async () => mode },
+      shouldOpenOnboarding: async () => onboarding,
+      openActivityFromTab: async tab => { calls.push(['activity', tab.id]); },
+      applyToolbarClickMode: async value => { calls.push(['setPopup', value]); },
+    });
+    vm.runInContext(helper, context);
+    await context.openPreferredSurfaceFromGitHub(requestSender);
+    return calls;
+  }
+  assert.deepEqual(await run('tab'), [['activity', 42]]);
+  assert.deepEqual(await run('popup'), [['setPopup', 'popup'], ['popup', 9]]);
+  assert.deepEqual(await run('popup', { onboarding: true }), ['onboarding']);
+  assert.deepEqual(await run('popup', { popupAvailable: false }), [['setPopup', 'popup'], ['activity', 42]]);
+  assert.deepEqual(await run('popup', { popupFails: true }), [['setPopup', 'popup'], ['popup', 9], ['activity', 42]]);
+  await assert.rejects(() => run('popup', {
+    requestSender: { url: 'https://evil.example/', tab: sender.tab },
+  }), /GitHub page/);
+  await assert.rejects(() => run('popup', {
+    requestSender: { url: sender.url, tab: { ...sender.tab, url: 'https://evil.example/' } },
+  }), /GitHub page/);
 });
 
 test('shadow chrome defines local light and dark tokens without bare theme colors in selectors', () => {

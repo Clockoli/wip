@@ -1905,6 +1905,7 @@ function renderDestinationControls(preferences = {}) {
 function renderDisplayPreferences(preferences) {
   $('recent-days').value = state?.config?.recentDays || preferences.recentDays || 7;
   $('interface-width').value = preferences.interfaceWidth === 'full' ? 'full' : 'contained';
+  $('toolbar-click-mode').value = preferences.toolbarClickMode === 'popup' ? 'popup' : 'tab';
   $('other-project-name').value = preferences.otherProjectName || 'Other';
   $('show-queue-diagnostics').checked = preferences.showQueueDiagnostics === true;
   $('projects-list').replaceChildren();
@@ -2851,6 +2852,23 @@ $('interface-width').addEventListener('change', async () => {
   } catch (error) {
     control.value = previous;
     formFeedback('interface-width-feedback', error.message || 'Could not save interface width.', 'error');
+  } finally { control.disabled = false; }
+});
+
+$('toolbar-click-mode').addEventListener('change', async () => {
+  const control = $('toolbar-click-mode');
+  const previous = localPreferences?.toolbarClickMode === 'popup' ? 'popup' : 'tab';
+  if (!localPreferences) { control.value = previous; return; }
+  control.disabled = true;
+  formFeedback('toolbar-click-mode-feedback', 'Saving toolbar behavior…');
+  try {
+    const result = await send({ type: 'SET_TOOLBAR_CLICK_MODE', mode: control.value });
+    localPreferences = result.preferences;
+    control.value = localPreferences.toolbarClickMode;
+    formFeedback('toolbar-click-mode-feedback', 'Toolbar behavior saved.', 'success');
+  } catch (error) {
+    control.value = previous;
+    formFeedback('toolbar-click-mode-feedback', error.message || 'Could not save toolbar behavior.', 'error');
   } finally { control.disabled = false; }
 });
 
