@@ -2,7 +2,7 @@
 
 Filter tracked time by period, person, project, and source, chart it, and export CSV, JSON, or PDF timesheets.
 
-Reports combines tracked time from selected or all time repositories, including teammates' personal branches you can read. Open it from Clockoli's page navigation or the GitHub split-menu arrow.
+Reports combines tracked time from selected or all time repositories, including teammates' personal branches you can read. Open it from Clockoli's page navigation.
 
 Reports includes records whose Start date falls in the selected inclusive range.
 
