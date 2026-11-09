@@ -18,6 +18,8 @@ globalThis.expired = false;
 globalThis.reauthorizedExternally = false;
 globalThis.accessStillRejected = false;
 globalThis.silentPromotion = false;
+globalThis.removalMode = 'denied';
+globalThis.removedCollaborator = false;
 const originalAccessExpiry = Date.now() - 60_000;
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   globalThis.requests.push(message.type);
@@ -33,6 +35,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'POLL_DEVICE_FLOW' && globalThis.rejectNextPoll) {
     globalThis.deviceAttempt = null;
     sendResponse({ ok: false, error: { code: 'invalid_device_flow', message: 'GitHub rejected this Clockoli authorization attempt. Start again.' } });
+    return;
+  }
+  if (message.type === 'REMOVE_REPOSITORY_USER') {
+    if (globalThis.removalMode === 'denied') {
+      sendResponse({ ok: false, error: { message: 'GitHub denied removing this collaborator' } });
+    } else {
+      globalThis.removedCollaborator = globalThis.removalMode === 'removed';
+      sendResponse({ ok: true, data: { status: 'removed', login: 'Member' } });
+    }
     return;
   }
   if (message.type === 'GET_ONBOARDING_STATE' && globalThis.failNextOnboardingRead) {
@@ -80,8 +91,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     },
     CHECK_REPOSITORY_INVITE_ACCESS: { canInvite: true },
     LOAD_REPOSITORY_COLLABORATORS: {
-      users: [{ id: 42, login: 'Member', avatarUrl: null }], hasMore: true,
-      moreUsers: [{ id: 44, login: 'OtherMember', avatarUrl: null }],
+      users: globalThis.removedCollaborator ? [] : [{ id: 42, login: 'Member', avatarUrl: null }],
+      hasMore: !globalThis.removedCollaborator,
+      moreUsers: globalThis.removedCollaborator ? [] : [{ id: 44, login: 'OtherMember', avatarUrl: null }],
       avatarUsers: [{ login: 'Member', avatarUrl: null },
         { login: 'octocat', avatarUrl: 'https://avatars.githubusercontent.com/u/43?v=4' }],
       pendingUsers: [], pendingHasMore: false,
@@ -490,6 +502,38 @@ test('Team member menu closes on outside click without requesting access removal
     await expect(trigger).toHaveAttribute('aria-expanded', 'false');
     await expect(row).toHaveAttribute('open', '');
     await expectReadOnlyRequests(fixture.worker);
+  } finally { await closeOptions(fixture); }
+});
+
+test('Remove teammate reports GitHub failures and inherited access next to the team, then updates the roster', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, worker } = fixture;
+    const row = page.locator('.time-repository').first();
+    await row.locator(':scope > summary').click();
+    const menu = row.locator('.repository-collaborators > .repository-team-member .repository-member-actions-button');
+    const feedback = row.locator('.repository-team > .repository-manage-feedback');
+    await menu.click();
+    page.once('dialog', dialog => dialog.accept());
+    await row.getByRole('button', { name: 'Remove @Member' }).click();
+    await expect(feedback).toBeVisible();
+    await expect(feedback).toContainText('GitHub denied removing this collaborator');
+    await expect(row.locator('.repository-collaborators > .repository-team-member')).toHaveCount(1);
+
+    await worker.evaluate(() => { globalThis.removalMode = 'retained'; });
+    page.once('dialog', dialog => dialog.accept());
+    await row.getByRole('button', { name: 'Remove @Member' }).click();
+    await expect(feedback).toContainText('still have repository access');
+    await expect(feedback).toHaveClass(/warning/);
+    await expect(row.locator('.repository-collaborators > .repository-team-member')).toHaveCount(1);
+
+    await worker.evaluate(() => { globalThis.removalMode = 'removed'; });
+    await menu.click();
+    page.once('dialog', dialog => dialog.accept());
+    await row.getByRole('button', { name: 'Remove @Member' }).click();
+    await expect(feedback).toContainText('removed from the repository');
+    await expect(feedback).toHaveClass(/success/);
+    await expect(row.locator('.repository-collaborators > .repository-team-member')).toHaveCount(0);
   } finally { await closeOptions(fixture); }
 });
 
