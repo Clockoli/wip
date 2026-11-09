@@ -7,10 +7,10 @@ export async function readyRepositoryMemberIds(github, defaultBranch, users) {
   if (!defaultBranch || !Array.isArray(users) || !users.length) return [];
   try {
     const marker = parseMarker((await github.forBranch(defaultBranch, 'default').getText('.clockoli/config.json')).text);
-    const branches = new Set(await github.listBranches('clockoli/users/'));
+    // A successful read from the personal ref already proves the branch exists.
+    // Avoid listing potentially thousands of unrelated Git refs for four visible teammates.
     const candidates = users.filter(user => Number.isSafeInteger(user.id) && user.id > 0
-      && marker.users[String(user.id)]
-      && branches.has(userStorageBranch(user.id)));
+      && marker.users[String(user.id)]);
     const checks = await Promise.all(candidates.map(async user => {
       try {
         const personal = github.forBranch(userStorageBranch(user.id), 'custom');
