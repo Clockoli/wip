@@ -824,8 +824,7 @@ function renderDestinationCards() {
     const old = previous.get(destination.id);
     const article = old?.dataset.cardIdentity === identity ? old : renderDestinationCard(destination, isDefault);
     article.dataset.cardIdentity = identity;
-    if (old && old !== article && old.dataset.cardIdentity?.slice(0, 0) === ''
-        && old.dataset.destinationId === destination.id) {
+    if (old && old !== article && old.dataset.destinationId === destination.id) {
       // Only restore expansion for the same GitHub account and repository.
       if (old.dataset.repositoryAccount === `${state?.auth?.mode || ''}:${state?.auth?.githubUserId || state?.auth?.githubLogin?.toLowerCase() || ''}`
           && old.dataset.repositoryCoordinates === `${destination.owner}/${destination.repo}`) {
