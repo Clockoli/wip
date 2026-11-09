@@ -1002,7 +1002,13 @@ async function handle(message, sender) {
     await chrome.tabs.create({ url: chrome.runtime.getURL('src/tasks/tasks.html') }); return { ok: true };
   }
   if (message.type === 'OPEN_TIMES') {
-    await openTimesPage(); return { ok: true };
+    // The GitHub-injected button and the browser toolbar have identical tab behavior.
+    // Only use the browser-provided tab URL and title, never message-supplied task data.
+    const githubPage = sender?.tab && /^https:\/\/github\.com(?:\/|$)/.test(sender.url || '')
+      && /^https:\/\/github\.com(?:\/|$)/.test(sender.tab.url || '');
+    if (githubPage) await openActivityFromTab(sender.tab);
+    else await openTimesPage();
+    return { ok: true };
   }
   if (message.type === 'GET_ONBOARDING_STATE') return onboardingState();
   if (message.type === 'START_DEVICE_FLOW') return deviceFlow().start();
@@ -1937,22 +1943,16 @@ function toolbarTaskContext(tab) {
   }
 }
 
-async function toggleActionSurface(tab) {
+async function openActivityFromTab(tab) {
   if (await shouldOpenOnboarding()) return chrome.runtime.openOptionsPage();
-  // Only the explicitly clicked page may supply this one-use task context.
-  // A restricted or invalid page clears the previous context.
+  // A page click carries the same one-use validated context as a toolbar click.
   await actionContextBackend.setMany({ [ACTION_CONTEXT_KEY]: toolbarTaskContext(tab) });
   await openTimesPage();
-  // A running Activity document can consume the new task without reloading.
   await chrome.runtime.sendMessage({ type: 'TOOLBAR_CONTEXT_UPDATED' }).catch(() => {});
-
 }
 
-async function dismissInactivePanels({ windowId }) {
-  const tabs = await chrome.tabs.query({ windowId });
-  await Promise.allSettled(tabs
-    .filter(tab => Number.isInteger(tab.id) && !tab.active)
-    .map(tab => chrome.tabs.sendMessage(tab.id, { type: 'DISMISS_FULL_WIDTH_POPUP' })));
+async function toggleActionSurface(tab) {
+  return openActivityFromTab(tab);
 }
 
 void chrome.action.setPopup({ popup: '' }).catch(() => console.warn('Could not restore toolbar panel.'));
@@ -1962,9 +1962,6 @@ chrome.runtime.onInstalled.addListener(details => {
 });
 chrome.action.onClicked.addListener(tab => {
   void toggleActionSurface(tab).catch(() => {});
-});
-chrome.tabs.onActivated.addListener(info => {
-  void dismissInactivePanels(info).catch(() => {});
 });
 chrome.runtime.onStartup.addListener(() => { scheduleSync(); });
 chrome.alarms.onAlarm.addListener(alarm => {
