@@ -14,7 +14,7 @@ The connection card handles GitHub sign-in and the first time repository; see [G
 
 ## Time repositories
 
-Each connected repository has a card with its status, a **Default** badge for the default destination, collaborator avatars, and these actions:
+Each connected repository has a card with its status, a **Default** badge for the default destination, an **Invite teammate** button where supported, and a **Team** section showing GitHub collaborators, pending invitations, and verified Clockoli storage readiness. Inviting checks GitHub administrator and App permissions before opening user search. The card also has these actions:
 
 - **Check access** rechecks the repository's access and storage.
 - **Open repository** opens it on GitHub.
