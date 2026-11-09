@@ -44,7 +44,7 @@ Filter by Client, People, Projects, Task sources, and Time repositories. Client 
 
 ## Charts
 
-Compact controls beside the graph's axes clarify what each dropdown changes: **Y: Total time** selects the metric measured vertically; **X: Day** selects the horizontal grouping. **Stack by** independently controls the colored segments.
+The chart controls sit together above the graph: **Group by** chooses the horizontal buckets, **Aggregate by** chooses the measured value, and **Stack by** chooses the colored segments. The defaults remain Day, Total time, and Person.
 
 Choose one vertical metric:
 
