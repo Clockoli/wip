@@ -146,7 +146,7 @@ test('opening the tracker renders cached entries and refreshes them without a se
   assert.match(content, /if \(Array\.isArray\(data\?\.recent\)\) applyMenuData\(data\.recent, recentFresh\)/);
   assert.match(content, /GET_PAGE_STATE', refresh: false[\s\S]*refreshRecent\(\)[\s\S]*GET_PAGE_STATE', refresh: true/);
   assert.match(content, /loadingRecent \|\| !recentFresh/);
-  assert.match(content, /if \(\(menuOpen \|\| fullWidthPopupOpen\) && pageState\.configured\)[\s\S]*await refreshRecent\(\)/);
+  assert.match(content, /if \(menuOpen && pageState\.configured\)[\s\S]*await refreshRecent\(\)/);
   assert.doesNotMatch(content, /Open the menu again to load entries/);
 });
 
