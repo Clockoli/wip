@@ -55,6 +55,7 @@ const destinationValidationCache = new Map();
 const STATIC_ACTION_ICON = { 16: 'src/assets/clockoli-16.png', 32: 'src/assets/clockoli-32.png' };
 const ACTION_ICON_FRAMES = 8;
 const ACTION_CONTEXT_KEY = 'clockoli-toolbar-task-context';
+const TOOLBAR_POPUP_PATH = 'src/popup/popup.html';
 // Reuse Clockoli's privileged IndexedDB; do not expand extension permissions.
 const actionContextBackend = new IndexedDbBackend();
 const currentCredentialProvider = new CredentialBroker({ clientId: GITHUB_APP_CLIENT_ID, store });
@@ -1125,6 +1126,14 @@ async function handle(message, sender) {
     broadcastLocalPreferencesChanged(preferences.revision);
     return { preferences };
   }
+  if (message.type === 'SET_TOOLBAR_CLICK_MODE') {
+    if (sender?.url !== chrome.runtime.getURL('src/options/options.html')
+        || Object.keys(message).sort().join(',') !== 'mode,type'
+        || !['tab', 'popup'].includes(message.mode)) throw new Error('Invalid toolbar click mode request');
+    const mode = await store.setToolbarClickMode(message.mode);
+    await applyToolbarClickMode(mode);
+    return { preferences: await store.getLocalPreferences() };
+  }
   if (message.type === 'GET_LOCAL_PREFERENCES') return store.getLocalPreferences();
   if (message.type === 'GET_ACTIVITY_VIEW_MODE' || message.type === 'SET_ACTIVITY_VIEW_MODE') {
     const extensionPage = ['src/times/times.html', 'src/popup/popup.html']
@@ -1955,7 +1964,12 @@ async function toggleActionSurface(tab) {
   return openActivityFromTab(tab);
 }
 
-void chrome.action.setPopup({ popup: '' }).catch(() => console.warn('Could not restore toolbar panel.'));
+async function applyToolbarClickMode(mode) {
+  await chrome.action.setPopup({ popup: mode === 'popup' ? TOOLBAR_POPUP_PATH : '' });
+}
+
+// The extension has no default popup. Restore the saved choice on worker startup.
+void store.getToolbarClickMode().then(applyToolbarClickMode).catch(() => console.warn('Could not configure toolbar click behavior.'));
 chrome.runtime.onInstalled.addListener(details => {
   scheduleSync();
   if (details.reason === 'install') void chrome.runtime.openOptionsPage();

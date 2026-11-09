@@ -25,6 +25,7 @@ const OTHER_PROJECT_CLIENT = 'otherProjectClient';
 const REPORTING_UTC = 'reportingUtc';
 const SHOW_QUEUE_DIAGNOSTICS = 'showQueueDiagnostics';
 const INTERFACE_WIDTH = 'interfaceWidth';
+const TOOLBAR_CLICK_MODE = 'toolbarClickMode';
 const ACTIVITY_VIEW_MODE = 'activityViewMode';
 const SETTINGS_REVISION = 'settingsRevision';
 const SETTINGS_EXPORTED_REVISION = 'settingsExportedRevision';
@@ -41,7 +42,7 @@ const MIGRATION_KEYS = [
   'config', CONFIGURATION_GENERATION, ...LEGACY_TRACKING_KEYS, 'dataVersion', ...ONBOARDING_KEYS,
   'taskMetadataCache', 'reportCache', 'taskSearchCache', DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION,
 ];
-const ALL_KEYS = [REPOSITORY_CHOICE, JOIN_INVITATION, IGNORED_JOIN_INVITATIONS, 'config', 'token', AUTH, AUTH_GENERATION, PENDING_AUTH, PENDING_AUTH_GENERATION, DEVICE_ATTEMPT, 'reportCache', 'taskSearchCache', 'taskMetadataCache', EXCHANGE_RATE_CACHE, ADDON_ENABLED, INTERFACE_WIDTH, ACTIVITY_VIEW_MODE, ...ONBOARDING_KEYS, ...SETTINGS_KEYS, CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE), DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION];
+const ALL_KEYS = [REPOSITORY_CHOICE, JOIN_INVITATION, IGNORED_JOIN_INVITATIONS, 'config', 'token', AUTH, AUTH_GENERATION, PENDING_AUTH, PENDING_AUTH_GENERATION, DEVICE_ATTEMPT, 'reportCache', 'taskSearchCache', 'taskMetadataCache', EXCHANGE_RATE_CACHE, ADDON_ENABLED, INTERFACE_WIDTH, TOOLBAR_CLICK_MODE, ACTIVITY_VIEW_MODE, ...ONBOARDING_KEYS, ...SETTINGS_KEYS, CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE), DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION];
 
 function preservedProjectClients(values) {
   if (!(values[BILLING_SETTINGS]?.invoicing?.clients ?? []).some(client => Array.isArray(client.projects) && client.projects.length)) return {};
@@ -945,7 +946,7 @@ export class ChromeStore {
   }
 
   async getLocalPreferences() {
-    const values = await this.backend.getMany(['config', 'dataVersion', DESTINATION_REGISTRY, INTERFACE_WIDTH, ...SETTINGS_KEYS]);
+    const values = await this.backend.getMany(['config', 'dataVersion', DESTINATION_REGISTRY, INTERFACE_WIDTH, TOOLBAR_CLICK_MODE, ...SETTINGS_KEYS]);
     const normalizedBilling = normalizeStoredBillingSettings(values[BILLING_SETTINGS] || {});
     const billing = { ...normalizedBilling, invoicing: invoicingSettings(normalizedBilling) };
     const revision = Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0;
@@ -963,6 +964,7 @@ export class ChromeStore {
     return {
       recentDays, projects,
       interfaceWidth: values[INTERFACE_WIDTH] === 'full' ? 'full' : 'contained',
+      toolbarClickMode: values[TOOLBAR_CLICK_MODE] === 'popup' ? 'popup' : 'tab',
       ...(values.dataVersion === 5 ? { defaultDestinationId: values[DESTINATION_REGISTRY]?.defaultDestinationId ?? null } : {}),
       otherProjectName, otherProjectClient, reportingUtc: values[REPORTING_UTC] === true, showQueueDiagnostics, ...billing, revision, exportedRevision, exportRecommended: revision > exportedRevision,
     };
@@ -987,6 +989,16 @@ export class ChromeStore {
   async setInterfaceWidth(width) {
     if (!['contained', 'full'].includes(width)) throw new Error('Invalid interface width');
     return this.backend.mutateMany([INTERFACE_WIDTH], () => ({ set: { [INTERFACE_WIDTH]: width }, result: width }));
+  }
+
+  async getToolbarClickMode() {
+    const values = await this.backend.getMany([TOOLBAR_CLICK_MODE]);
+    return values[TOOLBAR_CLICK_MODE] === 'popup' ? 'popup' : 'tab';
+  }
+
+  async setToolbarClickMode(mode) {
+    if (!['tab', 'popup'].includes(mode)) throw new Error('Invalid toolbar click mode');
+    return this.backend.mutateMany([TOOLBAR_CLICK_MODE], () => ({ set: { [TOOLBAR_CLICK_MODE]: mode }, result: mode }));
   }
 
   async getActivityViewMode() {

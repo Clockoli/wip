@@ -4983,6 +4983,10 @@
     void restoreActivityViewMode();
     refreshPopupTask().then(async () => {
       applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: false }));
+      if (!pageState.configured) {
+        await send({ type: 'OPEN_OPTIONS' });
+        return;
+      }
       renderUi();
       let recentReady = false;
       if (pageState.configured) {
