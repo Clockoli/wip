@@ -39,7 +39,7 @@ import { OnboardingCoordinator } from '../services/onboarding-coordinator.js';
 import { RepositoryInvitationService } from '../services/repository-invitations.js';
 import { withRepositoryRecovery } from '../services/repository-operation-recovery.js';
 import { discoverUserStorageBranches } from '../services/user-storage-branch.js';
-import { addTimeForSender, assertMessageAllowed, dayRangeForSender, destinationIdForCompletedMutation, entryTaskSearchForSender, requestedStartDestinationId, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch, weekRangeForSender } from './message-policy.js';
+import { addTimeForSender, assertMessageAllowed, cachedViewRequest, dayRangeForSender, destinationIdForCompletedMutation, entryTaskSearchForSender, requestedStartDestinationId, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch, weekRangeForSender } from './message-policy.js';
 import { activeDestinationId, requireConfiguredDestinationId, resolveStartDestinationId, selectReadDestinations, syncPendingAll } from './destination-runtime.js';
 import { emitClockifyMigrationProgress, isClockifyProgressRequestId, registerClockifyMigrationProgressPort } from './clockify-migration-progress.js';
 import { SerialExecutor } from './serial-executor.js';
@@ -312,6 +312,33 @@ function emitReportProgress(requestId, progress) {
   try { chrome.runtime.sendMessage({ type: 'REPORT_PROGRESS', requestId, ...progress }, () => void chrome.runtime.lastError); } catch {}
 }
 
+function pageSnapshotScope(snapshot, range, kind) {
+  return { generation: snapshot.generation, authGeneration: snapshot.authGeneration,
+    startDate: range.startDate, endDate: range.endDate,
+    ...(kind === 'reports' ? { reportingUtc: range.reportingUtc === true } : {}) };
+}
+
+async function cachedPageView(message, sender, extensionOrigin) {
+  const { kind, range } = cachedViewRequest(message, sender, extensionOrigin);
+  const snapshot = await configuredSnapshot({ localOnly: true });
+  if (!snapshot.auth || !Object.keys(snapshot.registry?.destinations ?? {}).length) return null;
+  const view = await store.getPageSnapshot(kind, pageSnapshotScope(snapshot, range, kind), { allowDifferentRange: kind === 'reports' });
+  if (!view) return null;
+  if (kind === 'tasks') {
+    const local = await globalTrackerState();
+    return { ...view, active: local.active, pendingWrites: local.pendingWrites,
+      tasks: view.tasks.map(task => ({ ...task, activeStartedAt: task.taskUrl === local.active?.taskUrl
+        && (!task.destinationId || task.destinationId === local.active?.destinationId) ? local.active.startedAt : null })) };
+  }
+  const tracking = await store.getTrackingSnapshot();
+  const pendingWrites = Object.entries(tracking.destinationStates?.entries ?? {}).flatMap(([destinationId, entry]) =>
+    (entry.pendingWrites ?? []).map(({ operation, status, stage, conflictReason }) => ({
+      destinationId, operation, status, stage, ...(conflictReason ? { conflictReason } : {}),
+    })));
+  return { ...view, pendingWrites, pendingCount: pendingWrites.length,
+    partial: view.partial || pendingWrites.length > 0, billing: await store.getLocalPreferences() };
+}
+
 function broadcastLocalPreferencesChanged(revision) {
   try { chrome.runtime.sendMessage({ type: 'LOCAL_PREFERENCES_CHANGED', revision }, () => void chrome.runtime.lastError); }
   catch { /* no open extension surface */ }
@@ -330,6 +357,7 @@ async function loadExchangeRates(message) {
 }
 
 async function loadReport(message) {
+  const startedAt = Date.now();
   const loadEpoch = await loadCoordinator.beginLoad();
   await store.ensureDataVersion(5);
   loadCoordinator.assertCurrent(loadEpoch);
@@ -378,7 +406,12 @@ async function loadReport(message) {
     };
   })();
   reportLoads.set(loadKey, { controller, promise });
-  try { return await promise; }
+  try {
+    const result = await promise;
+    if (result.configured && !message.payload?.destinationIds) await store.savePageSnapshot('reports', pageSnapshotScope(snapshot, message.payload || {}, 'reports'), result, startedAt)
+      .catch(() => { /* caching is optional; never discard a completed read */ });
+    return result;
+  }
   finally { if (reportLoads.get(loadKey)?.promise === promise) reportLoads.delete(loadKey); }
 }
 
@@ -491,6 +524,7 @@ async function loadTimes(message, sender) {
 }
 
 async function loadTasks(message, sender) {
+  const startedAt = Date.now();
   const loadEpoch = await loadCoordinator.beginLoad();
   await store.ensureDataVersion(5);
   loadCoordinator.assertCurrent(loadEpoch);
@@ -563,7 +597,13 @@ async function loadTasks(message, sender) {
     };
   })();
   reportLoads.set(loadKey, { controller, promise });
-  try { return await promise; }
+  try {
+    const result = await promise;
+    if (result.configured && !message.payload?.destinationIds && !message.payload?.includeAllUsers && !message.payload?.selectedUsers)
+      await store.savePageSnapshot('tasks', pageSnapshotScope(snapshot, message.payload || {}, 'tasks'), result, startedAt)
+        .catch(() => { /* caching is optional; never discard a completed read */ });
+    return result;
+  }
   finally { if (reportLoads.get(loadKey)?.promise === promise) reportLoads.delete(loadKey); }
 }
 
@@ -1351,6 +1391,7 @@ async function handle(message, sender) {
   }
   if (message.type === 'CANCEL_REPORT') { await cancelReports('reports'); return { cancelled: true }; }
   if (message.type === 'LOAD_REPORT') return loadReport(message);
+  if (message.type === 'GET_CACHED_VIEW') return cachedPageView(message, sender, extensionOrigin);
   if (message.type === 'LOAD_TASK_PARTICIPANTS') return loadTaskParticipants(message, sender, extensionOrigin);
   if (message.type === 'GET_EXCHANGE_RATES') return loadExchangeRates(message);
   if (message.type === 'LOAD_TASKS') return loadTasks(message, sender);
@@ -1684,7 +1725,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'LOCAL_PREFERENCES_CHANGED' || message?.type === 'TOOLBAR_CONTEXT_UPDATED') return undefined;
   const reportReadOnly = ['LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'CANCEL_REPORT', 'GET_EXCHANGE_RATES'].includes(message?.type);
   const localStateRead = ['GET_STATE', 'GET_PAGE_STATE'].includes(message?.type) && !message?.refresh;
-  const readOnly = reportReadOnly || localStateRead || ['LOAD_TASKS', 'LOAD_TIMES', 'GET_STOPPED_OVERLAP', 'SEARCH_TASKS', 'SEARCH_ENTRY_TASKS', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES', 'GET_ADDON_SETTINGS', 'GET_CLOCKIFY_MIGRATION_PREVIEW', 'SEARCH_INVITEE_USERS', 'SEARCH_CLOCKIFY_GITHUB_USERS', 'LOAD_REPOSITORY_COLLABORATORS'].includes(message?.type);
+  const readOnly = reportReadOnly || localStateRead || ['GET_CACHED_VIEW', 'LOAD_TASKS', 'LOAD_TIMES', 'GET_STOPPED_OVERLAP', 'SEARCH_TASKS', 'SEARCH_ENTRY_TASKS', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES', 'GET_ADDON_SETTINGS', 'GET_CLOCKIFY_MIGRATION_PREVIEW', 'SEARCH_INVITEE_USERS', 'SEARCH_CLOCKIFY_GITHUB_USERS', 'LOAD_REPOSITORY_COLLABORATORS'].includes(message?.type);
   const changesConfiguration = ['SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'IMPORT_SETTINGS', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION', 'INVITE_REPOSITORY_USER'].includes(message?.type);
   let operation;
   if (changesConfiguration) {

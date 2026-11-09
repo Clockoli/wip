@@ -41,7 +41,7 @@ const MIGRATION_KEYS = [
   'config', CONFIGURATION_GENERATION, ...LEGACY_TRACKING_KEYS, 'dataVersion', ...ONBOARDING_KEYS,
   'taskMetadataCache', 'reportCache', 'taskSearchCache', DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION,
 ];
-const ALL_KEYS = [REPOSITORY_CHOICE, JOIN_INVITATION, IGNORED_JOIN_INVITATIONS, 'config', 'token', AUTH, AUTH_GENERATION, PENDING_AUTH, PENDING_AUTH_GENERATION, DEVICE_ATTEMPT, 'reportCache', 'taskSearchCache', 'taskMetadataCache', EXCHANGE_RATE_CACHE, ADDON_ENABLED, INTERFACE_WIDTH, ACTIVITY_VIEW_MODE, ...ONBOARDING_KEYS, ...SETTINGS_KEYS, CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE), DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION];
+const ALL_KEYS = [REPOSITORY_CHOICE, JOIN_INVITATION, IGNORED_JOIN_INVITATIONS, 'config', 'token', AUTH, AUTH_GENERATION, PENDING_AUTH, PENDING_AUTH_GENERATION, DEVICE_ATTEMPT, 'reportCache', 'pageSnapshots', 'taskSearchCache', 'taskMetadataCache', EXCHANGE_RATE_CACHE, ADDON_ENABLED, INTERFACE_WIDTH, ACTIVITY_VIEW_MODE, ...ONBOARDING_KEYS, ...SETTINGS_KEYS, CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE), DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION];
 
 function preservedProjectClients(values) {
   if (!(values[BILLING_SETTINGS]?.invoicing?.clients ?? []).some(client => Array.isArray(client.projects) && client.projects.length)) return {};
@@ -891,6 +891,29 @@ export class ChromeStore {
           && (current.taskSearchCache.refreshedAt ?? 0) > (value.refreshedAt ?? 0)) return { result: false };
       const revision = current.taskSearchCache?.revision ?? 0;
       return { set: { taskSearchCache: value && { ...value, ...(revision ? { revision } : {}) } }, result: true };
+    });
+  }
+
+  async getPageSnapshot(kind, scope, { allowDifferentRange = false } = {}) {
+    if (!['reports', 'tasks'].includes(kind)) return null;
+    const values = await this.backend.getMany(['pageSnapshots', CONFIGURATION_GENERATION, AUTH_GENERATION]);
+    const snapshot = values.pageSnapshots?.[kind];
+    const valid = generationValue(values[CONFIGURATION_GENERATION]) === scope.generation
+      && generationValue(values[AUTH_GENERATION]) === scope.authGeneration
+      && snapshot?.scope?.generation === scope.generation && snapshot.scope.authGeneration === scope.authGeneration;
+    if (!valid) return null;
+    if (JSON.stringify(snapshot.scope) === JSON.stringify(scope)) return snapshot.view;
+    return allowDifferentRange && kind === 'reports' && snapshot.scope.reportingUtc === scope.reportingUtc
+      ? { ...snapshot.view, cachedRange: { startDate: snapshot.scope.startDate, endDate: snapshot.scope.endDate } } : null;
+  }
+
+  async savePageSnapshot(kind, scope, view, startedAt = Date.now()) {
+    if (!['reports', 'tasks'].includes(kind) || !view?.configured) return false;
+    return this.backend.mutateMany(['pageSnapshots', CONFIGURATION_GENERATION, AUTH_GENERATION], values => {
+      if (generationValue(values[CONFIGURATION_GENERATION]) !== scope.generation
+          || generationValue(values[AUTH_GENERATION]) !== scope.authGeneration
+          || (values.pageSnapshots?.[kind]?.startedAt ?? -1) > startedAt) return { result: false };
+      return { set: { pageSnapshots: { ...values.pageSnapshots, [kind]: { scope, view, startedAt } } }, result: true };
     });
   }
 
