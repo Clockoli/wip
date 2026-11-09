@@ -55,7 +55,7 @@ test('repository collaborator previews use verified identities and safe avatar U
     { id: 11, login: 'Alice', avatarUrl: 'https://avatars.githubusercontent.com/u/11?v=4' },
     { id: 12, login: 'bob', avatarUrl: null }, { id: 13, login: 'carol', avatarUrl: null },
     { id: 14, login: 'dan', avatarUrl: 'https://avatars.githubusercontent.com/u/14?v=4' },
-  ], hasMore: true, avatarUsers: [
+  ], hasMore: true, moreUsers: [{ id: 15, login: 'eve', avatarUrl: 'https://avatars.githubusercontent.com/u/15?v=4' }], avatarUsers: [
     { login: 'Alice', avatarUrl: 'https://avatars.githubusercontent.com/u/11?v=4' },
     { login: 'bob', avatarUrl: null }, { login: 'carol', avatarUrl: null },
     { login: 'dan', avatarUrl: 'https://avatars.githubusercontent.com/u/14?v=4' },
@@ -163,7 +163,7 @@ test('repository pending invitations expose only bounded verified account avatar
     { id: 22, login: 'bob', avatarUrl: null },
     { id: 23, login: 'user23', avatarUrl: null },
     { id: 24, login: 'user24', avatarUrl: null },
-  ], hasMore: true });
+  ], hasMore: true, moreUsers: [{ id: 25, login: 'user25', avatarUrl: null }] });
   assert.deepEqual(requests.map(url => new URL(url).pathname + new URL(url).search), ['/repos/acme/time-data/invitations?per_page=100']);
   for (const malformed of [{}, [{ invitee: { id: 1, login: 'bad name' } }],
     [{ invitee: { id: 1, login: 'alice' } }, { invitee: { id: 1, login: 'alice' } }]]) {

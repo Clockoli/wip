@@ -103,6 +103,7 @@ const EXPECTED_RUNTIME_INVENTORY = [
   'src/services/reports.js',
   'src/services/repository-invitations.js',
   'src/services/repository-operation-recovery.js',
+  'src/services/repository-team-status.js',
   'src/services/task-catalog.js',
   'src/services/task-metadata.js',
   'src/services/tracker.js',
