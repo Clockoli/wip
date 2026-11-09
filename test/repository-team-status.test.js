@@ -27,10 +27,7 @@ function fixture({ missingIndex = false, wrongOwner = false, invalidMarker = fal
         throw new Error(`Unexpected branch read ${branch}: ${path}`);
       } };
     },
-    async listBranches(prefix) {
-      assert.equal(prefix, 'clockoli/users/');
-      return ['clockoli/users/1', 'clockoli/users/2'];
-    },
+    async listBranches() { throw new Error('Member readiness must not enumerate the entire repository branch list'); },
   };
   return { github, calls };
 }
