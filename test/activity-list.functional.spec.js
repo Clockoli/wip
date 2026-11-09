@@ -2131,11 +2131,12 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     const popupWorkerSource = workerSource
       .replace('day.setDate(day.getDate() - ((day.getDay() + 6) % 7) - 3);',
         'day.setDate(day.getDate() - ((day.getDay() + 6) % 7));')
-      // Keep Monday's records completed before the early-morning CI run, with room to reorder them.
+      // Keep Monday's sample records early enough to precede the CI clock, but far enough
+      // from midnight for both Timeline and Calendar reordering to stay within the week.
       .replace("const taskUrl = 'https://example.com/activity-test';",
         "const localAt = (hour, minute = 0) => new Date(day.getFullYear(), day.getMonth(), day.getDate(), hour, minute).toISOString();\nconst taskUrl = 'https://example.com/activity-test';")
-      .replace("startedAt: date + 'T08:00:00Z', endedAt: date + 'T08:30:00Z'", 'startedAt: localAt(1, 40), endedAt: localAt(2, 10)')
-      .replace("startedAt: date + 'T07:00:00Z', endedAt: date + 'T07:30:00Z'", 'startedAt: localAt(0, 40), endedAt: localAt(1, 10)')
+      .replace("startedAt: date + 'T08:00:00Z', endedAt: date + 'T08:30:00Z'", 'startedAt: localAt(3), endedAt: localAt(3, 30)')
+      .replace("startedAt: date + 'T07:00:00Z', endedAt: date + 'T07:30:00Z'", 'startedAt: localAt(2), endedAt: localAt(2, 30)')
       .replace("message.type === 'LOAD_WEEK' || message.type === 'LOAD_RECENT'", "message.type === 'LOAD_WEEK'")
       .replace("if (message.type === 'LOAD_TIMES' || message.type === 'LOAD_WEEK') respond({ ok: true, data: state() });",
         "if (message.type === 'LOAD_WEEK') { if (globalThis.autoReplyWeeks) respond({ ok: true, data: { ...state(), recent } }); else (globalThis.weekReplies ||= []).push(respond); return true; }\n  if (message.type === 'LOAD_TIMES') respond({ ok: true, data: { ...state(), recent } });")
@@ -2265,7 +2266,7 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     await page.close();
     await worker.evaluate(() => {
       const first = recent.find(entry => entry.id === 'record');
-      first.startedAt = localAt(1, 40); first.endedAt = localAt(2, 10);
+      first.startedAt = localAt(3); first.endedAt = localAt(3, 30);
       globalThis.editPayloads = [];
     });
     const github = await context.newPage();
