@@ -291,7 +291,7 @@ function invoicingParty(value, client = false) {
 }
 
 export function normalizeInvoicingSettings(value = {}) {
-  const allowed = ['seller', 'clients', 'nextNumber', 'numberFormat', 'paymentTermsDays', 'paymentTerms', 'taxPercent', 'notes'];
+  const allowed = ['seller', 'clients', 'bankAccounts', 'defaultBankAccountId', 'nextNumber', 'numberFormat', 'paymentTermsDays', 'paymentTerms', 'taxPercent', 'notes'];
   if (!plainObject(value) || Object.keys(value).some(key => !allowed.includes(key))) throw new Error('Invoicing settings have unexpected fields');
   const seller = invoicingParty(value.seller ?? {}), source = value.clients ?? [];
   if (!Array.isArray(source) || source.length > 50) throw new Error('Invoicing clients must be a list of at most 50 entries');
@@ -304,6 +304,20 @@ export function normalizeInvoicingSettings(value = {}) {
     const currency = invoicingText(raw.defaultCurrency ?? '', 'client currency', 200);
     return { id, ...party, defaultCurrency: currency ? normalizeCurrency(currency) : '' };
   });
+  const bankSource = value.bankAccounts ?? [];
+  if (!Array.isArray(bankSource) || bankSource.length > 20) throw new Error('Bank accounts must be a list of at most 20 entries');
+  const bankIds = new Set();
+  const bankAccounts = bankSource.map(raw => {
+    if (!plainObject(raw) || Object.keys(raw).some(key => !['id', 'label', 'details'].includes(key))) throw new Error('Bank account has unexpected fields');
+    const id = invoicingText(raw.id ?? '', 'bank account id', 64);
+    const label = invoicingText(raw.label ?? '', 'bank account label', 200);
+    const details = invoicingText(raw.details ?? '', 'bank account details', 1000, true);
+    if (!CLIENT_ID_RE.test(id) || bankIds.has(id) || !label || !details) throw new Error('Invalid or duplicate bank account');
+    bankIds.add(id);
+    return { id, label, details };
+  });
+  const defaultBankAccountId = invoicingText(value.defaultBankAccountId ?? '', 'default bank account id', 64);
+  if (defaultBankAccountId && !bankIds.has(defaultBankAccountId)) throw new Error('Default bank account was not found');
   const nextNumber = value.nextNumber ?? 1, taxPercent = value.taxPercent ?? 0;
   if (!Number.isSafeInteger(nextNumber) || nextNumber < 1 || nextNumber > 1e9) throw new Error('Invoice next number must be a positive integer no greater than 1000000000');
   if (typeof taxPercent !== 'number' || !Number.isFinite(taxPercent) || taxPercent < 0 || taxPercent > 100 || !/^\d+(?:\.\d{1,2})?$/.test(String(taxPercent))) throw new Error('Invoice tax percent must be 0–100 with at most two decimal places');
@@ -319,7 +333,7 @@ export function normalizeInvoicingSettings(value = {}) {
     const line = `Payment terms: ${legacyTerms}`, appended = notes ? `${notes}\n${line}` : line;
     if (!notes.split('\n').includes(line) && appended.length <= 1000) notes = invoicingText(appended, 'notes', 1000, true);
   }
-  return { seller, clients, nextNumber, numberFormat, paymentTermsDays, taxPercent, notes };
+  return { seller, clients, bankAccounts, defaultBankAccountId, nextNumber, numberFormat, paymentTermsDays, taxPercent, notes };
 }
 
 export function invoicingSettings(billing = {}) { return normalizeInvoicingSettings(billing?.invoicing ?? {}); }

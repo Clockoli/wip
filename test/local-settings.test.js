@@ -130,7 +130,7 @@ test('routed settings backup preserves selected clients and invoicing', () => {
 });
 
 test('invoicing settings populate defaults and normalize browser-local seller and clients', () => {
-  const defaults = { seller: { name: '', address: '', email: '', taxId: '' }, clients: [], nextNumber: 1, numberFormat: 'INV-{YYYY}-{NNNN}', paymentTermsDays: 30, taxPercent: 0, notes: '' };
+  const defaults = { seller: { name: '', address: '', email: '', taxId: '' }, clients: [], bankAccounts: [], defaultBankAccountId: '', nextNumber: 1, numberFormat: 'INV-{YYYY}-{NNNN}', paymentTermsDays: 30, taxPercent: 0, notes: '' };
   assert.deepEqual(normalizeInvoicingSettings(), defaults);
   assert.deepEqual(invoicingSettings(null), defaults);
   assert.deepEqual(normalizeBillingSettings(), { clientRates: {}, invoicing: invoicingSettings() });
@@ -142,6 +142,25 @@ test('invoicing settings populate defaults and normalize browser-local seller an
   assert.equal(normalized.notes, 'Thanks');
   assert.equal(normalized.taxPercent, 7.25);
   assert.deepEqual(normalizeBillingSettings({ invoicing: normalized }).invoicing, normalized);
+});
+
+test('bank details remain local, allow multiple accounts, and reject malformed or orphan defaults', () => {
+  const invoicing = normalizeInvoicingSettings({ bankAccounts: [
+    { id: 'primary', label: ' EUR account ', details: 'Bank: Example\nIBAN: XX00 1234' },
+    { id: 'secondary', label: 'USD account', details: 'Routing: 123\nAccount: 456' },
+  ], defaultBankAccountId: 'secondary', clients: [{ id: 'acme' }, { id: 'globex' }] });
+  assert.equal(invoicing.bankAccounts[0].label, 'EUR account');
+  assert.equal(invoicing.defaultBankAccountId, 'secondary');
+  assert.deepEqual(parseSettingsImport(settingsExportText({ billing: { invoicing } })).billing.invoicing, invoicing);
+  for (const invalid of [
+    { defaultBankAccountId: 'missing' }, { defaultBankAccountId: 12 },
+    { bankAccounts: [{ id: 'a', label: 'A', details: 'One' }, { id: 'a', label: 'B', details: 'Two' }] },
+    { bankAccounts: [{ id: 'a', label: '', details: 'One' }] },
+    { bankAccounts: [{ id: 'a', label: 'A', details: '' }] },
+    { bankAccounts: [{ id: 'a', label: 'A', details: 'bad\tvalue' }] },
+    { bankAccounts: [{ id: 'a', label: 'A', details: 'One', secret: 'unexpected' }] },
+    { bankAccounts: Array.from({ length: 21 }, (_, i) => ({ id: `a${i}`, label: 'A', details: 'One' })) },
+  ]) assert.throws(() => normalizeInvoicingSettings(invalid));
 });
 
 test('projects own client ids and resolve named and catch-all assignments', () => {

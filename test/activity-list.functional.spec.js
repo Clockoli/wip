@@ -1702,7 +1702,7 @@ test('a rejected timeline edit shows its validation reason without a reload acti
   }
 });
 
-test('a failed Activity load offers a retry without mentioning deletion', async () => {
+test('a failed Activity load offers a retry without mentioning deletion', async ({}, testInfo) => {
   test.setTimeout(15000);
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-load-error-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-load-error-profile-'));
@@ -1717,7 +1717,9 @@ test('a failed Activity load offers a retry without mentioning deletion', async 
     await writeFile(join(extension, 'test-worker.js'), workerSource.replace(
       'globalThis.failEdit = false;', "globalThis.failEdit = false; globalThis.failTimesLoad = 'network_error';").replace(
       "if (message.type === 'LOAD_TIMES' && globalThis.deferOverlapRecent)",
-      "if (message.type === 'LOAD_TIMES' && globalThis.failTimesLoad) { respond({ ok: false, error: { code: globalThis.failTimesLoad, message: globalThis.failTimesMessage || 'History temporarily unavailable' } }); return; }\n  if (message.type === 'LOAD_TIMES' && globalThis.deferOverlapRecent)"));
+      "if (message.type === 'LOAD_TIMES' && globalThis.failTimesLoad) { respond({ ok: false, error: { code: globalThis.failTimesLoad, message: globalThis.failTimesMessage || 'History temporarily unavailable', ...(globalThis.failTimesLoad === 'rate_limit' ? { retryAt: '2026-11-09T21:37:00Z' } : {}) } }); return; }\n  if (message.type === 'LOAD_TIMES' && globalThis.deferOverlapRecent)").replace(
+      "else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: state() });",
+      "else if (message.type === 'GET_PAGE_STATE') respond({ ok: true, data: { ...state(), ...(globalThis.failTimesLoad === 'rate_limit' || globalThis.showStatusRateLimit ? { summaryError: { code: 'rate_limit', retryAt: '2026-11-09T21:37:00Z' } } : {}) } });"));
     context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
@@ -1757,9 +1759,53 @@ test('a failed Activity load offers a retry without mentioning deletion', async 
     await expect(notice.locator('.times-load-error-copy p')).toHaveText('All configured time repositories failed to load.');
     await expect(notice).not.toContainText('Try loading Activity again');
     await expect(notice.locator('details')).toHaveCount(0);
-    await worker.evaluate(() => { globalThis.failTimesLoad = false; });
+    await page.evaluate(() => document.dispatchEvent(new CustomEvent('clockoli:tracking-rate-limit', {
+      detail: { code: 'rate_limit', retryAt: '2026-11-09T21:37:00Z' },
+    })));
+    const retryAt = await page.evaluate(() => new Date('2026-11-09T21:37:00Z')
+      .toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
+    await expect(notice.locator('.times-load-error-copy strong')).toHaveText(`GitHub rate limit reached — retry after ${retryAt}`);
+    await page.evaluate(() => document.dispatchEvent(new CustomEvent('clockoli:tracking-rate-limit', { detail: null })));
+    await expect(notice.locator('.times-load-error-copy strong')).toHaveText('Could not load Activity');
+    await worker.evaluate(() => { globalThis.showStatusRateLimit = true; });
+    await page.reload();
+    await expect(notice.locator('.times-load-error-copy strong')).toHaveText(`GitHub rate limit reached — retry after ${retryAt}`);
+    await expect(notice).toContainText('All configured time repositories failed to load.');
+    await expect(page.locator('#activity-running-status .running-status-error')).toHaveAttribute('data-error-code', 'rate_limit');
+    await expect(page.locator('#activity-running-status .running-status-error')).toBeHidden();
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.screenshot({ path: testInfo.outputPath('activity-rate-limit-wide.png') });
+    await page.setViewportSize({ width: 390, height: 700 });
+    await page.screenshot({ path: testInfo.outputPath('activity-rate-limit-narrow.png') });
+    await worker.evaluate(() => {
+      globalThis.failTimesLoad = 'rate_limit';
+      globalThis.failTimesMessage = 'token=private';
+      globalThis.showStatusRateLimit = false;
+    });
+    await notice.getByRole('button', { name: 'Retry' }).click();
+    await expect(notice.locator('.times-load-error-copy strong')).toHaveText(`GitHub rate limit reached — retry after ${retryAt}`);
+    await expect(notice).not.toContainText('private');
+    await expect(page.locator('#activity-running-status .running-status-error')).toBeHidden();
+    const placement = await notice.evaluate(node => ({
+      aboveActivity: node.getBoundingClientRect().top < node.getRootNode().querySelector('.times-toolbar').getBoundingClientRect().top,
+      withinViewport: node.getBoundingClientRect().right <= innerWidth,
+    }));
+    expect(placement).toEqual({ aboveActivity: true, withinViewport: true });
+    await worker.evaluate(() => { globalThis.failTimesLoad = false; globalThis.showStatusRateLimit = true; });
     await notice.getByRole('button', { name: 'Retry' }).click();
     await expect(notice).toHaveCount(0);
+    await page.reload();
+    const statusError = page.locator('#activity-running-status .running-status-error');
+    await expect(statusError).toBeVisible();
+    const statusPlacement = await statusError.evaluate(node => {
+      const row = node.closest('.running-status-row').getBoundingClientRect(), alert = node.getBoundingClientRect();
+      return { contained: alert.top >= row.top && alert.bottom <= row.bottom,
+        right: alert.right <= row.right };
+    });
+    expect(statusPlacement).toEqual({ contained: true, right: true });
+    await worker.evaluate(() => { globalThis.showStatusRateLimit = false; });
+    await page.reload();
+    await expect(statusError).toBeHidden();
     expect(errors).toEqual([]);
   } finally {
     await context?.close();

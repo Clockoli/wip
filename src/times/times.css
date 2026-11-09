@@ -79,6 +79,9 @@ html,body{min-width:320px;min-height:100%;margin:0;background:var(--bgColor-defa
 #activity-view-switcher .times-view-button[aria-pressed="true"]{background:var(--bgColor-success-muted);color:var(--fgColor-success)}
 #activity-view-switcher .times-view-button:focus-visible{outline:2px solid var(--focus-outlineColor);outline-offset:2px}
 #activity-running-status.running-status{min-width:0;border:0;background:transparent}
+body.activity-rate-limit-visible #activity-running-status .running-status-error[data-error-code="rate_limit"]{display:none!important}
+#activity-running-status .running-status-row > .running-status-error{width:100%;margin:0;padding:0;text-align:left}
+#activity-running-status.is-active .running-status-row > .running-status-error{grid-column:1/-1}
 #activity-running-status.running-status.is-idle .running-status-row,
 #activity-running-status.running-status.is-active .running-status-row{
   box-sizing:border-box;width:100%;height:100%;min-height:84px;

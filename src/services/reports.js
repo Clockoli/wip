@@ -136,10 +136,17 @@ export async function loadDestinationRecords(destinations, read, { signal, concu
       const codes = readStatus.map(item => item.error.code);
       const networkOnly = codes.every(code => code === 'network_error' || code === 'network_timeout');
       const timedOut = networkOnly && codes.every(code => code === 'network_timeout');
+      const rateLimited = codes.every(code => code === 'rate_limit');
       const error = new Error(networkOnly
         ? timedOut ? 'GitHub did not respond in time.' : 'Could not connect to GitHub.'
+        : rateLimited ? 'GitHub rate limit reached.'
         : 'All configured time repositories failed to load.');
-      error.code = networkOnly ? timedOut ? 'network_timeout' : 'network_error' : 'all_destinations_failed';
+      error.code = networkOnly ? timedOut ? 'network_timeout' : 'network_error'
+        : rateLimited ? 'rate_limit' : 'all_destinations_failed';
+      if (rateLimited) {
+        const retries = readStatus.map(item => item.error.retryAt).filter(value => value && Number.isFinite(Date.parse(value)));
+        if (retries.length) error.retryAt = retries.sort((left, right) => Date.parse(right) - Date.parse(left))[0];
+      }
       error.readStatus = readStatus; throw error;
     }
     const merged = merge(successful, inputs.map(destination => destination.id));

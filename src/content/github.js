@@ -169,6 +169,11 @@
   let summaryUpdatedAt = 0;
   let summaryActive = null;
   let connectionError = null;
+  let trackingRateLimit;
+  if (timesMode) document.addEventListener('clockoli:tracking-rate-limit', event => {
+    trackingRateLimit = event.detail?.code === 'rate_limit' ? event.detail : null;
+    if (errorText && errorCode === 'all_destinations_failed') renderUi();
+  });
   let compactSurface = null;
   let timeEntryFormLoad = null;
   let timeEntryFormHost = null;
@@ -2938,6 +2943,14 @@
       feedback.append(el('span', bulkFeedback.message), dismiss);
       body.append(feedback);
     }
+    const readRateLimit = errorText && activityErrorAction !== 'edit'
+      ? errorCode === 'rate_limit' ? connectionError
+        : errorCode === 'all_destinations_failed'
+          ? trackingRateLimit === undefined
+            ? pageState.summaryError?.code === 'rate_limit' ? pageState.summaryError : null
+            : trackingRateLimit
+          : null
+      : null;
     if (errorText) {
       const notice = el('section', undefined, 'times-load-error');
       notice.setAttribute('role', 'alert');
@@ -2951,6 +2964,11 @@
             el('p', errorCode === 'network_timeout'
               ? 'GitHub did not respond in time. Check your connection and retry.'
               : 'Check your connection to GitHub and retry.'));
+        } else if (readRateLimit) {
+          copy.append(el('strong', globalThis.ClockoliRecovery.describeConnectionError(readRateLimit).headline),
+            el('p', errorCode === 'rate_limit'
+              ? 'Activity could not load. Retry after the GitHub rate limit resets.'
+              : 'All configured time repositories failed to load. GitHub also reports a rate limit; other failures may need attention.'));
         } else copy.append(el('strong', 'Could not load Activity'), el('p', errorText));
         notice.append(copy);
         const actions = el('div', undefined, 'times-load-error-actions');
@@ -2969,6 +2987,7 @@
       }
       body.prepend(notice);
     }
+    document.body?.classList?.toggle('activity-rate-limit-visible', Boolean(readRateLimit));
     page.append(body); return page;
   }
 

@@ -50,7 +50,7 @@ On opening Calendar and on each week change, it scrolls to the start of the larg
 
 Calendar displays a large in-place loading indicator while a selected week's records are read. It disappears when the read completes or fails; an incomplete read reports its warning instead of spinning indefinitely. Refreshing data preserves the mounted timeline and its position.
 
-If a GitHub read fails, Activity shows a compact notice with Retry. A connection failure says GitHub cannot be reached; a request that times out says GitHub did not respond in time, with technical details visible immediately. Other load failures show **Could not load Activity** followed directly by the actual error reason, without a generic retry sentence or a false network diagnosis. A local timer and queued work remain available while a read fails.
+If a GitHub read fails, Activity shows a compact notice with Retry. A connection failure says GitHub cannot be reached; a request that times out says GitHub did not respond in time, with technical details visible immediately. When all time repositories are rate-limited, the notice shows the latest retry time. If the repositories fail for mixed reasons while tracking status separately reports a rate limit, the notice shows that rate limit alongside the general failure without claiming it explains every failure. The same rate-limit warning is not repeated between the tracking card and Activity. Other load failures show **Could not load Activity** followed directly by the actual error reason, without a generic retry sentence or a false network diagnosis. A local timer and queued work remain available while a read fails.
 
 ## Select an entry
 

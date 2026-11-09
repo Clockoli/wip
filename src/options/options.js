@@ -696,6 +696,12 @@ async function loadRepositoryCollaborators(article, destination, root) {
     const moreUsers = Array.isArray(result?.moreUsers) ? result.moreUsers : [];
     const pendingMoreUsers = Array.isArray(result?.pendingMoreUsers) ? result.pendingMoreUsers : [];
     repositoryCollaborators.set(destination.id, new Map((result.avatarUsers || users).map(user => [user.login.toLowerCase(), user.avatarUrl])));
+    rateUserDirectories.set(destination.id, Promise.resolve(result));
+    if ($('rates-destination').value === destination.id) {
+      for (const row of $('rates-list').querySelectorAll('.rate-row')) {
+        if (row.rateSuggestionsOpen && !row.hidden) void showRateUserSuggestions(row);
+      }
+    }
     if ($('merge-task-destination').value === destination.id) updateMergePeopleAvatars();
     const signature = JSON.stringify([users, pending, moreUsers, pendingMoreUsers, result.hasMore,
       result.pendingHasMore, result.truncated, result.pendingTruncated, result.pendingUnavailable, result.readyUserIds]);
@@ -771,6 +777,16 @@ async function loadRepositoryCollaborators(article, destination, root) {
   } catch {
     if (root.contains(article) && article.collaboratorLoadId === loadId) {
       repositoryCollaborators.delete(destination.id);
+      rateUserDirectories.delete(destination.id);
+      if ($('rates-destination').value === destination.id) {
+        for (const row of $('rates-list').querySelectorAll('.rate-row')) {
+          if (!row.rateSuggestionsOpen || row.hidden) continue;
+          row.rateSuggestionRequest = (row.rateSuggestionRequest || 0) + 1;
+          row.rateUsers = [];
+          renderRateUserChoices(row);
+          row.querySelector('.rate-login-note').textContent = 'Could not load repository users. You can still enter a login manually.';
+        }
+      }
       if ($('merge-task-destination').value === destination.id) updateMergePeopleAvatars();
       display.replaceChildren(); display.textContent = 'Collaborators unavailable';
       article.collaboratorSignature = null;
@@ -1052,7 +1068,10 @@ function renderOnboardingProgress() {
 function renderState() {
   const account = `${state?.auth?.mode || ''}:${state?.auth?.githubLogin?.toLowerCase() || ''}`;
   const accountChanged = account !== collaboratorAccount;
-  if (accountChanged) { repositoryCollaborators.clear(); collaboratorAccount = account; }
+  if (accountChanged) {
+    repositoryCollaborators.clear(); rateUserDirectories.clear(); clearRateUserSuggestions();
+    collaboratorAccount = account;
+  }
   const accountConnected = Boolean(state?.auth);
   const destinations = configuredDestinations();
   const initialSetup = !state.config && destinations.length === 0 && state.appConfigured
@@ -1740,15 +1759,97 @@ $('clockify-addon-enabled').addEventListener('click', async () => {
   finally { $('clockify-addon-enabled').disabled = false; }
 });
 
+const rateUserDirectories = new Map();
+let nextRateLoginListId = 0;
+
+function clearRateUserSuggestions() {
+  for (const row of $('rates-list').querySelectorAll('.rate-row')) {
+    row.rateSuggestionRequest = (row.rateSuggestionRequest || 0) + 1;
+    row.rateUsers = [];
+    row.rateSuggestionsOpen = false;
+    const choices = row.querySelector('.rate-user-choices'); choices.replaceChildren(); choices.hidden = true;
+    row.querySelector('.rate-login').setAttribute('aria-expanded', 'false');
+    row.querySelector('.rate-login-note').textContent = '';
+  }
+}
+
+function renderRateUserChoices(row) {
+  const input = row.querySelector('.rate-login'), choices = row.querySelector('.rate-user-choices');
+  const query = input.value.trim().toLowerCase();
+  choices.replaceChildren();
+  for (const user of (row.rateUsers || []).filter(user => user.login.toLowerCase().includes(query)).slice(0, 100)) {
+    const choice = document.createElement('button'); choice.type = 'button'; choice.className = 'rate-user-choice';
+    choice.setAttribute('role', 'option'); choice.textContent = user.login;
+    choice.addEventListener('click', () => {
+      input.value = user.login; input.focus();
+      row.rateSuggestionRequest = (row.rateSuggestionRequest || 0) + 1;
+      row.rateSuggestionsOpen = false; choices.hidden = true;
+      input.setAttribute('aria-expanded', 'false'); row.querySelector('.rate-login-note').textContent = '';
+    });
+    choices.append(choice);
+  }
+  choices.hidden = !row.rateSuggestionsOpen || !choices.children.length;
+  input.setAttribute('aria-expanded', String(!choices.hidden));
+}
+
+async function showRateUserSuggestions(row) {
+  const destinationId = $('rates-destination').value;
+  if (!destinationId) return;
+  const request = row.rateSuggestionRequest = (row.rateSuggestionRequest || 0) + 1;
+  const note = row.querySelector('.rate-login-note');
+  row.rateSuggestionsOpen = true;
+  renderRateUserChoices(row);
+  note.textContent = 'Loading repository users…';
+  try {
+    if (!rateUserDirectories.has(destinationId)) {
+      const known = repositoryCollaborators.get(destinationId);
+      const loading = known
+        ? Promise.resolve({ avatarUsers: [...known.keys()].map(login => ({ login })), truncated: known.size >= 100 })
+        : send({ type: 'LOAD_REPOSITORY_COLLABORATORS', destinationId });
+      rateUserDirectories.set(destinationId, loading);
+    }
+    const result = await rateUserDirectories.get(destinationId);
+    if (request !== row.rateSuggestionRequest || destinationId !== $('rates-destination').value || !$('rates-list').contains(row)) return;
+    const profiles = Array.isArray(result.avatarUsers) ? result.avatarUsers : [...(result.users || []), ...(result.moreUsers || [])];
+    row.rateUsers = profiles;
+    renderRateUserChoices(row);
+    note.textContent = result.truncated ? 'Only the first 100 repository users are shown. You can enter a login manually.'
+      : profiles.length ? '' : 'No repository users found. You can enter a login manually.';
+  } catch {
+    rateUserDirectories.delete(destinationId);
+    if (request === row.rateSuggestionRequest && destinationId === $('rates-destination').value && $('rates-list').contains(row)) {
+      note.textContent = 'Could not load repository users. You can still enter a login manually.';
+    }
+  }
+}
+
 function addRateRow(login = '', period = null, clientId = $('rates-client').value) {
   if (!clientId) return;
 
   const rate = period || { amountMinorPerHour: 0, currency: '$', currencyPosition: 'prefix', startDate: '', endDate: '' };
   const row = document.createElement('div'); row.className = 'rate-row'; row.dataset.clientId = clientId;
   row.hidden = clientId !== $('rates-client').value;
+  const loginField = document.createElement('div'); loginField.className = 'rate-login-field';
   const loginLabel = document.createElement('label'); loginLabel.textContent = 'GitHub user';
   const loginInput = document.createElement('input'); loginInput.className = 'rate-login'; loginInput.required = true; loginInput.maxLength = 39; loginInput.autocomplete = 'off'; loginInput.placeholder = 'octocat'; loginInput.value = login;
-  loginLabel.append(loginInput);
+  const loginChoices = document.createElement('div'); loginChoices.id = `rate-login-choices-${++nextRateLoginListId}`;
+  loginChoices.className = 'rate-user-choices'; loginChoices.hidden = true; loginChoices.setAttribute('role', 'listbox');
+  loginInput.setAttribute('aria-controls', loginChoices.id); loginInput.setAttribute('aria-expanded', 'false');
+  const loginNote = document.createElement('span'); loginNote.className = 'rate-login-note help';
+  loginInput.addEventListener('focus', () => { void showRateUserSuggestions(row); });
+  loginInput.addEventListener('input', () => renderRateUserChoices(row));
+  loginInput.addEventListener('keydown', event => {
+    if (event.key === 'ArrowDown' && !loginChoices.hidden) { event.preventDefault(); loginChoices.querySelector('.rate-user-choice')?.focus(); }
+  });
+  loginField.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { row.rateSuggestionsOpen = false; loginChoices.hidden = true; loginInput.setAttribute('aria-expanded', 'false'); }
+  });
+  loginField.addEventListener('focusout', event => {
+    if (!loginField.contains(event.relatedTarget)) {
+      row.rateSuggestionsOpen = false; loginChoices.hidden = true; loginInput.setAttribute('aria-expanded', 'false');
+    }
+  });
+  loginLabel.append(loginInput); loginField.append(loginLabel, loginChoices, loginNote);
   const rateLabel = document.createElement('label'); rateLabel.textContent = 'Hourly rate';
   const rateInput = document.createElement('input'); rateInput.className = 'rate-value'; rateInput.required = true; rateInput.inputMode = 'decimal'; rateInput.maxLength = 16; rateInput.autocomplete = 'off'; rateInput.placeholder = '15.50'; rateInput.value = Number.isFinite(Number(rate.amountMinorPerHour)) ? (Number(rate.amountMinorPerHour) / 100).toFixed(2).replace(/\.00$/, '') : '';
   rateLabel.append(rateInput);
@@ -1763,7 +1864,7 @@ function addRateRow(login = '', period = null, clientId = $('rates-client').valu
   const endInput = document.createElement('input'); endInput.className = 'rate-end'; endInput.type = 'date'; endInput.value = rate.endDate || ''; endInput.setAttribute('aria-describedby', 'rate-date-help'); endLabel.append(endInput);
   const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-rate'; remove.textContent = 'Remove'; remove.setAttribute('aria-label', login ? `Remove rate for ${login}` : 'Remove this rate');
   remove.addEventListener('click', () => row.remove());
-  row.append(loginLabel, rateLabel, currencyLabel, startLabel, endLabel, remove); $('rates-list').append(row);
+  row.append(loginField, rateLabel, currencyLabel, startLabel, endLabel, remove); $('rates-list').append(row);
 }
 
 function nextClientId() {
@@ -1774,6 +1875,42 @@ function nextClientId() {
   let index = 1;
   while (used.has(`client-${index}`)) index += 1;
   return `client-${index}`;
+}
+
+function nextBankAccountId() {
+  const used = new Set([...(localPreferences?.invoicing?.bankAccounts || []).map(account => account.id),
+    ...[...$('bank-accounts-list').querySelectorAll('.bank-account-row')].map(row => row.dataset.bankAccountId)]);
+  let index = 1;
+  while (used.has(`bank-${index}`)) index += 1;
+  return `bank-${index}`;
+}
+
+function refreshBankAccountOptions() {
+  const select = $('default-bank-account'), selected = select.value;
+  select.replaceChildren();
+  const empty = document.createElement('option'); empty.value = ''; empty.textContent = 'None'; select.append(empty);
+  for (const row of $('bank-accounts-list').querySelectorAll('.bank-account-row')) {
+    const option = document.createElement('option'); option.value = row.dataset.bankAccountId;
+    option.textContent = row.querySelector('.bank-account-label').value.trim() || 'Unnamed bank account'; select.append(option);
+  }
+  select.value = [...select.children].some(option => option.value === selected) ? selected : '';
+  $('add-bank-account').disabled = $('bank-accounts-list').querySelectorAll('.bank-account-row').length >= 20;
+}
+
+function addBankAccountRow(account = null) {
+  const row = document.createElement('div'); row.className = 'bank-account-row';
+  row.dataset.bankAccountId = account?.id || nextBankAccountId();
+  const label = document.createElement('label'); label.textContent = 'Account label';
+  const name = document.createElement('input'); name.className = 'bank-account-label'; name.maxLength = 200; name.required = true; name.value = account?.label || '';
+  name.placeholder = 'EUR account'; name.addEventListener('input', refreshBankAccountOptions); label.append(name);
+  const detailsLabel = document.createElement('label'); detailsLabel.textContent = 'Payment instructions';
+  const details = document.createElement('textarea'); details.className = 'bank-account-details'; details.maxLength = 1000; details.rows = 3; details.required = true;
+  details.placeholder = 'Bank name, account holder, IBAN, routing or SWIFT details'; details.value = account?.details || '';
+  detailsLabel.append(details);
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-bank-account'; remove.textContent = 'Remove';
+  remove.setAttribute('aria-label', `Remove bank account ${account?.label || 'draft'}`);
+  remove.addEventListener('click', () => { row.remove(); refreshBankAccountOptions(); });
+  row.append(label, detailsLabel, remove); $('bank-accounts-list').append(row); refreshBankAccountOptions();
 }
 
 function refreshProjectClients() {
@@ -1895,6 +2032,10 @@ function fillDestinationSelect(select, selectedId) {
 function renderDestinationControls(preferences = {}) {
   const destinations = configuredDestinations(), fallback = preferences.defaultDestinationId || defaultDestinationId();
   fillDestinationSelect($('default-destination'), fallback);
+  const ratesDestination = $('rates-destination'), previousRatesDestination = ratesDestination.value;
+  fillDestinationSelect(ratesDestination, destinations.some(destination => destination.id === previousRatesDestination) ? previousRatesDestination : fallback);
+  ratesDestination.disabled = destinations.length < 2;
+  if (previousRatesDestination !== ratesDestination.value) clearRateUserSuggestions();
   $('default-destination').disabled = state?.auth?.mode === 'pat' || destinations.length < 2;
   $('default-destination-label').hidden = state?.auth?.mode === 'pat' || destinations.length === 0;
   $('pat-routing-summary').hidden = state?.auth?.mode !== 'pat';
@@ -1973,6 +2114,9 @@ function renderInvoiceDefaults(preferences) {
   const invoicing = invoicingSettings(preferences);
   $('seller-name').value = invoicing.seller.name; $('seller-address').value = invoicing.seller.address;
   $('seller-email').value = invoicing.seller.email; $('seller-tax-id').value = invoicing.seller.taxId;
+  $('bank-accounts-list').replaceChildren();
+  for (const account of invoicing.bankAccounts) addBankAccountRow(account);
+  $('default-bank-account').value = invoicing.defaultBankAccountId;
   $('invoice-next-number').value = String(invoicing.nextNumber); $('invoice-number-format').value = invoicing.numberFormat;
   $('invoice-payment-terms').value = String(invoicing.paymentTermsDays); $('invoice-tax-percent').value = String(invoicing.taxPercent); $('invoice-notes').value = invoicing.notes;
   autoGrowTextarea($('seller-address')); autoGrowTextarea($('invoice-notes'));
@@ -2230,6 +2374,11 @@ function invoicingPayload() {
     // Clients have their own Save action. Never commit that form's unsaved rows
     // when the user only saves seller details or invoice defaults.
     clients: invoicingSettings(localPreferences).clients,
+    bankAccounts: [...$('bank-accounts-list').querySelectorAll('.bank-account-row')].map(row => ({
+      id: row.dataset.bankAccountId, label: row.querySelector('.bank-account-label').value,
+      details: row.querySelector('.bank-account-details').value,
+    })),
+    defaultBankAccountId: $('default-bank-account').value,
     nextNumber: Number($('invoice-next-number').value), numberFormat: $('invoice-number-format').value,
     paymentTermsDays: $('invoice-payment-terms').value.trim() ? Number($('invoice-payment-terms').value) : NaN, taxPercent: Number($('invoice-tax-percent').value), notes: $('invoice-notes').value,
   });
@@ -2902,7 +3051,9 @@ $('display-form').addEventListener('submit', async event => {
 $('add-project').addEventListener('click', () => addProjectRow());
 $('add-rate').addEventListener('click', () => addRateRow());
 $('rates-client').addEventListener('change', () => refreshRateClients());
+$('rates-destination').addEventListener('change', clearRateUserSuggestions);
 $('add-client').addEventListener('click', () => addClientRow());
+$('add-bank-account').addEventListener('click', () => addBankAccountRow());
 $('billing-form').addEventListener('submit', async event => {
   event.preventDefault(); const button = $('save-billing'), operation = saveButtonFeedback(button); formFeedback('billing-feedback', 'Saving billable rates…');
   try {

@@ -81,9 +81,13 @@ export function mountRunningStatus(container, { send, onChange, onReconnect, onA
   row.replaceChildren(idleGroup, quickStart, live, task, descriptionField, stats, stop);
   for (const node of [live, task, descriptionField, stats, stop]) node.hidden = true;
   container.classList.add('running-status', 'is-loading'); container.setAttribute('aria-label', 'Running status');
-  container.replaceChildren(row, error);
+  if (container.id === 'activity-running-status') {
+    row.append(error);
+    container.replaceChildren(row);
+  } else container.replaceChildren(row, error);
   let state = null, readAt = 0, reportDate = '', requestId = 0, busy = false, destroyed = false, recentKey = '';
   let refreshFailure = null;
+  let surfacedRateLimit = '';
   let shownTimer = '', acceptedDescription = '', pendingAccepted = null;
   let focusDescriptionOnLoad = true;
   let savingDescription = null, submittedDescription = null, saveAgain = false, hideSavedTimer = null;
@@ -95,6 +99,17 @@ export function mountRunningStatus(container, { send, onChange, onReconnect, onA
 
   function showError(cause) {
     error.replaceChildren();
+    error.setAttribute('data-error-code', cause?.code || '');
+    if (container.id === 'activity-running-status') {
+      const retryAt = cause?.code === 'rate_limit' && typeof cause.retryAt === 'string' ? cause.retryAt : '';
+      const key = cause?.code === 'rate_limit' ? `rate_limit:${retryAt}` : '';
+      if (key !== surfacedRateLimit) {
+        surfacedRateLimit = key;
+        document.dispatchEvent(new CustomEvent('clockoli:tracking-rate-limit', {
+          detail: key ? { code: 'rate_limit', retryAt } : null,
+        }));
+      }
+    }
     if (cause?.code === 'auth_expired' && onAuthExpired) {
       onAuthExpired();
       error.textContent = ''; error.hidden = true;

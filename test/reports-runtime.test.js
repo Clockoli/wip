@@ -718,6 +718,29 @@ test('a sole invoice client defaults once and an explicit No client survives reo
   assert.equal(page.requests.filter(request => request.message.type === 'GET_EXCHANGE_RATES').length, 0);
 });
 
+test('invoice chooses one saved bank account and prints only the selected details', async () => {
+  const accounts = [{ id: 'eur', label: 'EUR account', details: 'IBAN: XX01' }, { id: 'usd', label: 'USD account', details: 'Routing: 02' }];
+  const settings = { ...invoiceSettings, bankAccounts: accounts, defaultBankAccountId: 'eur' };
+  const page = await loaded(result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }, settings));
+  await page.fire('create-invoice'); await page.settle();
+  assert.equal(page.nodes.get('invoice-bank-account').value, 'eur');
+  assert.match(page.textOf(page.nodes.get('invoice-preview')), /IBAN: XX01/);
+  assert.doesNotMatch(page.textOf(page.nodes.get('invoice-preview')), /Routing: 02/);
+  page.nodes.get('invoice-bank-account').value = 'usd'; await page.fire('invoice-bank-account', 'change'); await page.settle();
+  assert.match(page.textOf(page.nodes.get('invoice-preview')), /Routing: 02/);
+  assert.doesNotMatch(page.textOf(page.nodes.get('invoice-preview')), /IBAN: XX01/);
+  const printing = page.fire('invoice-print'); await page.settle(); await page.reply({ sequence: 7 }); await printing;
+  assert.match(page.textOf(page.nodes.get('print-invoice')), /Routing: 02/);
+  assert.doesNotMatch(page.textOf(page.nodes.get('print-invoice')), /IBAN: XX01/);
+  await page.fire('invoice-save-pdf'); await page.settle();
+  assert.equal(page.pdfExports.length, 1);
+  assert.match(page.textOf(page.pdfExports[0].source), /Routing: 02/);
+  page.nodes.get('invoice-bank-account').value = ''; await page.fire('invoice-bank-account', 'change'); await page.settle();
+  assert.doesNotMatch(page.textOf(page.nodes.get('invoice-preview')), /Bank details/);
+  await page.fire('invoice-close'); await page.fire('create-invoice'); await page.settle();
+  assert.equal(page.nodes.get('invoice-bank-account').value, '', 'explicit no bank details survives reopening');
+});
+
 test('a single source currency fetches exchange rates for the selected client currency', async () => {
   const page = await loaded(result([record('alice')], { alice: 10000 }));
   await page.fire('create-invoice'); await page.settle();
@@ -900,6 +923,19 @@ test('invoice names the billed range and uses refreshed payment days on the next
   assert.match(page.textOf(page.nodes.get('invoice-preview')), /Payment terms: Net 45/);
   const pending = page.load(newRange); await page.reply(response); await pending; await page.settle();
   assert.equal(page.nodes.get('invoice-billing-period').textContent, 'Billing 2026-08-24 to 2026-08-30');
+});
+
+test('removing a bank account in Settings refreshes an open invoice without retaining its details', async () => {
+  const settings = { ...invoiceSettings, bankAccounts: [{ id: 'old', label: 'Old account', details: 'IBAN: XX01' }], defaultBankAccountId: 'old' };
+  const response = result([record('alice')], { alice: { amountMinorPerHour: 12000, currency: 'EUR' } }, settings);
+  const page = await loaded(response);
+  await page.fire('create-invoice'); await page.settle();
+  assert.match(page.textOf(page.nodes.get('invoice-preview')), /IBAN: XX01/);
+  const refresh = page.context.refreshProjectDefinitions();
+  await page.reply({ ...response.billing, invoicing: { ...settings, bankAccounts: [], defaultBankAccountId: '' } });
+  await refresh; await page.settle();
+  assert.equal(page.nodes.get('invoice-bank-account').value, '');
+  assert.doesNotMatch(page.textOf(page.nodes.get('invoice-preview')), /IBAN: XX01/);
 });
 
 test('date presets use local calendar boundaries and reload like manual date changes', async () => {
