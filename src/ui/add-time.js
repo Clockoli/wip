@@ -234,6 +234,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   };
   const startChanged = () => {
     if (editing && !editing.running && !editing.boundary) moveEditedRange();
+    else if (!end.value.trim()) endDate.value = date.value;
     else syncEndDate();
     updateEndUI();
   };
@@ -241,8 +242,10 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   date.addEventListener('input', () => { dateEdited = true; startChanged(); });
   end.addEventListener('input', () => {
     endShifted = false;
-    if (!end.value.trim()) endDateManuallyEdited = false;
-    syncEndDate();
+    if (!end.value.trim()) {
+      endDateManuallyEdited = false;
+      endDate.value = date.value;
+    } else syncEndDate();
     if (editing && !editing.running && !editing.boundary) {
       editEndInstant = localTimestamp(endDate.value, parseTime(end.value)) || editEndInstant;
     }

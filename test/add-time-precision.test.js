@@ -313,6 +313,7 @@ test('new time keeps manual End date, resets it for an empty End, and retains Mu
     ui.start.value = '11:00'; ui.start.fire('input');
     assert.equal(ui.endDate.value, '2026-10-19');
     ui.end.value = ''; ui.end.fire('input');
+    assert.equal(ui.endDate.value, '2026-10-18');
     assert.equal(ui.endDate.disabled, true);
     assert.equal(ui.save.textContent, 'Start timer');
     assert.equal(ui.duration.hidden, true);
