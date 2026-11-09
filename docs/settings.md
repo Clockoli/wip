@@ -33,7 +33,7 @@ Choose whether Activity, Reports, Top tasks, and the content inside the toolbar 
 Choose what clicking the browser toolbar icon does:
 
 - **Open Activity in a new tab** (default): reuse the Activity tab and pass the clicked page's task context to it.
-- **Open quick popup**: show Clockoli's compact tracker with the running timer, quick actions, recent entries, and an **Activity** button for the full view. The popup closes automatically when focus moves elsewhere.
+- **Open quick popup**: show a lightweight tracker with start/stop, the running timer, four recent entries, and an **Open Activity** button for the full view. The popup has no menus, Timeline, Calendar, or List controls. The popup closes automatically when focus moves elsewhere.
 
 The choice applies immediately and survives browser and extension worker restarts. It stays on this browser and is not included in GitHub data or exported settings. Before setup is complete, opening Clockoli takes you to Settings.
 

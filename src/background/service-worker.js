@@ -55,7 +55,7 @@ const destinationValidationCache = new Map();
 const STATIC_ACTION_ICON = { 16: 'src/assets/clockoli-16.png', 32: 'src/assets/clockoli-32.png' };
 const ACTION_ICON_FRAMES = 8;
 const ACTION_CONTEXT_KEY = 'clockoli-toolbar-task-context';
-const TOOLBAR_POPUP_PATH = 'src/popup/popup.html';
+const TOOLBAR_POPUP_PATH = 'src/popup/quick.html';
 // Reuse Clockoli's privileged IndexedDB; do not expand extension permissions.
 const actionContextBackend = new IndexedDbBackend();
 const currentCredentialProvider = new CredentialBroker({ clientId: GITHUB_APP_CLIENT_ID, store });

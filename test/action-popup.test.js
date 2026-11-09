@@ -71,7 +71,7 @@ test('worker restores the saved toolbar behavior after restart', async () => {
   const init = worker.match(/void store\.getToolbarClickMode\(\)\.then\(applyToolbarClickMode\)\.catch\([^\n]+;/)?.[0];
   assert.ok(apply);
   assert.ok(init);
-  for (const [mode, expected] of [['tab', ''], ['popup', 'src/popup/popup.html']]) {
+  for (const [mode, expected] of [['tab', ''], ['popup', 'src/popup/quick.html']]) {
     const calls = [];
     const context = vm.createContext({
       store: { getToolbarClickMode: async () => mode },
@@ -117,7 +117,21 @@ test('toolbar click mode is local, defaults to Activity, and validates changes',
   assert.match(controller, /type: 'SET_TOOLBAR_CLICK_MODE', mode: control\.value/);
 });
 
-test('compact popup loads the shared timeline component before its tracking controller', () => {
+test('quick popup does not load Activity, Timeline or Calendar controllers', () => {
+  const quick = read('src/popup/quick.html');
+  const js = read('src/popup/quick.js');
+  assert.match(quick, /src="quick\.js"/);
+  assert.doesNotMatch(quick, /github\.js|task-timeline-component|weekly-summary|timeline|calendar/i);
+  assert.doesNotMatch(js, /renderMenu|renderPopupTimeline|activity-view-switcher|calendar-week-navigation/);
+  assert.match(js, /type: 'GET_PAGE_STATE'/);
+  assert.match(js, /type: 'LOAD_RECENT', menuData: true/);
+  assert.match(js, /type: 'START'/);
+  assert.match(js, /type: 'STOP'/);
+  assert.match(js, /type: 'SWITCH_TASK'/);
+  assert.match(js, /type: 'OPEN_TIMES'/);
+});
+
+test('legacy compact popup loads the shared timeline component before its tracking controller', () => {
   const popup = read('src/popup/popup.html');
   assert.match(popup, /<script src="\.\.\/content\/task-timeline-component\.js"><\/script>/);
   assert.ok(popup.indexOf('task-timeline-component.js') < popup.indexOf('github.js'));
