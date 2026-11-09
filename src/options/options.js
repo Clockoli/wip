@@ -307,7 +307,7 @@ function renderTeammatePicker(details, destination, article) {
   invite.textContent = 'Send invitation'; invite.disabled = true;
   const feedback = document.createElement('p'); feedback.className = 'teammate-feedback form-feedback';
   feedback.setAttribute('role', 'status'); feedback.setAttribute('aria-live', 'polite');
-  label.append(input); panel.append(label, choices, invite, feedback); details.append(panel);
+  label.append(input); panel.append(label, choices, feedback, invite); details.append(panel);
   let selected = null, searchTimer = null, generation = 0;
   function profileRow(user) {
     const row = document.createElement('div'); row.className = 'teammate-profile';
@@ -344,7 +344,7 @@ function renderTeammatePicker(details, destination, article) {
           choice.addEventListener('click', () => {
             ++generation; clearTimeout(searchTimer);
             selected = user; input.value = user.login; choices.replaceChildren(); invite.disabled = false;
-            feedback.textContent = `Selected @${user.login}${user.name ? ` (${user.name})` : ''}. Check access before inviting.`;
+            feedback.textContent = `Selected @${user.login}${user.name ? ` (${user.name})` : ''}`;
           });
           choices.append(choice);
         }
@@ -497,19 +497,35 @@ function avatarAccessMenu(article, destination, root, user, kind) {
     if (!window.confirm(`In ${destinationLabel(destination)}, ${action} @${user.login}? This does not delete their existing time records.`)) return;
     article.open = true;
     const feedback = article.querySelector('.repository-manage-feedback');
-    remove.disabled = true; feedback.textContent = 'Checking GitHub access…'; feedback.className = 'repository-manage-feedback form-feedback';
+    remove.disabled = true;
+    feedback.textContent = kind === 'pending' ? `Cancelling @${user.login}'s invitation on GitHub…` : `Removing @${user.login}'s access on GitHub…`;
+    feedback.className = 'repository-manage-feedback form-feedback';
     try {
       const outcome = await send({ type: 'REMOVE_REPOSITORY_USER', payload: {
         destinationId: destination.id, login: user.login, userId: user.id, kind,
       } });
       if (outcome.status !== (kind === 'pending' ? 'cancelled' : 'removed')) throw new Error('GitHub did not confirm removal.');
-      feedback.textContent = kind === 'pending' ? `Invitation for @${outcome.login} cancelled.` : `@${outcome.login} removed from the repository.`;
-      feedback.className = 'repository-manage-feedback form-feedback success';
       close();
-      await loadRepositoryCollaborators(article, destination, root);
+      const refreshed = await loadRepositoryCollaborators(article, destination, root);
+      const remaining = kind === 'pending'
+        ? [...(refreshed?.pendingUsers || []), ...(refreshed?.pendingMoreUsers || [])]
+        : [...(refreshed?.users || []), ...(refreshed?.moreUsers || [])];
+      const stillListed = remaining.some(member => member.id === user.id);
+      if (!refreshed) {
+        feedback.textContent = `GitHub accepted the change for @${outcome.login}, but Clockoli couldn't verify the updated list. Check Manage GitHub access.`;
+      } else if (stillListed) {
+        feedback.textContent = kind === 'pending'
+          ? `GitHub accepted the cancellation for @${outcome.login}, but the invitation still appears. GitHub may still be updating it; check Manage GitHub access.`
+          : `GitHub accepted the removal of @${outcome.login}, but they still have repository access. This may come from a GitHub team or organization, or access may still be updating. Check Manage GitHub access.`;
+      } else {
+        feedback.textContent = kind === 'pending' ? `Invitation for @${outcome.login} cancelled.` : `@${outcome.login} removed from the repository.`;
+      }
+      feedback.className = `repository-manage-feedback form-feedback ${!refreshed || stillListed ? 'warning' : 'success'}`;
       feedback.focus();
     } catch (error) {
-      feedback.textContent = error.message; feedback.className = 'repository-manage-feedback form-feedback error';
+      feedback.textContent = error.message;
+      feedback.className = 'repository-manage-feedback form-feedback error';
+      feedback.focus();
     } finally { remove.disabled = false; }
   });
   wrapper.append(trigger, menu);
@@ -634,7 +650,10 @@ function renderDestinationCard(destination, isDefault) {
   teamNote.textContent = 'GitHub access determines who can read time records. Each person sets up Clockoli separately.';
   const inviteFeedback = document.createElement('p'); inviteFeedback.className = 'repository-invite-feedback form-feedback';
   inviteFeedback.setAttribute('role', 'status'); inviteFeedback.setAttribute('aria-live', 'polite');
-  team.append(teamHeading, teamNote, inviteFeedback, collaborators);
+  const teammateFeedback = document.createElement('p'); teammateFeedback.className = 'repository-manage-feedback form-feedback';
+  teammateFeedback.tabIndex = -1;
+  teammateFeedback.setAttribute('role', 'status'); teammateFeedback.setAttribute('aria-live', 'polite');
+  team.append(teamHeading, teamNote, inviteFeedback, teammateFeedback, collaborators);
   if (destination.initialized !== false) renderTeammateInstructions(team, destination, article);
   const how = document.createElement('details'); how.className = 'repository-team-help';
   const howTitle = document.createElement('summary'); howTitle.textContent = 'How team access works';
@@ -642,10 +661,6 @@ function renderDestinationCard(destination, isDefault) {
   howText.textContent = 'A GitHub invitation grants repository write access, but the recipient must accept it and join Clockoli themselves. Access to this repository also allows reading teammates’ stored time.';
   how.append(howTitle, howText); team.append(how);
   article.append(team);
-  const teammateFeedback = document.createElement('p'); teammateFeedback.className = 'repository-manage-feedback form-feedback';
-  teammateFeedback.tabIndex = -1;
-  teammateFeedback.setAttribute('role', 'status'); teammateFeedback.setAttribute('aria-live', 'polite');
-  article.append(teammateFeedback);
   const removalPanel = renderRemoval(article, destination);
   remove.addEventListener('click', () => { removalPanel.hidden = false; removalPanel.focus?.(); });
   return article;
@@ -666,7 +681,7 @@ async function loadRepositoryCollaborators(article, destination, root) {
     const signature = JSON.stringify([users, pending, moreUsers, pendingMoreUsers, result.hasMore,
       result.pendingHasMore, result.truncated, result.pendingTruncated, result.pendingUnavailable, result.readyUserIds]);
     // Refreshing on tab return must not destroy an open menu, invitation form, or list.
-    if (article.collaboratorSignature === signature) return;
+    if (article.collaboratorSignature === signature) return result;
     const moreOpen = display.querySelector('.repository-collaborator-more')?.open || false;
     const pendingOpen = display.querySelector('.repository-invitation-more')?.open || false;
     article.collaboratorSignature = signature;
@@ -677,7 +692,7 @@ async function loadRepositoryCollaborators(article, destination, root) {
     display.setAttribute('aria-label', `Repository collaborators: ${labels.join(', ')}${result?.hasMore ? ', and more' : ''}${pending.length || result?.pendingHasMore ? `; pending invitations: ${pending.map(user => `@${user.login}`).join(', ')}${result?.pendingHasMore ? ', and more' : ''}` : ''}`);
     if (!users.length && !pending.length && !result?.hasMore && !result?.pendingHasMore) {
       display.textContent = result?.pendingUnavailable ? 'No collaborators' : 'No collaborators or pending invitations';
-      return;
+      return result;
     }
     const readyIds = new Set(Array.isArray(result.readyUserIds) ? result.readyUserIds : []);
     function createMember(user, isPending) {
@@ -734,6 +749,7 @@ async function loadRepositoryCollaborators(article, destination, root) {
     }
     if (result.hasMore) appendOverflow(moreUsers, false, result.truncated, moreOpen);
     if (result.pendingHasMore) appendOverflow(pendingMoreUsers, true, result.pendingTruncated, pendingOpen);
+    return result;
   } catch {
     if (root.contains(article) && article.collaboratorLoadId === loadId) {
       repositoryCollaborators.delete(destination.id);
