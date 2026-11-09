@@ -1814,7 +1814,7 @@ test('tracking panel exposes its page actions as labeled navigation and matches 
   assert.match(source, /const pageNavigation = el\('nav', undefined, 'header-navigation'\)/);
   assert.equal(navigation.getAttribute('aria-label'), 'Clockoli pages');
   assert.deepEqual(navigation.children.map(child => child.textContent), ['Top tasks', 'Reports', 'Activity', 'Settings']);
-  assert.match(source, /@media \(prefers-color-scheme: dark\)[\s\S]*:host\(\.full-width-popup-surface\) \.clockoli-wordmark \{ filter:saturate\(1\.4\) brightness\(2\.1\) \}/);
+  assert.doesNotMatch(source, /full-width-popup-surface/);
   assert.match(source, /@media\(max-width:520px\)[\s\S]*\.header-navigation \{ display:grid;[^}]*grid-template-columns:repeat\(4,minmax\(0,1fr\)\)[^}]*overflow:visible \}/);
 });
 
