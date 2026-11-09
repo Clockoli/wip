@@ -577,15 +577,25 @@ export class GitHubClient {
     }
   }
 
-  async listBranches(prefix, { maxBranches = 1000, signal } = {}) {
+  async listBranchesWithSha(prefix, { maxBranches = 1000, signal } = {}) {
     const normalized = String(prefix || '');
     validateBranch(`${normalized}probe`);
     const base = `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`;
     const body = await this.request(`${base}/git/matching-refs/heads/${encodePath(normalized)}`, { signal });
     if (!Array.isArray(body) || body.length > maxBranches) throw new GitHubApiError('Clockoli user branch discovery exceeded its bounded result budget.', 422, 'branch_discovery_budget');
     const fullPrefix = `refs/heads/${normalized}`;
-    return body.map(item => String(item?.ref || '')).filter(ref => ref.startsWith(fullPrefix))
-      .map(ref => validateBranch(ref.slice('refs/heads/'.length))).sort();
+    return body.filter(item => String(item?.ref || '').startsWith(fullPrefix)).map(item => {
+      const branch = validateBranch(item.ref.slice('refs/heads/'.length));
+      const headSha = item?.object?.sha;
+      if (item?.object?.type !== 'commit' || typeof headSha !== 'string' || !/^[0-9a-f]{40}$/i.test(headSha)) {
+        throw new GitHubApiError('GitHub returned an invalid personal branch reference.', 502, 'invalid_github_response');
+      }
+      return { branch, headSha };
+    }).sort((a, b) => a.branch.localeCompare(b.branch));
+  }
+
+  async listBranches(prefix, options = {}) {
+    return (await this.listBranchesWithSha(prefix, options)).map(item => item.branch);
   }
 
   assertCanonicalCoordinates(repository) {
@@ -622,10 +632,31 @@ export class GitHubClient {
     return repository;
   }
 
-  async getText(path, { signal } = {}) {
-    const body = await this.request(`${this.contentUrl(path)}?ref=${encodeURIComponent(this.branch)}`, { signal });
-    if (Array.isArray(body) || body.type !== 'file') throw new GitHubApiError('Expected a file', 422);
+  async getText(path, { signal, ref = this.branch } = {}) {
+    if (typeof ref !== 'string' || (!/^[0-9a-f]{40}$/i.test(ref) && validateBranch(ref) !== ref)) {
+      throw new Error('Invalid GitHub content ref');
+    }
+    const body = await this.request(`${this.contentUrl(path)}?ref=${encodeURIComponent(ref)}`, { signal });
+    if (Array.isArray(body) || body?.type !== 'file') throw new GitHubApiError('Expected a file', 422);
+    if (typeof body.content !== 'string' || (body.encoding === 'none' && body.size > 0)) {
+      throw new GitHubApiError('GitHub did not inline the file content.', 422, 'inline_content_unavailable');
+    }
     return { path, sha: body.sha, text: decodeBase64Utf8(body.content) };
+  }
+
+  // Pin the complete read to the SHA discovered from matching refs. Only large
+  // files need the Git tree/blob fallback (Contents API does not inline them).
+  async getTextAtCommit(path, headSha, { signal } = {}) {
+    if (typeof headSha !== 'string' || !/^[0-9a-f]{40}$/i.test(headSha)) throw new Error('Invalid Git commit SHA');
+    try { return await this.getText(path, { signal, ref: headSha }); }
+    catch (error) { if (error?.code !== 'inline_content_unavailable') throw error; }
+    const base = `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`;
+    const commit = await this.request(`${base}/git/commits/${headSha}`, { signal });
+    const tree = await this.request(`${base}/git/trees/${encodeURIComponent(commit.tree?.sha)}?recursive=1`, { signal });
+    if (tree.truncated || !Array.isArray(tree.tree)) throw new GitHubApiError('Repository tree is too large to read task indexes', 422);
+    const file = tree.tree.find(item => item.path === path && item.type === 'blob');
+    if (!file?.sha) throw new GitHubNotFoundError();
+    return this.getBlobText(path, file.sha, { signal });
   }
 
   async listRepositoryEntries({ signal } = {}) {
