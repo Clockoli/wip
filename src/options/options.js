@@ -542,11 +542,17 @@ function avatarAccessMenu(article, destination, root, user, kind) {
 
 function renderRemoval(container, destination) {
   const panel = document.createElement('section'); panel.className = 'repository-removal notice'; panel.hidden = true;
-  const title = document.createElement('h4'); title.textContent = `Remove ${destinationLabel(destination)} from Clockoli?`;
+  const title = document.createElement('h4'); title.textContent = 'Disconnect time repository?';
+  const name = document.createElement('p'); name.className = 'repository-removal-name';
+  const repository = document.createElement('strong'); repository.textContent = destinationLabel(destination); name.append(repository);
   const body = document.createElement('p');
-  body.textContent = 'This removes the repository from this browser. Repository data, GitHub App access, and Git history will not be deleted.';
+  body.textContent = 'This will remove the repository from Clockoli in this browser.';
+  const retained = document.createElement('p');
+  retained.textContent = "Your tracked time and GitHub repository will not be deleted. Other team members won't be affected.";
+  const reconnect = document.createElement('p');
+  reconnect.textContent = 'You can reconnect this repository later.';
   const error = document.createElement('p'); error.className = 'form-feedback error'; error.setAttribute('role', 'alert');
-  const confirm = document.createElement('button'); confirm.type = 'button'; confirm.className = 'danger'; confirm.textContent = 'Remove from Clockoli';
+  const confirm = document.createElement('button'); confirm.type = 'button'; confirm.className = 'danger'; confirm.textContent = 'Disconnect repository';
   const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'secondary'; cancel.textContent = 'Cancel';
   const blockers = Array.isArray(destination.removalBlockers) ? destination.removalBlockers : [];
   confirm.addEventListener('click', async () => {
@@ -555,7 +561,7 @@ function renderRemoval(container, destination) {
       await send({ type: 'REMOVE_DESTINATION', destinationId: destination.id });
       await refreshState();
       await refreshLocalPreferences();
-      message(`${destinationLabel(destination)} was removed from this browser.`, 'success');
+      message(`${destinationLabel(destination)} was disconnected from Clockoli in this browser. The repository and tracked time remain in GitHub.`, 'success');
     } catch (reason) {
       error.textContent = reason.message || String(reason);
       confirm.disabled = false; cancel.disabled = false;
@@ -564,7 +570,7 @@ function renderRemoval(container, destination) {
   cancel.addEventListener('click', () => { panel.hidden = true; });
   if (blockers.length) { error.textContent = blockers.join(' '); confirm.hidden = true; }
   const actions = document.createElement('div'); actions.className = 'actions'; actions.append(confirm, cancel);
-  panel.append(title, body, error, actions); container.append(panel);
+  panel.append(title, name, body, retained, reconnect, error, actions); container.append(panel);
   return panel;
 }
 
@@ -648,7 +654,7 @@ function renderDestinationCard(destination, isDefault) {
     });
     actions.append(makeDefault);
   }
-  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-destination'; remove.textContent = 'Remove from Clockoli'; actions.append(remove);
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-destination'; remove.textContent = 'Disconnect repository'; actions.append(remove);
   article.append(actions, feedback);
   const team = document.createElement('section'); team.className = 'repository-team';
   const teamHeading = document.createElement('div'); teamHeading.className = 'repository-team-heading';
