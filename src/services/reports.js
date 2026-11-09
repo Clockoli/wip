@@ -358,7 +358,8 @@ export class ReportService {
   }
 
   async loadRepositoryTaskCatalog({ defaultBranch, signal, budgets = {} } = {}) {
-    if (!defaultBranch || typeof this.github.forBranch !== 'function' || typeof this.github.listBranches !== 'function') {
+    if (!defaultBranch || typeof this.github.forBranch !== 'function'
+        || (typeof this.github.listBranches !== 'function' && typeof this.github.listBranchesWithSha !== 'function')) {
       throw new Error('A marked time repository is required for task search');
     }
     const users = await discoverUserStorageBranches(this.github.forBranch(defaultBranch, 'default'), {
