@@ -76,6 +76,7 @@ test('toolbar quick popup stays minimal and uses the shared tracker commands', a
     await expect(root.getByRole('button', { name: 'Start tracking this page' })).toBeDisabled();
     await expect(root.locator('.quick-entry')).toHaveCount(2);
     await expect(root.getByRole('button', { name: 'Track again: Review PR #42' })).toBeVisible();
+    await expect(root.locator('.quick-description-actions')).toHaveCount(0);
     await expect(root.getByRole('button', { name: 'Open Activity in a new tab' })).toBeVisible();
     await expect(root.locator('.timeline-shell, .calendar-task, .activity-list, .menu, .header-navigation, .timeline-view-modes')).toHaveCount(0);
     for (const width of [390, 320]) {
@@ -87,6 +88,7 @@ test('toolbar quick popup stays minimal and uses the shared tracker commands', a
     await root.getByRole('button', { name: 'Track again: Review PR #42' }).click();
     await expect(root.getByText('Tracking', { exact: true })).toHaveCount(0);
     await expect(root.getByRole('timer', { name: 'Elapsed time' })).toHaveText(/\d\d:\d\d:\d\d/);
+    await expect(root.locator('.quick-description-actions')).toBeHidden();
     const description = root.getByRole('textbox', { name: 'Description' });
     await expect(description).toHaveAttribute('placeholder', 'Add description…');
     await description.fill('Reviewed code');
@@ -105,6 +107,11 @@ test('toolbar quick popup stays minimal and uses the shared tracker commands', a
     await expect.poll(async () => (await worker.evaluate(() => globalThis.quickCalls))
       .filter(call => call.type === 'QUEUE_ACTIVE_START_EDIT').length).toBe(2);
     await expect(root.getByText('Saved', { exact: true })).toBeVisible();
+    await description.fill('Saved with the button');
+    await root.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect.poll(async () => (await worker.evaluate(() => globalThis.quickCalls))
+      .filter(call => call.type === 'QUEUE_ACTIVE_START_EDIT').length).toBe(3);
+    await expect(root.getByText('Saved', { exact: true })).toBeVisible();
     await expect(root.getByRole('button', { name: 'Stop and save' })).toBeEnabled();
     await expect(root.getByRole('button', { name: 'Track again: Review PR #42' })).toBeDisabled();
     const calls = await worker.evaluate(() => globalThis.quickCalls);
@@ -115,8 +122,8 @@ test('toolbar quick popup stays minimal and uses the shared tracker commands', a
     await expect(root.getByText('Not tracking', { exact: true })).toHaveCount(0);
     await expect(root.locator('.quick-entry')).toHaveCount(3);
     const stop = (await worker.evaluate(() => globalThis.quickCalls)).find(call => call.type === 'STOP');
-    expect(stop).toEqual({ type: 'STOP', description: 'Updated on blur' });
-    expect(await worker.evaluate(() => recent[0].description)).toBe('Updated on blur');
+    expect(stop).toEqual({ type: 'STOP', description: 'Saved with the button' });
+    expect(await worker.evaluate(() => recent[0].description)).toBe('Saved with the button');
     await page.screenshot({ path: testInfo.outputPath('quick-popup.png') });
 
     await root.getByRole('button', { name: 'Open Activity in a new tab' }).click();
