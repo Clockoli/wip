@@ -477,39 +477,13 @@ test('timeline STOP keeps the completed block and its connectors visible through
   assert.doesNotMatch(handler, /recentLoaded = false/);
 });
 
-test('full-width timeline places branded navigation above the editor and Stop inside running task details', () => {
+test('running entry actions remain in Activity rather than a GitHub overlay', () => {
   const content = read('src/content/github.js');
-  const worker = read('src/background/service-worker.js');
   const timeline = read('src/content/task-timeline-component.js');
-
-  assert.match(content, /timeline-brand/);
-  assert.match(content, /timeline-view-modes/);
-  assert.match(content, /modeButton\('timeline', 'Timeline'\)/);
-  assert.match(content, /modeButton\('calendar', 'Calendar'\)/);
-  assert.match(content, /modeButton\('list', 'List'\)/);
-  assert.match(content, /timelineInstance\?\.setViewMode\(mode\)/);
-  assert.match(content, /compactSurface\.today\.hidden = !list/);
-  assert.match(content, /'Not tracking', 'strip-idle'/);
-  assert.match(content, /popup-timeline-track/);
-  assert.match(content, /button\('Track this task', 'primary popup-timeline-track'/);
-  assert.match(content, /\.timeline-toolbar-end \{ justify-self:end; display:flex; align-items:center; gap:12px \}/);
-  assert.match(content, /idle\.append\(el\('span', 'Not tracking', 'strip-idle'\), el\('span', 'Start a task to begin', 'strip-idle-caption'\)\)/);
-  assert.match(content, /strip\.append\(idle, quickStart\)/);
-  assert.match(content, /overview\.append\(summary, strip\)/);
-  assert.match(content, /timelineToolbarEnd\.insertBefore\(switchAction, closeButton\)/);
-  assert.match(content, /header\.append\(brand, headerActions, timelineToolbarEnd\)/);
-  assert.doesNotMatch(content, /summaryActionLabel: 'Track this task'/);
-  assert.match(worker, /timelineTask\s*\?\s*taskUrlForTimelineSwitch/);
   assert.match(content, /onStop: item => \{[\s\S]*?entry\?\._active \? stopTimelineEntry\(entry\) : false/);
-  assert.match(content, /type: 'STOP', description: activeDescriptionValue\(activeEntry\)/);
   assert.match(timeline, /button\.textContent = 'Stop and save'/);
-  assert.doesNotMatch(timeline, /STOP /);
-  assert.doesNotMatch(content, /button\('STOP', 'danger timeline-stop'/);
-  assert.doesNotMatch(content, /\.timeline-stop \{/);
-  assert.doesNotMatch(content, /timeline-queue-spinner/);
-  assert.match(content, /timelineInstance = createTimeline[\s\S]*?timelineInstance\.scrollToEnd\(\)/);
-  assert.doesNotMatch(content, /trailingActionGutterPx/);
-  assert.doesNotMatch(content, /renderItemTrailingAction/);
+  assert.match(content, /main\.addEventListener\('click', async event => \{[\s\S]*?await send\(\{ type: 'OPEN_TIMES' \}\)/);
+  assert.doesNotMatch(content, /full-width-popup/);
 });
 
 test('timeline exposes Delete and current-page tracking through durable handlers', () => {
