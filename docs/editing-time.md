@@ -9,13 +9,13 @@ Every change is saved locally first and synchronized with GitHub in the backgrou
 The **Add time** button in the upper right of **Top tasks** and **Activity** adds one entry or entries for multiple selected days.
 
 1. Search tracked tasks with HTTP(S) URL identities from joined people in the connected time repositories by title or URL, or paste a new HTTP(S) task URL.
-2. Choose Start and optional End as keyboard-editable local times, followed by one native Date picker for the start day. Clicking either time field selects its entire current value for immediate replacement. Enter `1000`, Tab, `1200` for 10:00–12:00; leaving either field formats four digits as `HH:MM`.
-3. Add an optional description and choose **Add**.
+2. Choose the Start date and time, and optionally an End date and time. Each has its own native date picker and keyboard-editable `HH:MM` time field. Clicking a time field selects its current value, and entering `1000` formats it as `10:00`. The End date is disabled until an End time is entered.
+3. Add an optional description. The form previews the duration for a completed interval; choose **Add time** to record it, or leave End empty and choose **Start timer**. The **Multiple days** checkbox retains its separate calendar-based flow and **Add** button.
 
 Rules for the interval:
 
-- If End is earlier than Start, it falls on the next calendar day.
-- Start displays the current local minute each time the dialog opens; End starts empty. With End empty and the displayed Start and Date untouched, **Add** starts the timer at the actual submission time, including seconds. An empty Start also uses now when End is empty. An explicitly edited Start uses the selected minute (at `:00` seconds), even if it matches the displayed minute; an empty End starts a running timer.
+- End date initially matches Start date. If End time is earlier than Start time, End date automatically advances to the next day; otherwise it follows Start date. An explicitly chosen End date is respected instead, and the final interval is validated without silently changing that choice.
+- Start displays the current local minute each time the dialog opens; End starts empty. With End empty and the displayed Start time and date untouched, **Start timer** starts at the actual submission time, including seconds. An empty Start also uses now when End is empty. An explicitly edited Start uses the selected minute (at `:00` seconds), even if it matches the displayed minute.
 - A single Add time interval may be at most 24 hours (exactly 24 is allowed); split longer work into separate entries.
 - Running timers started through Add time must be no more than 24 hours old at creation; a timer that continues beyond 24 hours is not automatically stopped.
 - Future timestamps are rejected.
@@ -66,8 +66,8 @@ If the batch cannot fit or overlaps another device's work, it stays locally stor
 
 - Editing the same task preserves its title; selecting another task uses its title, while a newly pasted URL has no title.
 - Regular task search excludes imported non-URL identities. An existing imported task can still be retained when editing its own entry; the specialized GitHub entry editor can resolve a verified imported replacement from the same time repository, and Clockoli checks that identity before queuing and synchronizing. Imported identities cannot silently move an entry between repositories.
-- The one Date picker shows the entry's start day; changing it retains the two time-of-day fields. End is on that day unless its time is earlier than Start, in which case it is on the following day.
-- Editing Start moves End by the same amount, preserving the interval's exact duration (including seconds and overnight dates). Editing only End keeps Start unchanged. Moving the Date in the completed-entry form also moves the entire interval.
+- Start date/time and End date/time are shown separately. The End date initially reflects the existing record (including overnight entries). Changing the End date explicitly allows choosing a different day; the 24-hour limit still applies when changing a completed interval.
+- Editing Start date or time moves End by the same amount, preserving the interval's exact duration (including seconds and overnight dates). Editing End time or its date alone keeps Start unchanged.
 - An unchanged range preserves the original timestamps, including seconds.
 - Existing zero-duration or longer-than-24-hour records remain editable without changing their times; an interval changed to exceed 24 hours is rejected rather than shortened.
 - Cancel does not mutate the record.
