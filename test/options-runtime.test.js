@@ -2577,6 +2577,9 @@ test('teammate picker selects a searched GitHub user and requires confirmation b
   const picker = page.nodes.get('time-repository-list').querySelector('.teammate-picker');
   assert.ok(picker);
   const input = picker.querySelector('.teammate-search'), invite = picker.querySelector('.invite-teammate');
+  const feedback = picker.querySelector('.teammate-feedback');
+  assert.ok(picker.children.indexOf(feedback) < picker.children.indexOf(invite),
+    'selected account and search status must appear before Send invitation, not between action buttons');
   assert.equal(invite.disabled, true);
   input.value = 'Bo'; input.listeners.input();
   await page.timers.find(timer => timer.delay === 250).callback();
@@ -2921,6 +2924,51 @@ test('managing repository access requires confirmation and removes only the chos
   assert.equal(first.querySelector('.repository-manage-feedback').focused, true);
   assert.equal(first.querySelector('.remove-repository-user'), null);
   assert.equal(second.querySelector('.remove-repository-user'), null);
+});
+
+test('removing inherited GitHub access reports that the member still has access', async () => {
+  const page = harness({ collaboratorReplies: true, confirm: () => true, reply: request => {
+    if (request.type === 'LOAD_REPOSITORY_COLLABORATORS') return {
+      users: [{ id: 42, login: 'Bob', avatarUrl: null }], hasMore: false,
+    };
+    if (request.type === 'REMOVE_REPOSITORY_USER') return { status: 'removed', login: 'Bob' };
+    return {};
+  } });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const row = page.nodes.get('time-repository-list').children[0];
+  await row.querySelector('.repository-member-actions-button').listeners.click({ preventDefault() {}, stopPropagation() {} });
+  await row.querySelector('.remove-repository-user').listeners.click({ preventDefault() {}, stopPropagation() {} });
+  const feedback = row.querySelector('.repository-manage-feedback');
+  assert.equal(feedback.parentNode, row.querySelector('.repository-team'),
+    'result must be visible alongside the team, not beneath the entire repository card');
+  assert.match(feedback.textContent, /still have repository access/i);
+  assert.match(feedback.textContent, /team or organization/i);
+  assert.match(feedback.className, /warning/);
+  assert.equal(feedback.focused, true);
+  assert.ok(row.querySelector('.repository-team-member'), 'inherited collaborator should still appear');
+});
+
+test('GitHub remove failure is immediately visible in Team and leaves the action retryable', async () => {
+  const page = harness({ collaboratorReplies: true, confirm: () => true, reply: request => {
+    if (request.type === 'LOAD_REPOSITORY_COLLABORATORS') return {
+      users: [{ id: 42, login: 'Bob', avatarUrl: null }], hasMore: false,
+    };
+    if (request.type === 'REMOVE_REPOSITORY_USER') return new Error('GitHub denied removing this collaborator');
+    return {};
+  } });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const row = page.nodes.get('time-repository-list').children[0];
+  await row.querySelector('.repository-member-actions-button').listeners.click({ preventDefault() {}, stopPropagation() {} });
+  const remove = row.querySelector('.remove-repository-user');
+  await remove.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  const feedback = row.querySelector('.repository-manage-feedback');
+  assert.equal(feedback.parentNode, row.querySelector('.repository-team'));
+  assert.match(feedback.textContent, /GitHub denied removing/);
+  assert.match(feedback.className, /error/);
+  assert.equal(feedback.focused, true);
+  assert.equal(remove.disabled, false);
 });
 
 test('pending account invitation can be cancelled but a failed removal retains its action', async () => {
