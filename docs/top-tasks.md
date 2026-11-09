@@ -14,7 +14,7 @@ Top tasks aggregates the current user's completed and running sessions by canoni
 - The task identity appears as a compact source line, with the optional title as the prominent link below it. Untitled URL tasks show the URL as the primary link without duplication. Imported tasks without a navigable URL show a non-link identity and title.
 - URL tasks aggregate across destinations with sorted time-repository provenance. Imported non-URL identities remain separate per destination, even if their text matches; when multiple repositories are connected, their rows show the time repository so identical identities can be distinguished.
 
-Cross-user suggestions require a nonempty task title. Untitled tasks remain in personal records and the unfiltered list. Search uses a local catalog built from each person's Git-backed task index; a match does not contact GitHub, while a miss refreshes those indexes before reporting no match. See [Search for a task](editing-time.md#search-for-a-task) for refresh and partial-result behavior.
+Cross-user suggestions require a nonempty task title. Untitled tasks remain in personal records and the unfiltered list. Search uses a local catalog built from each person's Git-backed task index. Matches return without GitHub; misses against a complete catalog updated within the last minute also return locally, while older misses refresh changed personal branches. See [Search for a task](editing-time.md#search-for-a-task) for refresh and partial-result behavior.
 
 ## Start a task again
 
