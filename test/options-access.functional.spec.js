@@ -346,7 +346,7 @@ test('repository disclosures rotate in Chromium and remain usable at narrow widt
       const icon = row.locator('.repository-disclosure-icon');
       await expect(icon).toHaveAttribute('aria-hidden', 'true');
       await expect.poll(() => icon.evaluate(element => getComputedStyle(element).transform)).toBe('none');
-      await row.locator('.repository-heading-title').click();
+      await row.locator(':scope > summary').click();
       await expect(row).toHaveAttribute('open', '');
       await expect.poll(() => icon.evaluate(element => getComputedStyle(element).transform)).toBe('matrix(-1, 0, 0, -1, 0, 0)');
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
