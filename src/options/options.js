@@ -286,12 +286,19 @@ function teammateSteps(destination) {
   ];
 }
 
-function teammateInstructions(destination) {
+function clockoliInvitationMessage(destination) {
+  const repository = `${destination.owner}/${destination.repo}`;
+  const link = clockoliInvitationLink(repository);
+  if (!link) return '';
   return [
-    `Join ${destinationLabel(destination)} in Clockoli:`,
-    ...teammateSteps(destination).map((step, index) => `${index + 1}. ${step}`),
+    "Hi! You're invited to track time with our team using Clockoli.",
     '',
-    'Clockoli creates a separate personal storage branch for each teammate. Do not create clockoli/users/… branches by hand.',
+    `1. Accept the GitHub invitation to ${repository} (if you haven't already).`,
+    '2. Open this link to set up Clockoli:',
+    `   ${link}`,
+    '3. Keep the page open while you install the Clockoli extension and connect your GitHub account. Follow the steps to join the shared time repository.',
+    '',
+    "That's it! You're ready to track time with the team.",
   ].join('\n');
 }
 
@@ -408,28 +415,33 @@ function renderTeammateInstructions(container, destination, article) {
   intro.textContent = 'Choose a GitHub user. Clockoli checks their access and sends an invitation only if one is needed.';
   details.append(summary, intro);
   renderTeammatePicker(details, destination, article);
-  const invitationUrl = clockoliInvitationLink(`${destination.owner}/${destination.repo}`);
-  if (invitationUrl) {
+  const invitationMessage = clockoliInvitationMessage(destination);
+  if (invitationMessage) {
     const actions = document.createElement('div'); actions.className = 'teammate-invitation-link';
     const button = document.createElement('button'); button.type = 'button'; button.className = 'secondary';
-    button.textContent = 'Copy Clockoli invitation link';
-    const status = document.createElement('p'); status.className = 'form-feedback'; status.setAttribute('role', 'status');
-    const fallback = document.createElement('input'); fallback.type = 'text'; fallback.readOnly = true;
-    fallback.setAttribute('aria-label', 'Clockoli invitation link'); fallback.value = invitationUrl; fallback.hidden = true;
+    button.textContent = 'Copy Clockoli invitation message';
+    const status = document.createElement('p'); status.className = 'form-feedback';
+    status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
+    const fallback = document.createElement('textarea'); fallback.readOnly = true; fallback.rows = 9;
+    fallback.className = 'teammate-invitation-message-fallback';
+    fallback.setAttribute('aria-label', 'Clockoli invitation message');
+    fallback.value = invitationMessage; fallback.hidden = true;
     fallback.addEventListener('focus', () => fallback.select());
     button.addEventListener('click', async () => {
       button.disabled = true;
       try {
-        await navigator.clipboard.writeText(invitationUrl);
-        status.textContent = 'Invitation link copied. Grant GitHub repository access to your teammate separately.';
+        await navigator.clipboard.writeText(invitationMessage);
+        status.textContent = 'Invitation message copied. Send it to your teammate.';
+        status.className = 'form-feedback success';
         fallback.hidden = true;
       } catch {
-        status.textContent = 'Clipboard unavailable. Select and copy the invitation link below.';
+        status.textContent = 'Clipboard unavailable. Select and copy the invitation message below.';
+        status.className = 'form-feedback error';
         fallback.hidden = false; fallback.focus();
       } finally { button.disabled = false; }
     });
     const note = document.createElement('p'); note.className = 'help';
-    note.textContent = 'Optional: share this link after inviting someone on GitHub. The link alone does not grant access.';
+    note.textContent = 'Share this message after sending a GitHub repository invitation. The message alone does not grant access.';
     actions.append(button, status, fallback, note); details.append(actions);
   }
   const setup = document.createElement('details'); setup.className = 'teammate-setup';
@@ -440,20 +452,7 @@ function renderTeammateInstructions(container, destination, article) {
   }
   const note = document.createElement('p'); note.className = 'help';
   note.textContent = 'Clockoli creates a personal storage branch for each teammate. Do not create clockoli/users/… branches by hand.';
-  const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'secondary'; copy.textContent = 'Copy instructions';
-  const feedback = document.createElement('p'); feedback.className = 'form-feedback'; feedback.setAttribute('role', 'status'); feedback.setAttribute('aria-live', 'polite');
-  copy.addEventListener('click', async () => {
-    copy.disabled = true;
-    try {
-      await navigator.clipboard.writeText(teammateInstructions(destination));
-      feedback.textContent = 'Teammate instructions copied.'; feedback.className = 'form-feedback success';
-    } catch {
-      setup.open = true;
-      feedback.textContent = 'Could not copy automatically. Select the steps above and copy them with your keyboard.';
-      feedback.className = 'form-feedback error';
-    } finally { copy.disabled = false; }
-  });
-  setup.append(setupSummary, steps, note, copy, feedback);
+  setup.append(setupSummary, steps, note);
   details.append(setup);
   container.append(details);
 }
