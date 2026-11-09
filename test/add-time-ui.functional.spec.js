@@ -83,6 +83,7 @@ test('Add time selects individual calendar days with required daily hours on Act
       await page.locator('#add-time-button').click();
       const dialog = page.getByRole('dialog', { name: 'Add new time' });
       await dialog.getByRole('combobox', { name: 'Task' }).fill(taskUrl);
+      await expect(dialog.locator('.add-time-search-popup')).toBeHidden();
       expect(await dialog.getByLabel('Description (optional)').evaluate(input => input.closest('.add-time-range-fields'))).toBeNull();
       await dialog.getByLabel('Multiple days').check();
       const desktopLayout = await dialog.evaluate(element => {
