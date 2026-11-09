@@ -1569,9 +1569,14 @@ for (const mode of ['timeline', 'calendar']) {
     await expect(details).toBeVisible();
     await page.setViewportSize({ width: 420, height: 900 });
     await page.locator('#timeline').evaluate(host => { host.style.width = '404px'; });
+    // Reopen the card after the resize, when its old anchor may no longer be hovered.
+    await page.locator('body').hover({ position: { x: 1, y: 1 } });
+    await expect(details).toBeHidden();
+    await record.hover();
     await expect(details).toBeVisible();
-    await expect.poll(() => details.evaluate(node => node.getBoundingClientRect().right)).toBeLessThanOrEqual(420);
+    await expect.poll(() => details.evaluate(node => node.hidden ? Infinity : node.getBoundingClientRect().right)).toBeLessThanOrEqual(420);
     const narrow = await details.boundingBox();
+    expect(narrow).not.toBeNull();
     expect(narrow.x).toBeGreaterThanOrEqual(0);
     expect(narrow.x + narrow.width).toBeLessThanOrEqual(420);
   });
