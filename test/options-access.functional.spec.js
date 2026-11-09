@@ -482,6 +482,7 @@ test('More collaborators expands the additional GitHub accounts in Settings', as
     await repository.locator(':scope > summary').click();
     const more = repository.locator('.repository-collaborator-more');
     await expect(more.locator('summary')).toContainText('More collaborators');
+    await expect(more).not.toHaveAttribute('title');
     await more.locator('summary').click();
     await expect(more).toHaveAttribute('open', '');
     await expect(more.locator('.repository-team-member-identity strong')).toHaveText('@OtherMember');
