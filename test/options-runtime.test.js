@@ -3193,7 +3193,7 @@ test('invite section leads with search and keeps teammate setup steps behind a d
   assert.equal(setup.querySelector('.teammate-steps').tagName, 'ol');
   assert.equal(invite.children.some(child => child.tagName === 'pre'), false);
   assert.equal(picker.querySelector('.teammate-search').placeholder, 'Search GitHub users');
-  assert.equal(picker.querySelector('.invite-teammate').textContent, 'Send invitation');
+  assert.equal(picker.querySelector('.invite-teammate').textContent, 'Send invitation to the repository');
   assert.equal(picker.querySelector('.teammate-permissions'), null);
 });
 
