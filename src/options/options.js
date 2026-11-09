@@ -659,19 +659,28 @@ async function loadRepositoryCollaborators(article, destination, root) {
     if (!root.contains(article) || article.collaboratorLoadId !== loadId) return;
     const users = Array.isArray(result?.users) ? result.users : [];
     const pending = Array.isArray(result?.pendingUsers) ? result.pendingUsers : [];
+    const moreUsers = Array.isArray(result?.moreUsers) ? result.moreUsers : [];
+    const pendingMoreUsers = Array.isArray(result?.pendingMoreUsers) ? result.pendingMoreUsers : [];
     repositoryCollaborators.set(destination.id, new Map((result.avatarUsers || users).map(user => [user.login.toLowerCase(), user.avatarUrl])));
     if ($('merge-task-destination').value === destination.id) updateMergePeopleAvatars();
+    const signature = JSON.stringify([users, pending, moreUsers, pendingMoreUsers, result.hasMore,
+      result.pendingHasMore, result.truncated, result.pendingTruncated, result.pendingUnavailable, result.readyUserIds]);
+    // Refreshing on tab return must not destroy an open menu, invitation form, or list.
+    if (article.collaboratorSignature === signature) return;
+    const moreOpen = display.querySelector('.repository-collaborator-more')?.open || false;
+    const pendingOpen = display.querySelector('.repository-invitation-more')?.open || false;
+    article.collaboratorSignature = signature;
     const labels = users.map(user => `@${user.login}`);
     closeActiveAvatarMenu?.();
     display.replaceChildren();
     display.setAttribute('role', 'group');
     display.setAttribute('aria-label', `Repository collaborators: ${labels.join(', ')}${result?.hasMore ? ', and more' : ''}${pending.length || result?.pendingHasMore ? `; pending invitations: ${pending.map(user => `@${user.login}`).join(', ')}${result?.pendingHasMore ? ', and more' : ''}` : ''}`);
-    if (!users.length && !pending.length && !result?.pendingHasMore) {
+    if (!users.length && !pending.length && !result?.hasMore && !result?.pendingHasMore) {
       display.textContent = result?.pendingUnavailable ? 'No collaborators' : 'No collaborators or pending invitations';
       return;
     }
     const readyIds = new Set(Array.isArray(result.readyUserIds) ? result.readyUserIds : []);
-    for (const [user, isPending] of [...users.map(user => [user, false]), ...pending.map(user => [user, true])]) {
+    function createMember(user, isPending) {
       const isSelf = Number.isSafeInteger(state.auth?.githubUserId) && state.auth.githubUserId > 0
         ? user.id === state.auth.githubUserId
         : user.login.toLowerCase() === state.auth?.githubLogin?.toLowerCase();
@@ -698,21 +707,39 @@ async function loadRepositoryCollaborators(article, destination, root) {
         : readyIds.has(user.id) ? 'Clockoli storage ready' : 'GitHub access granted';
       identity.append(login, status); member.append(avatar, identity);
       if (interactive) member.append(avatarAccessMenu(article, destination, root, user, isPending ? 'pending' : 'collaborator'));
-      display.append(member);
+      return member;
     }
-    if (result.hasMore) {
-      const extra = document.createElement('span'); extra.className = 'repository-collaborator repository-collaborator-more';
-      extra.title = 'More collaborators'; extra.setAttribute('aria-hidden', 'true'); extra.textContent = '…'; display.append(extra);
+    for (const user of users) display.append(createMember(user, false));
+    for (const user of pending) display.append(createMember(user, true));
+
+    function appendOverflow(more, isPending, truncated, wasOpen) {
+      const details = document.createElement('details');
+      details.className = isPending ? 'repository-more-members repository-invitation-more'
+        : 'repository-more-members repository-collaborator-more';
+      details.title = isPending ? 'More pending invitations' : 'More collaborators';
+      details.open = wasOpen;
+      const summary = document.createElement('summary');
+      summary.textContent = isPending ? `More pending invitations (${more.length || 'view on GitHub'})`
+        : `More collaborators (${more.length || 'view on GitHub'})`;
+      details.append(summary);
+      for (const user of more) details.append(createMember(user, isPending));
+      if (truncated || !more.length) {
+        const link = document.createElement('a'); link.className = 'repository-view-all';
+        link.href = `https://github.com/${encodeURIComponent(destination.owner)}/${encodeURIComponent(destination.repo)}/settings/access`;
+        link.target = '_blank'; link.rel = 'noreferrer';
+        link.textContent = isPending ? 'View all invitations on GitHub' : 'View all collaborators on GitHub';
+        details.append(link);
+      }
+      display.append(details);
     }
-    if (result.pendingHasMore) {
-      const extra = document.createElement('span'); extra.className = 'repository-collaborator repository-invitation repository-invitation-more';
-      extra.title = 'More pending invitations'; extra.setAttribute('aria-hidden', 'true'); extra.textContent = '…'; display.append(extra);
-    }
+    if (result.hasMore) appendOverflow(moreUsers, false, result.truncated, moreOpen);
+    if (result.pendingHasMore) appendOverflow(pendingMoreUsers, true, result.pendingTruncated, pendingOpen);
   } catch {
     if (root.contains(article) && article.collaboratorLoadId === loadId) {
       repositoryCollaborators.delete(destination.id);
       if ($('merge-task-destination').value === destination.id) updateMergePeopleAvatars();
       display.replaceChildren(); display.textContent = 'Collaborators unavailable';
+      article.collaboratorSignature = null;
       closeActiveAvatarMenu?.();
     }
   }
