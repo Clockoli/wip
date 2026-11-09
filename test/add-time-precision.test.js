@@ -64,7 +64,7 @@ function setup() {
   const description = byId('add-time-description');
   const save = dialog.children.at(-1).children.at(-1);
   const restore = () => { globalThis.document = previous.document; globalThis.ClockoliTaskSearch = previous.ClockoliTaskSearch; };
-  return { dialog, start, end, date, description, save, restore };
+  return { dialog, search: byId('add-time-task'), start, end, date, description, save, restore };
 }
 
 const entry = { taskUrl: 'https://example.com/task', taskTitle: 'Task', description: 'Keep this',
@@ -86,7 +86,7 @@ test('conflict-only editor shows minutes and saves the end at :00 while preservi
     assert.equal(ui.start.value, '10:15');
     assert.equal(ui.end.value, '11:20');
     assert.equal(ui.start.maxLength, 5);
-    assert.equal(ui.dialog.children.find(node => node.id === 'add-time-task').hidden, true);
+    assert.equal(ui.search.hidden, true);
     assert.equal(ui.description.hidden, true);
     assert.doesNotMatch(ui.dialog.children.find(node => node.className === 'add-time-hint' && !node.hidden).textContent, /SS|mmm/i);
     ui.end.value = '11:19';
