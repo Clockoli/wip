@@ -405,13 +405,19 @@ test('invitation preflight and user search obtain configuration without provisio
     repositoryInvitationService: async (id, options) => {
       assert.equal(id, 'github:20');
       calls.push(['route', options]);
-      return { assertAdminAccess: async () => {} };
+      return { assertAdminAccess: async () => {}, search: async query => {
+        assert.equal(query, 'bob'); return [];
+      } };
     },
   });
   vm.runInContext(worker.slice(worker.indexOf('async function handle('),
     worker.indexOf('chrome.runtime.onMessage.addListener')), handler);
   assert.deepEqual(JSON.parse(JSON.stringify(await handler.handle(
     { type: 'CHECK_REPOSITORY_INVITE_ACCESS', destinationId: 'github:20' }, extension))), { canInvite: true });
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.at(-1))), ['route', { localOnly: true }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(await handler.handle(
+    { type: 'SEARCH_INVITEE_USERS', payload: { destinationId: 'github:20', query: 'bob' } }, extension))),
+    { users: [] });
   assert.deepEqual(JSON.parse(JSON.stringify(calls.at(-1))), ['route', { localOnly: true }]);
   await assert.rejects(handler.handle({ type: 'CHECK_REPOSITORY_INVITE_ACCESS', destinationId: 'github:20' }, content), /not allowed/i);
 });
