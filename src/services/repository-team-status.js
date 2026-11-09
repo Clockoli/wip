@@ -9,14 +9,13 @@ export async function readyRepositoryMemberIds(github, defaultBranch, users) {
     const marker = parseMarker((await github.forBranch(defaultBranch, 'default').getText('.clockoli/config.json')).text);
     const branches = new Set(await github.listBranches('clockoli/users/'));
     const candidates = users.filter(user => Number.isSafeInteger(user.id) && user.id > 0
-      && typeof user.login === 'string'
-      && marker.users[String(user.id)]?.toLowerCase() === user.login.toLowerCase()
+      && marker.users[String(user.id)]
       && branches.has(userStorageBranch(user.id)));
     const checks = await Promise.all(candidates.map(async user => {
       try {
         const personal = github.forBranch(userStorageBranch(user.id), 'custom');
         const metadata = parseUserBranchMetadata((await personal.getText(USER_METADATA_PATH)).text);
-        if (metadata.id !== user.id || metadata.login.toLowerCase() !== user.login.toLowerCase()) return null;
+        if (metadata.id !== user.id || metadata.login.toLowerCase() !== marker.users[String(user.id)].toLowerCase()) return null;
         parseTaskIndex((await personal.getText(TASK_INDEX_PATH)).text, { user: metadata.login });
         return user.id;
       } catch { return null; }
