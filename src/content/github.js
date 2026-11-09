@@ -3051,12 +3051,11 @@
         startedAt: Math.max(historyStart, weekWindow().start, new Date(entry.startedAt).getTime()),
         endedAt: entry._active ? null : Math.min(completedDisplayEnd, new Date(entry.endedAt).getTime()),
         isRunning: Boolean(entry._active),
-        isCurrentTask: Boolean(!entry._active && sameTask(entry, pageState.active)),
         isEditable: !entry._active && (timesMode || completeVisualWeekStart === weekWindow().start),
         isPending: Boolean(entry.isPending),
         isStartDisabled: !trackableTaskIdentityOf(entry) || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)
           || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict')),
-        isStopDisabled: Boolean((entry._active || sameTask(entry, pageState.active)) && (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
+        isStopDisabled: Boolean(entry._active && (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
           || pageState.pendingWrites?.some(item => item.status === 'conflict'))),
         isDeleteDisabled: timelineDeleteInFlight || timelineStartInFlight || timelineStopInFlight
           || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict')),
@@ -3640,7 +3639,7 @@
         },
         onStop: item => {
           const entry = timelineEntriesById.get(item.id);
-          return stopTimelineEntry(entry && !entry._active && sameTask(entry, pageState.active) ? pageState.active : entry);
+          return entry?._active ? stopTimelineEntry(entry) : false;
         },
         onDelete: async item => {
           const entry = timelineEntriesById.get(item.id);
