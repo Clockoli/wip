@@ -2,6 +2,7 @@ import { mountRunningStatus } from '../ui/running-status.js';
 import { mountAddTime } from '../ui/add-time.js';
 import { effectiveTrackedSeconds, sortTrackedTasks, taskPeriodRange, trackedTaskKey } from '../domain/tasks.js';
 import { formatClockDuration } from '../domain/reporting.js';
+import { isUrlTaskIdentity } from '../domain/values.js';
 
 const PERIOD_KEY = 'clockoli.tasks.period';
 const SECOND_MS = 1_000;
@@ -106,10 +107,12 @@ function taskIcon(task) {
 }
 
 function visibleTasks() {
-  const own = state.tasks;
+  // Keep imported history visible without a filter, but exclude identities
+  // without a URL from both personal and teammate search results.
+  const own = taskSearch.query ? state.tasks.filter(task => isUrlTaskIdentity(task.taskUrl)) : state.tasks;
   const ownKeys = new Set(own.map(trackedTaskKey));
   const candidates = taskSearch.query ? state.searchCandidates
-    .filter(task => !ownKeys.has(trackedTaskKey(task)))
+    .filter(task => isUrlTaskIdentity(task.taskUrl) && !ownKeys.has(trackedTaskKey(task)))
     .map(task => ({ ...task, totalSeconds: 0, sessionCount: 0, untrackedByYou: true })) : [];
   const filtered = taskSearch.matches([...own, ...candidates]);
   return sortTrackedTasks(filtered, { active: state.active, now: Date.now() });

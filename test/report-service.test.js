@@ -759,3 +759,53 @@ test('UTC ranges fetch both adjacent local months and filter candidates by UTC d
   assert.deepEqual(local.map(record => record.issue.number), [2]);
   assert.deepEqual(github.reads, ['times/2026-08/alice.jsonl']);
 });
+
+test('REST task catalogs fetch only changed personal branches and reuse persisted verified indexes', async () => {
+  let headSha = A, indexSha = B;
+  let indexText = taskIndex('alice', [{ taskUrl: 'https://example.org/one', taskTitle: 'First task', durationSeconds: 30 }]);
+  let metadataReads = 0, indexReads = 0, branchLists = 0;
+  const personal = {
+    repositoryKey: 'acme/team@clockoli/users/1',
+    getText: async (path, { ref } = {}) => {
+      assert.equal(path, '.clockoli/user.json');
+      assert.equal(ref, headSha, 'ownership must be verified at the same commit as the index');
+      metadataReads++;
+      return { text: JSON.stringify({ version: 1, githubUserId: 1, storageLogin: 'alice' }) };
+    },
+    getTextAtCommit: async (path, ref) => {
+      assert.equal(path, TASK_INDEX_PATH);
+      assert.equal(ref, headSha);
+      indexReads++;
+      return { path, sha: indexSha, text: indexText };
+    },
+  };
+  const github = {
+    repositoryKey: 'acme/team@main',
+    forBranch: name => name === 'main' ? github : personal,
+    listBranchesWithSha: async prefix => {
+      assert.equal(prefix, 'clockoli/users/');
+      branchLists++;
+      return [{ branch: 'clockoli/users/1', headSha }];
+    },
+  };
+  const entries = new Map();
+  const cache = {
+    getReportCache: async key => structuredClone(entries.get(key) ?? null),
+    saveReportCache: async value => { entries.set(value.repositoryKey, structuredClone(value)); },
+  };
+  const load = () => new ReportService({ github, cache }).loadRepositoryTaskCatalog({ defaultBranch: 'main' });
+  assert.equal((await load()).tasks[0].title, 'First task');
+  assert.deepEqual([branchLists, metadataReads, indexReads], [1, 1, 1]);
+
+  assert.equal((await load()).tasks[0].title, 'First task');
+  assert.deepEqual([branchLists, metadataReads, indexReads], [2, 1, 1],
+    'unchanged branch requires only one repository-wide matching-refs request');
+
+  headSha = C; indexSha = 'd'.repeat(40);
+  indexText = taskIndex('alice', [{ taskUrl: 'https://example.org/two', taskTitle: 'Second task', durationSeconds: 30 }]);
+  assert.equal((await load()).tasks[0].title, 'Second task');
+  assert.deepEqual([branchLists, metadataReads, indexReads], [3, 2, 2]);
+
+  assert.equal((await load()).tasks[0].title, 'Second task');
+  assert.deepEqual([branchLists, metadataReads, indexReads], [4, 2, 2]);
+});

@@ -6,7 +6,7 @@ import {
 } from '../config/github-app.js';
 import { activeRecordPath } from '../domain/work-records.js';
 import { createUlid } from '../domain/ulid.js';
-import { normalizeTaskUrl, parseGitHubProjectPaneIssueUrl, taskUrlOf } from '../domain/values.js';
+import { isUrlTaskIdentity, normalizeTaskUrl, parseGitHubProjectPaneIssueUrl, taskUrlOf } from '../domain/values.js';
 import { aggregateTaskParticipants, aggregateTrackedTasks } from '../domain/tasks.js';
 import { ChromeStore } from '../storage/chrome-store.js';
 import { IndexedDbBackend } from '../storage/chrome-store.js';
@@ -607,7 +607,7 @@ async function loadTasks(message, sender) {
   finally { if (reportLoads.get(loadKey)?.promise === promise) reportLoads.delete(loadKey); }
 }
 
-async function searchTasks(sender, query = '', { refresh = false } = {}) {
+async function searchTasks(sender, query = '', { refresh = false, includeImported = false } = {}) {
   const loadEpoch = await loadCoordinator.beginLoad();
   await store.ensureDataVersion(5); loadCoordinator.assertCurrent(loadEpoch);
   const snapshot = await configuredSnapshot({ localOnly: true }); loadCoordinator.assertCurrent(loadEpoch);
@@ -636,10 +636,19 @@ async function searchTasks(sender, query = '', { refresh = false } = {}) {
     const cacheDirty = await store.isTaskSearchDirty();
     const hasPending = destinations.some(destination =>
       tracking.destinationStates?.entries?.[destination.id]?.pendingWrites?.length);
-    const cached = searchText && !refresh && !hasPending ? await store.getTaskSearchCache?.(scope) : null;
+    const cached = searchText && !refresh ? await store.getTaskSearchCache?.(scope) : null;
     const cachedTasks = cached && taskCandidates(cached.indexTasks.map(task => ({ ...task, taskTitle: task.title })));
-    const hit = cachedTasks?.some(task => `${task.title} ${task.taskUrl}`.toLowerCase().includes(searchText));
-    const indexed = hit ? { indexTasks: cached.indexTasks, records: cachedTasks,
+    // Preserve imported identities internally for the explicitly scoped historical
+    // entry editor, but never return them in ordinary Add time / Top tasks search.
+    const searchable = tasks => includeImported ? tasks : tasks.filter(task => isUrlTaskIdentity(task.taskUrl));
+    const hit = cachedTasks && searchable(cachedTasks)
+      .some(task => `${task.title} ${task.taskUrl}`.toLowerCase().includes(searchText));
+    // A recent complete catalog also proves a miss: do not rescan every branch
+    // after each keystroke. Pending local changes are projected below.
+    const recent = cached && Number.isFinite(cached.refreshedAt)
+      && requestedAt >= cached.refreshedAt && requestedAt - cached.refreshedAt < 60_000;
+    const useCached = Boolean(hit || recent);
+    const indexed = useCached ? { indexTasks: cached.indexTasks, records: cachedTasks,
       readStatus: cached.readStatus, partial: false, conflicts: [], fallback: false }
       : await loadDestinationRecords(destinations, async (destination, signal) => {
         signal.throwIfAborted(); loadCoordinator.assertCurrent(loadEpoch);
@@ -651,7 +660,7 @@ async function searchTasks(sender, query = '', { refresh = false } = {}) {
       }, { signal: controller.signal, merge: mergeTaskCatalogIndexes });
     if (!indexed.fallback) {
       loadCoordinator.assertCurrent(loadEpoch);
-      if (!hit && !hasPending && !directCompletedWrites && (!cacheDirty || refresh)
+      if (!useCached && !hasPending && !directCompletedWrites && (!cacheDirty || refresh)
           && !indexed.partial && !indexed.conflicts.length) {
         const saved = await store.saveTaskSearchCache?.({ version: 2, scope, refreshedAt: requestedAt, indexTasks: indexed.indexTasks,
           readStatus: indexed.readStatus }, scope, cacheRevision);
@@ -678,14 +687,14 @@ async function searchTasks(sender, query = '', { refresh = false } = {}) {
             taskTitle: task.recordIds.some(id => replaced.get(task.destinationId)?.has(id))
               && (!task.titleSourceId || replaced.get(task.destinationId).has(task.titleSourceId)) ? '' : task.title,
             destinationId: task.destinationId, timeRepository: task.timeRepository }));
-        return { configured: true, tasks: taskCandidates([...cached, ...pending.records]),
+        return { configured: true, tasks: searchable(taskCandidates([...cached, ...pending.records])),
           readStatus: indexed.readStatus, partial: true, conflicts: [...indexed.conflicts, ...pending.conflicts],
           ...(pendingFailures.length ? { pendingProjectionUnavailable: true } : {}) };
       }
-      if (hit && await store.getTaskSearchRevision() !== cacheRevision) {
+      if (useCached && await store.getTaskSearchRevision() !== cacheRevision) {
         throw new DOMException('Task search changed during the read.', 'AbortError');
       }
-      return { configured: true, tasks: indexed.records, readStatus: indexed.readStatus,
+      return { configured: true, tasks: searchable(indexed.records), readStatus: indexed.readStatus,
         partial: indexed.partial, conflicts: indexed.conflicts };
     }
     const loaded = await loadDestinationRecords(destinations, async (destination, signal) => {
@@ -710,7 +719,7 @@ async function searchTasks(sender, query = '', { refresh = false } = {}) {
       rejectSameDestinationDuplicates: true,
     }) });
     loadCoordinator.assertCurrent(loadEpoch);
-    return { configured: true, tasks: taskCandidates(loaded.records),
+    return { configured: true, tasks: searchable(taskCandidates(loaded.records)),
       readStatus: loaded.readStatus, partial: loaded.partial, conflicts: loaded.conflicts };
   })().catch(error => {
       if (error?.code === 'all_destinations_failed'
@@ -1409,7 +1418,7 @@ async function handle(message, sender) {
     if (!monthly.entries.some(entry => entry.id === request.recordId)) {
       throw new Error('Completed entry is unavailable for task search');
     }
-    const result = await searchTasks(sender, request.query);
+    const result = await searchTasks(sender, request.query, { includeImported: true });
     const query = request.query.trim().toLowerCase();
     const matches = result.tasks.filter(task => task.destinationId === destinationId
       && typeof task.taskUrl === 'string' && !/^https?:\/\//i.test(task.taskUrl)

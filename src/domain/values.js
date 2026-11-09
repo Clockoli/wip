@@ -18,6 +18,13 @@ export function normalizeTaskUrl(value) {
   return parsed.href;
 }
 
+// A task is searchable by identity only when it is a real HTTP(S) URL.
+// Bare imported Clockify identities are still valid stored work records.
+export function isUrlTaskIdentity(value) {
+  if (typeof value !== 'string') return false;
+  try { normalizeTaskUrl(value); return true; } catch { return false; }
+}
+
 // Page-context identity only: do not rewrite stored project URLs when reading old records.
 export function parseGitHubProjectPaneIssueUrl(value) {
   let parsed;
