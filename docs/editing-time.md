@@ -8,7 +8,7 @@ Every change is saved locally first and synchronized with GitHub in the backgrou
 
 The **Add time** button in the upper right of **Top tasks** and **Activity** adds one entry or entries for multiple selected days.
 
-1. Search tracked tasks from all joined people in the connected time repositories by title or identity, including imported tasks without an HTTP(S) URL, or paste a new HTTP(S) task URL.
+1. Search tracked tasks with HTTP(S) URL identities from joined people in the connected time repositories by title or URL, or paste a new HTTP(S) task URL.
 2. Choose Start and optional End as keyboard-editable local times, followed by one native Date picker for the start day. Clicking either time field selects its entire current value for immediate replacement. Enter `1000`, Tab, `1200` for 10:00–12:00; leaving either field formats four digits as `HH:MM`.
 3. Add an optional description and choose **Add**.
 
@@ -34,7 +34,7 @@ Each selected day becomes a separate completed record with its own identity and 
 
 Clockoli builds an extension-local IndexedDB catalog from each person's Git-backed task index. After a completed record (including a Stop) synchronizes, it refreshes the other personal indexes and rebuilds the catalog without writing to their branches. A catalog hit needs no GitHub request. A miss against a complete catalog refreshed in the last minute also returns locally; older misses recheck GitHub before reporting no match. The first search on a new device builds the catalog. A repository-wide REST branch listing provides each personal branch's commit SHA: unchanged branches reuse their verified index without additional GitHub requests, while changed branches read their index pinned to the discovered commit. The IndexedDB report cache survives service-worker restarts. A task index without a title snapshot does not cause a monthly-history scan during search. Search is bounded and may show partial results when a repository cannot be read; it does not silently claim that an incomplete catalog is exhaustive.
 
-Only tasks with a nonempty title appear in cross-user suggestions. Untitled tasks and time records stay in their personal indexes and Activity, and a pasted HTTP(S) URL can still create a task without a title. Imported task suggestions show their time repository only when more than one is connected; similar-looking GitHub URLs and imported identities remain separate. While the Task field searches, it shows a spinner and **Searching tasks…**; a pasted URL remains usable if lookup fails.
+Only tasks with a valid HTTP(S) URL identity and a nonempty title appear in ordinary search suggestions, including when a cached index or pending write contains an imported identity. Untitled tasks and time records stay in their personal indexes and Activity, and a pasted HTTP(S) URL can still create a task without a title. Existing imported non-URL records remain editable and usable from their original entry or unfiltered Top tasks row; they are not offered as normal search results. While the Task field searches, it shows a spinner and **Searching tasks…**; a pasted URL remains usable if lookup fails.
 
 After Add, the dialog closes as soon as the change has been durably accepted in local extension storage, without a GitHub-saving spinner or page reload. GitHub synchronization is silent and is scheduled after 15 seconds without local changes. Known local intervals and the current timer are checked for overlap immediately.
 
@@ -65,7 +65,7 @@ If the batch cannot fit or overlaps another device's work, it stays locally stor
 **Edit time** opens the same task/date/time/optional-description form used by **Add time**, prefilled with the selected completed record, without a duplicate task-title field. It is available from Activity List and from **Edit** in Activity's Timeline or Calendar details.
 
 - Editing the same task preserves its title; selecting another task uses its title, while a newly pasted URL has no title.
-- An imported task without an HTTP(S) URL can replace the task only when it already exists in the entry's time repository. Clockoli verifies its identity against that repository before queuing the edit and again before synchronizing. An imported task from another repository cannot silently move the entry there; choose a task in the same repository or use an HTTP(S) URL.
+- Regular task search excludes imported non-URL identities. An existing imported task can still be retained when editing its own entry; the specialized GitHub entry editor can resolve a verified imported replacement from the same time repository, and Clockoli checks that identity before queuing and synchronizing. Imported identities cannot silently move an entry between repositories.
 - The one Date picker shows the entry's start day; changing it retains the two time-of-day fields. End is on that day unless its time is earlier than Start, in which case it is on the following day.
 - Editing Start moves End by the same amount, preserving the interval's exact duration (including seconds and overnight dates). Editing only End keeps Start unchanged. Moving the Date in the completed-entry form also moves the entire interval.
 - An unchanged range preserves the original timestamps, including seconds.
