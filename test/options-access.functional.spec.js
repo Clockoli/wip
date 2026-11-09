@@ -454,6 +454,7 @@ test('Copy invitation link and switching browser tabs preserve the expanded repo
     await repository.locator(':scope > summary').click();
     await repository.locator('.repository-add-teammate').click();
     const invitation = repository.locator('.teammate-instructions');
+    await expect(invitation.getByRole('button', { name: 'Send invitation to the repository' })).toBeVisible();
     await expect(invitation).toBeVisible();
     await expect(invitation).toHaveAttribute('open', '');
     await invitation.locator('.teammate-setup > summary').click();
