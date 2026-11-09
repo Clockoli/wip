@@ -471,7 +471,6 @@ test('Edit time searches the complete catalog even when its current task matches
     expect((await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'SEARCH_TASKS' && message.query === 'task')).toHaveLength(1);
     await dialog.getByRole('button', { name: /Colleague task/ }).click();
     await expect(dialog.locator('.add-time-preview')).toContainText('https://example.org/colleague-task');
-    await dialog.getByRole('button', { name: 'Cancel' }).click();
     await search.fill('Imported');
     await expect(dialog.getByRole('button', { name: /Imported conversational task/ })).toHaveCount(0);
     await dialog.getByRole('button', { name: 'Cancel' }).click();
