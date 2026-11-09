@@ -481,7 +481,7 @@ test('Team member menu closes on outside click without requesting access removal
     const row = page.locator('.time-repository').first();
     await row.locator('.repository-heading-title').click();
     const trigger = row.locator('.repository-member-actions-button').first();
-    const menu = row.locator('.repository-avatar-actions');
+    const menu = row.locator('.repository-collaborators > .repository-team-member .repository-avatar-actions');
     await trigger.click();
     await expect(trigger).toHaveAttribute('aria-expanded', 'true');
     await expect(menu).toBeVisible();
