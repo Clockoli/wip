@@ -739,7 +739,6 @@ async function loadRepositoryCollaborators(article, destination, root) {
       const details = document.createElement('details');
       details.className = isPending ? 'repository-more-members repository-invitation-more'
         : 'repository-more-members repository-collaborator-more';
-      details.title = isPending ? 'More pending invitations' : 'More collaborators';
       details.open = wasOpen;
       const summary = document.createElement('summary');
       summary.textContent = isPending ? `More pending invitations (${more.length || 'view on GitHub'})`
