@@ -37,6 +37,10 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   searchStatus.append(searchSpinner, document.createTextNode('Searching tasks…'));
   const suggestions = document.createElement('div'); suggestions.id = 'add-time-suggestions'; suggestions.className = 'add-time-suggestions';
   suggestions.setAttribute('aria-label', 'Matching tasks');
+  const searchPopup = document.createElement('div'); searchPopup.className = 'add-time-search-popup'; searchPopup.hidden = true;
+  searchPopup.append(searchStatus, suggestions);
+  const searchContainer = document.createElement('div'); searchContainer.className = 'add-time-task-search';
+  searchContainer.append(search, searchPopup);
   const dayRangeLabel = document.createElement('label'); dayRangeLabel.className = 'add-time-day-range-toggle';
   const dayRange = document.createElement('input'); dayRange.type = 'checkbox'; dayRange.id = 'add-time-day-range';
   dayRangeLabel.append(dayRange, document.createTextNode('Multiple days'));
@@ -162,7 +166,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
   const add = document.createElement('button'); add.type = 'button'; add.className = 'add-time-submit'; add.textContent = 'Add';
   actions.append(cancel, add);
-  dialog.append(close, heading, intro, taskLabel, search, searchStatus, suggestions, dayRangeLabel, times, rangeFields,
+  dialog.append(close, heading, intro, taskLabel, searchContainer, dayRangeLabel, times, rangeFields,
     hint, rangeHint, boundaryHint, descriptionFields, preview, error, actions);
   container.append(dialog);
   const saved = document.createElement('span');
@@ -197,7 +201,10 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     editEndInstant = localTimestamp(day && startTime ? dateValue(day) : dateValue(editEndInstant), endTime) || editEndInstant;
   });
   const setError = text => { error.textContent = text; error.hidden = !text; };
-  const setSearchBusy = value => { searchStatus.hidden = !value; search.setAttribute('aria-busy', String(value)); };
+  const updateSearchPopup = () => { searchPopup.hidden = searchStatus.hidden && !suggestions.childElementCount; };
+  const setSearchBusy = value => {
+    searchStatus.hidden = !value; search.setAttribute('aria-busy', String(value)); updateSearchPopup();
+  };
   const taskIdentity = () => {
     if (selected && search.value.trim() === (selected.title || selected.taskUrl)) return selected;
     try {
@@ -223,6 +230,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
       }
     }
     search.setAttribute('aria-expanded', String(suggestions.childElementCount > 0));
+    updateSearchPopup();
     preview.replaceChildren();
     const task = taskIdentity();
     preview.hidden = !task || Boolean(editing?.running);
@@ -320,6 +328,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     else { delete times.dataset.overlapBoundary; delete dialog.dataset.overlapBoundary; }
     times.setAttribute('aria-label', runningEdit ? 'Timer start' : 'Time range');
     intro.hidden = runningEdit || Boolean(boundary); taskLabel.hidden = runningEdit || Boolean(boundary);
+    searchContainer.hidden = runningEdit || Boolean(boundary);
     search.hidden = runningEdit || Boolean(boundary);
     suggestions.hidden = runningEdit || Boolean(boundary);
     start.parentElement.hidden = boundary === 'end';
