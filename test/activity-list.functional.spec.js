@@ -2368,13 +2368,15 @@ test('List, Timeline and Calendar Edit open the shared time form', async () => {
     await row.hover();
     await row.locator('.entry-edit').click();
     await dialog.getByRole('combobox', { name: 'Task' }).fill('Routines');
-    await dialog.getByRole('button', { name: /Routines — #1 dev call/ }).click();
+    await expect(dialog.getByRole('button', { name: /Routines — #1 dev call/ })).toHaveCount(0,
+      'imported non-URL identities must not appear in ordinary Edit time search');
+    await dialog.getByRole('combobox', { name: 'Task' }).fill('https://example.com/replacement');
     await dialog.getByRole('button', { name: 'Save' }).click();
     await expect(dialog).toBeHidden();
     await expect.poll(() => worker.evaluate(() => globalThis.editPayloads.length)).toBe(3);
     expect(await worker.evaluate(() => globalThis.editPayloads.at(-1))).toMatchObject({
       destinationId: 'github:1', original: { id: 'record' },
-      edits: { taskUrl: 'manticoresoftware/Routines/1-dev-call', taskTitle: 'Routines — #1 dev call' },
+      edits: { taskUrl: 'https://example.com/replacement', taskTitle: '' },
     });
     expect(errors).toEqual([]);
   } finally {
