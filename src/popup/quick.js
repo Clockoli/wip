@@ -1,13 +1,16 @@
 import { normalizeTaskUrl, normalizeStoredTaskIdentity, parseGitHubProjectPaneIssueUrl } from '../domain/values.js';
 
 const root = document.getElementById('quick-popup');
-const popupUrl = chrome.runtime.getURL('src/popup/quick.html');
 let state = { configured: null, active: null, recent: [], pendingWrites: [] };
 let currentPage = null;
 let message = '';
 let busy = false;
 let loadVersion = 0;
 let setupOpened = false;
+let descriptionDraft = null;
+let descriptionSaving = null;
+let descriptionStatus = '';
+let rendering = false;
 
 function el(tag, text, className) {
   const element = document.createElement(tag);
@@ -64,6 +67,55 @@ function taskLabel(record, className) {
   node.title = title(record);
   return node;
 }
+function activeKey(active) {
+  return active ? `${active.id || ''}:${active.startedAt || ''}:${identity(active) || ''}` : '';
+}
+function normalizedDescription(value) {
+  return String(value || '').replace(/\r\n?/g, '\n').replace(/\t/g, ' ')
+    .replace(/ {2,}/g, ' ').trim().slice(0, 2000);
+}
+function draftDescription(active = state.active) {
+  return descriptionDraft?.key === activeKey(active)
+    ? normalizedDescription(descriptionDraft.value) : normalizedDescription(active?.description);
+}
+function updateDescriptionControls() {
+  const save = root.querySelector('.quick-description-save');
+  const status = root.querySelector('.quick-description-status');
+  if (!save || !status) return;
+  const dirty = draftDescription() !== normalizedDescription(state.active?.description);
+  save.hidden = !dirty && !descriptionSaving;
+  save.disabled = Boolean(descriptionSaving) || busy || !dirty;
+  status.textContent = descriptionSaving ? 'Saving…' : descriptionStatus;
+}
+function saveDescription() {
+  if (descriptionSaving) return descriptionSaving;
+  const active = state.active;
+  const key = activeKey(active);
+  if (!active || busy || !descriptionDraft || descriptionDraft.key !== key
+      || draftDescription(active) === normalizedDescription(active.description)) return Promise.resolve();
+  descriptionStatus = '';
+  descriptionSaving = (async () => {
+    // A later keystroke while saving must not be lost.
+    while (state.active && activeKey(state.active) === key) {
+      const description = draftDescription();
+      if (description === normalizedDescription(state.active.description)) break;
+      await send({ type: 'QUEUE_ACTIVE_START_EDIT', payload: {
+        original: { id: state.active.id, startedAt: state.active.startedAt }, description,
+      } });
+      if (activeKey(state.active) !== key) break;
+      state.active = { ...state.active, description };
+    }
+    descriptionStatus = 'Saved';
+  })().catch(error => {
+    message = error?.message || 'Could not save description.';
+  }).finally(() => {
+    descriptionSaving = null;
+    updateDescriptionControls();
+    if (message) render();
+  });
+  updateDescriptionControls();
+  return descriptionSaving;
+}
 function blocked() {
   return busy || state.pendingWrites?.some(write => write.status === 'conflict');
 }
@@ -83,13 +135,17 @@ function applyState(data, { replaceRecent = true } = {}) {
   };
 }
 function render() {
+  const oldDescription = root.querySelector('.quick-description');
+  const refocusDescription = document.activeElement === oldDescription;
+  const selection = refocusDescription ? [oldDescription.selectionStart, oldDescription.selectionEnd] : null;
+  rendering = true;
   root.replaceChildren();
 
   const header = el('header', null, 'quick-header');
   const logo = el('img', null, 'quick-logo');
   logo.src = chrome.runtime.getURL('src/assets/clockoli-with-text.svg');
   logo.alt = 'Clockoli';
-  header.append(logo, el('span', 'Quick tracker', 'quick-header-caption'));
+  header.append(logo);
   root.append(header);
 
   if (state.configured === null) {
@@ -100,11 +156,6 @@ function render() {
   } else {
     const active = state.active;
     const card = el('section', null, 'quick-card');
-    const eyebrow = el('div', null, 'quick-eyebrow');
-    if (active) eyebrow.append(el('span', '', 'quick-dot'));
-    eyebrow.append(el('span', active ? 'Tracking' : 'Not tracking'));
-    card.append(eyebrow);
-
     if (active) {
       const summary = el('div', null, 'quick-active-summary');
       const copy = el('div', null, 'quick-current-name');
@@ -114,15 +165,51 @@ function render() {
       time.setAttribute('aria-label', 'Elapsed time');
       summary.append(copy, time);
       card.append(summary);
+
+      const key = activeKey(active);
+      if (descriptionDraft?.key !== key) {
+        descriptionDraft = { key, value: active.description || '' };
+        descriptionStatus = '';
+      }
+      const descriptionWrap = el('div', null, 'quick-description-wrap');
+      const description = el('textarea', null, 'quick-description');
+      description.rows = 2;
+      description.maxLength = 2000;
+      description.placeholder = 'Add description…';
+      description.setAttribute('aria-label', 'Description');
+      description.value = descriptionDraft.value;
+      description.addEventListener('input', () => {
+        if (descriptionDraft?.key !== key) return;
+        descriptionDraft.value = description.value;
+        descriptionStatus = '';
+        updateDescriptionControls();
+      });
+      description.addEventListener('keydown', event => {
+        if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
+          event.preventDefault();
+          void saveDescription();
+        }
+      });
+      description.addEventListener('blur', () => {
+        if (!rendering) void saveDescription();
+      });
+      const descriptionActions = el('div', null, 'quick-description-actions');
+      const descriptionFeedback = el('span', null, 'quick-description-status');
+      descriptionFeedback.setAttribute('role', 'status');
+      descriptionFeedback.setAttribute('aria-live', 'polite');
+      const descriptionSave = button('Save', 'quick-button quick-description-save', () => saveDescription());
+      descriptionActions.append(descriptionFeedback, descriptionSave);
+      descriptionWrap.append(description, descriptionActions);
+      card.append(descriptionWrap);
       const stop = button(busy ? 'Saving…' : 'Stop and save', 'quick-button quick-button-primary quick-button-wide', async () => {
-        await mutate({ type: 'STOP' }, 'stop');
+        await mutate({ type: 'STOP', description: draftDescription() }, 'stop');
       });
       stop.disabled = blocked();
       card.append(stop);
       if (currentPage?.taskUrl && currentPage.taskUrl !== identity(active)) {
         const switchToPage = button('Switch to this page', 'quick-button quick-switch', async () => {
           const page = await readCurrentPage();
-          if (page) await mutate({ type: 'SWITCH_TASK', ...page }, 'switch');
+          if (page) await mutate({ type: 'SWITCH_TASK', ...page, description: draftDescription() }, 'switch');
         });
         switchToPage.disabled = blocked();
         card.append(switchToPage);
@@ -141,6 +228,7 @@ function render() {
       card.append(start);
     }
     root.append(card);
+    updateDescriptionControls();
 
     const section = el('section');
     section.append(el('div', 'Recent entries', 'quick-section-heading'));
@@ -155,6 +243,7 @@ function render() {
       const play = button('▶', 'quick-play', () => mutate({
         type: 'SWITCH_TASK', timelineTask: true,
         taskUrl: identity(entry), taskTitle: title(entry),
+        ...(state.active ? { description: draftDescription() } : {}),
         ...(!identity(entry)?.startsWith('http') && entry.destinationId ? { destinationId: entry.destinationId } : {}),
         ...(entry.id && entry.destinationId && entry.entryDate
           ? { sourceEntry: { id: entry.id, destinationId: entry.destinationId, entryDate: entry.entryDate } } : {}),
@@ -177,6 +266,14 @@ function render() {
   const footer = el('footer', null, 'quick-footer');
   footer.append(button('Open Activity in a new tab ↗', 'quick-button', () => send({ type: 'OPEN_TIMES' }).catch(showError)));
   root.append(footer);
+  rendering = false;
+  if (refocusDescription && selection && state.active) {
+    const field = root.querySelector('.quick-description');
+    if (field) {
+      field.focus({ preventScroll: true });
+      field.setSelectionRange(...selection);
+    }
+  }
 }
 function showError(error) {
   message = error?.message || String(error);
@@ -219,6 +316,8 @@ async function mutate(request, kind) {
     else if (kind === 'switch') state.active = result?.active || null;
     else if (kind === 'stop') {
       state.active = null;
+      descriptionDraft = null;
+      descriptionStatus = '';
       if (result?.entry) state.recent = [{ ...result.entry, destinationId: result.destinationId }, ...state.recent];
     }
     render();

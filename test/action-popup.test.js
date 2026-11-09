@@ -127,6 +127,7 @@ test('quick popup does not load Activity, Timeline or Calendar controllers', () 
   assert.match(js, /type: 'LOAD_RECENT', menuData: true/);
   assert.match(js, /type: 'START'/);
   assert.match(js, /type: 'STOP'/);
+  assert.match(js, /type: 'QUEUE_ACTIVE_START_EDIT'/);
   assert.match(js, /type: 'SWITCH_TASK'/);
   assert.match(js, /type: 'OPEN_TIMES'/);
 });

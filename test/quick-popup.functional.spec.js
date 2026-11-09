@@ -30,8 +30,15 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     active = { id: 'restarted', taskUrl: message.taskUrl, taskTitle: message.taskTitle,
       startedAt: new Date(Date.now() - 61_000).toISOString(), description: '' };
     respond({ ok: true, data: { active } });
+  } else if (message.type === 'QUEUE_ACTIVE_START_EDIT') {
+    if (!active || active.id !== message.payload?.original?.id || active.startedAt !== message.payload.original.startedAt) {
+      respond({ ok: false, error: { message: 'Timer changed before description save.' } });
+    } else {
+      active = { ...active, description: message.payload.description };
+      respond({ ok: true, data: { operationId: 'description-edit', pending: true } });
+    }
   } else if (message.type === 'STOP') {
-    const entry = { ...active, endedAt: new Date().toISOString(), durationSeconds: 62 };
+    const entry = { ...active, description: message.description ?? active.description, endedAt: new Date().toISOString(), durationSeconds: 62 };
     active = null;
     recent.unshift(entry);
     respond({ ok: true, data: { entry, destinationId: 'github:1' } });
@@ -63,8 +70,9 @@ test('toolbar quick popup stays minimal and uses the shared tracker commands', a
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/quick.html`);
     const root = page.locator('#quick-popup');
 
-    await expect(root.getByText('Quick tracker')).toBeVisible();
-    await expect(root.getByText('Not tracking')).toBeVisible();
+    await expect(root.locator('.quick-logo')).toBeVisible();
+    await expect(root.getByText('Quick tracker', { exact: true })).toHaveCount(0);
+    await expect(root.getByText('Not tracking', { exact: true })).toHaveCount(0);
     await expect(root.getByRole('button', { name: 'Start tracking this page' })).toBeDisabled();
     await expect(root.locator('.quick-entry')).toHaveCount(2);
     await expect(root.getByRole('button', { name: 'Track again: Review PR #42' })).toBeVisible();
@@ -77,8 +85,26 @@ test('toolbar quick popup stays minimal and uses the shared tracker commands', a
     }
 
     await root.getByRole('button', { name: 'Track again: Review PR #42' }).click();
-    await expect(root.getByText('Tracking', { exact: true })).toBeVisible();
+    await expect(root.getByText('Tracking', { exact: true })).toHaveCount(0);
     await expect(root.getByRole('timer', { name: 'Elapsed time' })).toHaveText(/\d\d:\d\d:\d\d/);
+    const description = root.getByRole('textbox', { name: 'Description' });
+    await expect(description).toHaveAttribute('placeholder', 'Add description…');
+    await description.fill('Reviewed code');
+    await expect(root.getByRole('button', { name: 'Save', exact: true })).toBeVisible();
+    await description.press('Shift+Enter');
+    await description.type('and tests');
+    await expect(description).toHaveValue('Reviewed code\nand tests');
+    await description.press('Enter');
+    await expect(root.getByText('Saved', { exact: true })).toBeVisible();
+    await expect(root.getByRole('button', { name: 'Save', exact: true })).toBeHidden();
+    const edit = (await worker.evaluate(() => globalThis.quickCalls)).find(call => call.type === 'QUEUE_ACTIVE_START_EDIT');
+    expect(edit.payload).toMatchObject({ description: 'Reviewed code\nand tests',
+      original: { id: 'restarted' } });
+    await description.fill('Updated on blur');
+    await description.blur();
+    await expect.poll(async () => (await worker.evaluate(() => globalThis.quickCalls))
+      .filter(call => call.type === 'QUEUE_ACTIVE_START_EDIT').length).toBe(2);
+    await expect(root.getByText('Saved', { exact: true })).toBeVisible();
     await expect(root.getByRole('button', { name: 'Stop and save' })).toBeEnabled();
     await expect(root.getByRole('button', { name: 'Track again: Review PR #42' })).toBeDisabled();
     const calls = await worker.evaluate(() => globalThis.quickCalls);
@@ -86,10 +112,11 @@ test('toolbar quick popup stays minimal and uses the shared tracker commands', a
       taskUrl: 'https://github.com/acme/project/issues/42', timelineTask: true,
     });
     await root.getByRole('button', { name: 'Stop and save' }).click();
-    await expect(root.getByText('Not tracking')).toBeVisible();
+    await expect(root.getByText('Not tracking', { exact: true })).toHaveCount(0);
     await expect(root.locator('.quick-entry')).toHaveCount(3);
     const stop = (await worker.evaluate(() => globalThis.quickCalls)).find(call => call.type === 'STOP');
-    expect(stop).toEqual({ type: 'STOP' }); // Preserve the running description.
+    expect(stop).toEqual({ type: 'STOP', description: 'Updated on blur' });
+    expect(await worker.evaluate(() => recent[0].description)).toBe('Updated on blur');
     await page.screenshot({ path: testInfo.outputPath('quick-popup.png') });
 
     await root.getByRole('button', { name: 'Open Activity in a new tab' }).click();
