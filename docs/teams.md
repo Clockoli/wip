@@ -47,7 +47,7 @@ This distinction matters: GitHub repository access is not the same as joining Cl
 
 For each other person's row in **Team**, select the **⋯** menu and choose **Remove @user**, or **Cancel invitation for @user** for a pending invitation. Your own account has no removal action.
 
-Clockoli asks for confirmation, checks repository identity, administrator permissions, account ID and current access, then uses GitHub to remove the collaborator or cancel the invitation. Removing access does **not** delete existing time records or Git history. A failure leaves the action available for retry; a success refreshes the Team list.
+Clockoli asks for confirmation, checks repository identity, administrator permissions, account ID and current access, then uses GitHub to remove the collaborator or cancel the invitation. Feedback appears inside **Team**, next to the member list, including permission errors. After GitHub accepts a removal, Clockoli refreshes the list: if the person still appears, it explains that their access may come from an organization or GitHub team (or the change may still be propagating) and directs the administrator to **Manage GitHub access**. Removing access does **not** delete existing time records or Git history.
 
 The Team section initially displays four accounts in each category; expand **More collaborators** or **More pending invitations** to see the additional verified accounts available from GitHub. Use **Manage GitHub access** for other accounts and email-only invitations. Changes require a GitHub App connection with Administration write permission and repository-admin rights. PAT connections allow viewing verified repository collaborators, but do not expose invitation or removal controls.
 
