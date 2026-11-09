@@ -225,6 +225,64 @@ test('GitHub client lists report text files from one tree and reads immutable bl
   assert.equal(calls.every(call => call.options.cache === 'no-store'), true);
 });
 
+test('GitHub REST branch discovery returns stable commit SHAs without changing the name-only API', async () => {
+  const sha = 'a'.repeat(40), calls = [];
+  const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'team', fetchImpl: async url => {
+    calls.push(url);
+    return response(200, [
+      { ref: 'refs/heads/clockoli/users/12', object: { type: 'commit', sha } },
+      { ref: 'refs/heads/other', object: { type: 'commit', sha } },
+    ]);
+  } });
+  assert.deepEqual(await client.listBranchesWithSha('clockoli/users/'),
+    [{ branch: 'clockoli/users/12', headSha: sha }]);
+  assert.deepEqual(await client.listBranches('clockoli/users/'), ['clockoli/users/12']);
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every(url => url.includes('/git/matching-refs/heads/clockoli/users')));
+  const invalid = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'team',
+    fetchImpl: async () => response(200, [{ ref: 'refs/heads/clockoli/users/12',
+      object: { type: 'commit', sha: 'not-a-sha' } }]) });
+  await assert.rejects(invalid.listBranchesWithSha('clockoli/users/'),
+    error => error.code === 'invalid_github_response');
+});
+
+test('GitHub task index reads are pinned to the discovered commit SHA', async () => {
+  const head = 'a'.repeat(40), fileSha = 'b'.repeat(40), calls = [];
+  const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'team',
+    branch: 'clockoli/users/12', fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return response(200, { type: 'file', sha: fileSha, encoding: 'base64',
+        content: btoa('{"version":1}'), size: 13 });
+    } });
+  assert.deepEqual(await client.getTextAtCommit('.clockoli/tasks.json', head),
+    { path: '.clockoli/tasks.json', sha: fileSha, text: '{"version":1}' });
+  assert.equal(calls.length, 1, 'ordinary task index reads need only one REST request');
+  assert.ok(calls[0].url.endsWith(`/contents/.clockoli/tasks.json?ref=${head}`));
+  assert.equal(calls[0].options.cache, 'no-store');
+});
+
+test('large task indexes fall back to pinned Git blobs when Contents does not inline them', async () => {
+  const head = 'a'.repeat(40), treeSha = 'b'.repeat(40), fileSha = 'c'.repeat(40), calls = [];
+  const client = new GitHubClient({ token: 'secret', owner: 'acme', repo: 'team',
+    fetchImpl: async url => {
+      calls.push(url);
+      if (url.includes('/contents/.clockoli/tasks.json')) return response(200,
+        { type: 'file', sha: fileSha, encoding: 'none', size: 2_000_000 });
+      if (url.endsWith(`/git/commits/${head}`)) return response(200, { tree: { sha: treeSha } });
+      if (url.includes('/git/trees/')) return response(200, { tree: [
+        { path: '.clockoli/tasks.json', type: 'blob', sha: fileSha },
+      ] });
+      if (url.endsWith(`/git/blobs/${fileSha}`)) return response(200,
+        { encoding: 'base64', content: btoa('{"version":1}'), truncated: false });
+      throw new Error(`Unexpected ${url}`);
+    } });
+  assert.deepEqual(await client.getTextAtCommit('.clockoli/tasks.json', head),
+    { path: '.clockoli/tasks.json', sha: fileSha, text: '{"version":1}' });
+  assert.equal(calls.length, 4);
+  assert.ok(calls[0].endsWith(`/contents/.clockoli/tasks.json?ref=${head}`));
+  assert.ok(calls[1].endsWith(`/git/commits/${head}`));
+});
+
 test('GitHub client returns branch ETags and accepts a conditional 304 snapshot', async () => {
   const sha = 'a'.repeat(40), calls = [];
   const fetchImpl = async (url, options = {}) => {
