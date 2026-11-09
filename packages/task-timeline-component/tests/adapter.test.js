@@ -176,3 +176,8 @@ test('compact activity entry details always offer description editing and visibl
   assert.match(source, /button\.title = 'Delete time entry'/);
   assert.match(source, /details\.contains\(timeline\.shadow\.activeElement\)\) return/);
 });
+
+
+test('timeline entry details no longer depend on a GitHub overlay container', () => {
+  assert.doesNotMatch(source, /full-width-popup/);
+});
