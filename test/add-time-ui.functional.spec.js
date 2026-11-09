@@ -592,12 +592,19 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       expect([beforeOpen, await localTime()].map(value => value.slice(11))).toContain(await startTime.inputValue());
       await expect(endTime).toHaveValue('');
       const search = dialog.getByRole('combobox', { name: 'Task' });
+      const layout = () => dialog.evaluate(element => {
+        const window = element.getBoundingClientRect();
+        const fields = element.querySelector('.add-time-times').getBoundingClientRect();
+        return { width: window.width, height: window.height, top: window.top, fieldsTop: fields.top };
+      });
+      const originalLayout = await layout();
       await worker.evaluate(() => { globalThis.deferSearch = true; });
       await search.fill('Existing');
       const searching = dialog.getByRole('status', { name: 'Searching tasks' });
       await expect(searching).toBeVisible();
       await expect(search).toHaveAttribute('aria-busy', 'true');
       await expect(dialog.locator('.add-time-search-spinner')).toBeVisible();
+      expect(await layout()).toEqual(originalLayout, 'search spinner must not resize or move the dialog');
       await expect.poll(() => worker.evaluate(() => globalThis.pendingSearchResponse?.data?.readStatus?.length)).toBe(1);
       await worker.evaluate(() => {
         globalThis.deferSearch = false;
@@ -608,6 +615,15 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       await expect(searching).toBeHidden();
       await expect(search).toHaveAttribute('aria-busy', 'false');
       await expect(dialog.getByRole('button', { name: /Existing task/ })).toBeVisible();
+      expect(await layout()).toEqual(originalLayout, 'suggestions must overlay the form instead of changing its height');
+      const overlay = await dialog.evaluate(element => {
+        const field = element.querySelector('#add-time-task').getBoundingClientRect();
+        const popup = element.querySelector('.add-time-search-popup').getBoundingClientRect();
+        const nextField = element.querySelector('.add-time-day-range-toggle').getBoundingClientRect();
+        return { fieldBottom: field.bottom, popupTop: popup.top, popupBottom: popup.bottom, nextFieldTop: nextField.top };
+      });
+      expect(overlay.popupTop).toBeGreaterThanOrEqual(overlay.fieldBottom);
+      expect(overlay.popupBottom).toBeGreaterThan(overlay.nextFieldTop, 'menu must float over following controls');
       await search.fill('Imported');
       await expect(dialog.getByRole('button', { name: /Imported conversational task/ })).not.toContainText('team/time');
       await search.fill('Existing');
