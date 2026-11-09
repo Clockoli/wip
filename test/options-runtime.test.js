@@ -2816,7 +2816,7 @@ test('labeled invite action checks permissions before revealing the repository-s
   const second = rows.find(row => row.dataset.destinationId === 'github:21');
   const add = second.querySelector('.repository-add-teammate');
   assert.equal(add.tagName, 'button');
-  assert.match(add.attributes['aria-label'], /add.*acme\/other/i);
+  assert.match(add.attributes['aria-label'], /invite.*acme\/other/i);
   let prevented = false, stopped = false;
   await add.listeners.click({ preventDefault() { prevented = true; }, stopPropagation() { stopped = true; } });
   assert.equal(prevented, true); assert.equal(stopped, true);
