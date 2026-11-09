@@ -53,7 +53,9 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     return true;
   }
   else if (message.type === 'LOAD_TASKS') respond({ ok: true, data: { configured: true, tasks: [
-    { taskUrl: '${taskUrl}', title: 'Existing task', totalSeconds: 3600, sessionCount: 1, destinationIds: ['github:1'] }
+    { taskUrl: '${taskUrl}', title: 'Existing task', totalSeconds: 3600, sessionCount: 1, destinationIds: ['github:1'] },
+    { taskUrl: 'acme/project/imported', title: 'Imported conversational task',
+      totalSeconds: 60, sessionCount: 1, destinationId: 'github:2', timeRepository: 'team/time' }
   ], active: globalThis.topActive, pendingWrites: [] } });
   else if (message.type === 'START') respond({ ok: true, data: { taskUrl: message.taskUrl, startedAt: new Date().toISOString(), destinationId: message.destinationId || 'github:1' } });
   else respond({ ok: false, error: { message: 'Unexpected request: ' + message.type } });
@@ -152,8 +154,8 @@ test('Add time selects individual calendar days with required daily hours on Act
       if (surface === 'times') {
         await page.setViewportSize({ width: 390, height: 700 });
         await page.locator('#add-time-button').click();
-        await dialog.getByRole('combobox', { name: 'Task' }).fill('Imported');
-        await dialog.getByRole('button', { name: /Imported conversational task/ }).click();
+        await dialog.getByRole('combobox', { name: 'Task' }).fill('Existing');
+        await dialog.getByRole('button', { name: /Existing task/ }).click();
         await dialog.getByLabel('Multiple days').check();
         const mobileLayout = await dialog.evaluate(element => {
           const calendar = element.querySelector('.add-time-calendar').getBoundingClientRect();
@@ -176,7 +178,8 @@ test('Add time selects individual calendar days with required daily hours on Act
         await dialog.getByRole('button', { name: 'Add', exact: true }).click();
         await expect(dialog).toBeHidden();
         sent = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_DAY_RANGE');
-        expect(sent.at(-1)).toMatchObject({ taskUrl: 'acme/project/imported', destinationId: 'github:2', durationSeconds: 28800 });
+        expect(sent.at(-1)).toMatchObject({ taskUrl, durationSeconds: 28800 });
+        expect(sent.at(-1)).not.toHaveProperty('destinationId');
       }
       await page.close();
     }
@@ -469,15 +472,18 @@ test('Edit time searches the complete catalog even when its current task matches
     await dialog.getByRole('button', { name: /Colleague task/ }).click();
     await expect(dialog.locator('.add-time-preview')).toContainText('https://example.org/colleague-task');
     await dialog.getByRole('button', { name: 'Cancel' }).click();
-    await page.evaluate(taskUrl => {
+    await search.fill('Imported');
+    await expect(dialog.getByRole('button', { name: /Imported conversational task/ })).toHaveCount(0);
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await page.evaluate(() => {
       globalThis.testImportedEdit = null;
-      globalThis.ClockoliTimeEntryForm.openEdit({ id: 'synthetic', taskUrl,
-        taskTitle: 'Existing task', destinationId: 'github:2', startedAt: '2026-10-18T09:00:00.000Z',
+      globalThis.ClockoliTimeEntryForm.openEdit({ id: 'synthetic', taskUrl: 'acme/project/imported',
+        taskTitle: 'Imported conversational task', destinationId: 'github:2',
+        startedAt: '2026-10-18T09:00:00.000Z',
         endedAt: '2026-10-18T10:00:00.000Z', description: '' },
       value => { globalThis.testImportedEdit = value; });
-    }, taskUrl);
-    await search.fill('Imported');
-    await dialog.getByRole('button', { name: /Imported conversational task/ }).click();
+    });
+    await expect(search).toHaveValue('Imported conversational task');
     await dialog.getByRole('button', { name: 'Save' }).click();
     expect(await page.evaluate(() => globalThis.testImportedEdit)).toMatchObject({
       taskUrl: 'acme/project/imported', taskTitle: 'Imported conversational task', destinationId: 'github:2',
@@ -548,6 +554,9 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
           .toBe(before);
         await page.getByRole('textbox', { name: 'Filter tracked tasks' }).fill('Imported');
         const importedRow = page.locator('.task-row').filter({ hasText: 'Imported conversational task' });
+        await expect(importedRow).toHaveCount(0, 'non-URL task IDs must not appear in filtered Top tasks');
+        await page.getByRole('textbox', { name: 'Filter tracked tasks' }).fill('');
+        await expect(importedRow).toBeVisible();
         await importedRow.getByRole('button', { name: 'Add time' }).click();
         await expect(prefilled.getByRole('combobox', { name: 'Task' })).toHaveValue('Imported conversational task');
         await expect(prefilled.locator('.add-time-preview')).toContainText('acme/project/imported');
@@ -626,7 +635,7 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       expect(overlay.popupTop).toBeGreaterThanOrEqual(overlay.fieldBottom);
       expect(overlay.popupBottom).toBeGreaterThan(overlay.nextFieldTop, 'menu must float over following controls');
       await search.fill('Imported');
-      await expect(dialog.getByRole('button', { name: /Imported conversational task/ })).not.toContainText('team/time');
+      await expect(dialog.getByRole('button', { name: /Imported conversational task/ })).toHaveCount(0);
       await search.fill('Existing');
       await dialog.getByRole('button', { name: /Existing task/ }).click();
       await expect(dialog.locator('.add-time-preview')).toContainText(taskUrl);
@@ -647,8 +656,10 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       await add.click();
       expect((await localTime()).slice(11)).toBe(await startTime.inputValue());
       await search.fill('conversat');
-      await dialog.getByRole('button', { name: /Imported conversational task/ }).click();
-      await expect(dialog.locator('.add-time-preview')).toContainText('acme/project/imported');
+      await expect(dialog.getByRole('button', { name: /Imported conversational task/ })).toHaveCount(0);
+      await search.fill('Colleague');
+      await dialog.getByRole('button', { name: /Colleague task/ }).click();
+      await expect(dialog.locator('.add-time-preview')).toContainText('https://example.org/colleague-task');
       await worker.evaluate(() => { globalThis.deferAdd = true; });
       const importedBefore = await page.evaluate(() => Date.now());
       await dialog.getByRole('button', { name: 'Add', exact: true }).click();
@@ -664,7 +675,8 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       });
       await expect(dialog).not.toBeVisible();
       let imported = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME').at(-1);
-      expect(imported).toEqual({ type: 'ADD_TIME', taskUrl: 'acme/project/imported', taskTitle: 'Imported conversational task', destinationId: 'github:2', startedAt: expect.any(String), endedAt: null, description: '' });
+      expect(imported).toEqual({ type: 'ADD_TIME', taskUrl: 'https://example.org/colleague-task',
+        taskTitle: 'Colleague task', startedAt: expect.any(String), endedAt: null, description: '' });
       expect(new Date(imported.startedAt).getTime()).toBeGreaterThanOrEqual(importedBefore);
       expect(new Date(imported.startedAt).getTime()).toBeLessThanOrEqual(importedAfter);
       await add.click();
@@ -814,7 +826,8 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       await worker.evaluate(() => { globalThis.searchRepositories = ['team/time', 'another/time']; });
       await add.click();
       await search.fill('Imported');
-      await expect(dialog.getByRole('button', { name: /Imported conversational task/ })).toContainText('team/time');
+      await expect(dialog.getByRole('button', { name: /Imported conversational task/ })).toHaveCount(0,
+        'imported IDs must remain hidden regardless of the number of time repositories');
       await page.close();
     }
     expect(errors).toEqual([]);
