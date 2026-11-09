@@ -359,19 +359,21 @@ function renderTeammatePicker(details, destination, article) {
     const { login, id, name } = selected;
     if (!window.confirm(`Invite @${login}${name ? ` (${name})` : ''} to ${destinationLabel(destination)}? They will be able to read the team's tracked time and write to the GitHub repository.`)) return;
     invite.disabled = true; feedback.textContent = 'Checking GitHub repository access…';
+    let completed = false;
     try {
       const result = await send({ type: 'INVITE_REPOSITORY_USER', payload: { destinationId: destination.id, login, userId: id } });
       feedback.textContent = result.status === 'invited' ? `GitHub invitation sent to @${result.login}. They must accept it on GitHub before joining Clockoli.`
         : result.status === 'already_invited' ? `@${result.login} already has a pending GitHub invitation.`
           : result.status === 'read_only_access' ? `@${result.login} has read-only access. Grant write access on GitHub before they join Clockoli.`
           : `@${result.login} already has repository access.`;
-      feedback.className = 'teammate-feedback form-feedback success';
+      feedback.className = result.status === 'read_only_access' ? 'teammate-feedback form-feedback error' : 'teammate-feedback form-feedback success';
+      completed = true;
       if (result.status === 'invited' || result.status === 'already_invited') {
         await loadRepositoryCollaborators(article, destination, $('time-repository-list'));
       }
     } catch (error) {
       feedback.textContent = error.message; feedback.className = 'teammate-feedback form-feedback error';
-    } finally { invite.disabled = selected?.id !== id; }
+    } finally { invite.disabled = completed || selected?.id !== id; }
   });
 }
 
@@ -398,14 +400,14 @@ function repositoryMetadata(destination) {
   return metadata;
 }
 
-function renderTeammateInstructions(container, destination) {
+function renderTeammateInstructions(container, destination, article) {
   const details = document.createElement('details'); details.className = 'teammate-instructions';
   const summary = document.createElement('summary'); summary.textContent = 'Invite teammate';
   details.hidden = true;
   const intro = document.createElement('p'); intro.className = 'teammate-intro';
   intro.textContent = 'Choose a GitHub user. Clockoli checks their access and sends an invitation only if one is needed.';
   details.append(summary, intro);
-  renderTeammatePicker(details, destination, container);
+  renderTeammatePicker(details, destination, article);
   const invitationUrl = clockoliInvitationLink(`${destination.owner}/${destination.repo}`);
   if (invitationUrl) {
     const actions = document.createElement('div'); actions.className = 'teammate-invitation-link';
@@ -556,7 +558,7 @@ function renderDestinationCard(destination, isDefault) {
   disclosure.append(chevron); headingTitle.append(disclosure, title);
   const people = document.createElement('div'); people.className = 'repository-people';
   const collaborators = document.createElement('div'); collaborators.className = 'repository-collaborators';
-  headingMain.append(headingTitle, people);
+  headingMain.append(headingTitle);
   if (destination.initialized !== false && state?.auth?.mode === 'github_app'
       && /^github:[1-9]\d*$/.test(destination.id || '') && Number.isSafeInteger(destination.installationId)) {
     const add = document.createElement('button'); add.type = 'button'; add.className = 'repository-add-teammate';
@@ -583,7 +585,7 @@ function renderDestinationCard(destination, isDefault) {
         instructions.querySelector('.teammate-search').focus();
       } catch (error) {
         instructions.hidden = true; instructions.open = false;
-        feedback.textContent = `${error.message} Use Manage GitHub access above to update permissions.`;
+        feedback.textContent = `${error.message} Check the repository and Clockoli App permissions on GitHub.`;
         feedback.className = 'repository-invite-feedback form-feedback error';
       } finally { add.disabled = false; }
     });
@@ -625,13 +627,15 @@ function renderDestinationCard(destination, isDefault) {
   const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-destination'; remove.textContent = 'Remove from Clockoli'; actions.append(remove);
   article.append(actions, feedback);
   const team = document.createElement('section'); team.className = 'repository-team';
+  const teamHeading = document.createElement('div'); teamHeading.className = 'repository-team-heading';
   const teamTitle = document.createElement('h4'); teamTitle.textContent = 'Team';
+  teamHeading.append(teamTitle, people);
   const teamNote = document.createElement('p'); teamNote.className = 'help';
   teamNote.textContent = 'GitHub access determines who can read time records. Each person sets up Clockoli separately.';
   const inviteFeedback = document.createElement('p'); inviteFeedback.className = 'repository-invite-feedback form-feedback';
   inviteFeedback.setAttribute('role', 'status'); inviteFeedback.setAttribute('aria-live', 'polite');
-  team.append(teamTitle, teamNote, inviteFeedback, collaborators);
-  if (destination.initialized !== false) renderTeammateInstructions(team, destination);
+  team.append(teamHeading, teamNote, inviteFeedback, collaborators);
+  if (destination.initialized !== false) renderTeammateInstructions(team, destination, article);
   const how = document.createElement('details'); how.className = 'repository-team-help';
   const howTitle = document.createElement('summary'); howTitle.textContent = 'How team access works';
   const howText = document.createElement('p'); howText.className = 'help';
