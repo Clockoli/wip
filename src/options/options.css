@@ -124,6 +124,7 @@ select{appearance:none;padding-right:32px;background-image:url("data:image/svg+x
 .teammate-picker .teammate-feedback{margin:8px 0}
 .teammate-invitation-link{margin-top:16px;padding-top:12px;border-top:1px solid var(--borderColor-muted)}
 .teammate-invitation-link .form-feedback{margin:8px 0}
+.teammate-invitation-message-fallback{display:block;width:100%;min-height:12em;max-height:24em;margin:8px 0;padding:8px 12px;resize:vertical;border:1px solid var(--control-borderColor-rest);border-radius:6px;background:var(--control-bgColor-rest);color:var(--control-fgColor-rest);font:var(--text-body-shorthand-small)}
 .repository-team .repository-manage-feedback:not(:empty){margin:12px 0;padding:8px 12px;border-left:3px solid var(--borderColor-default);background:var(--bgColor-default)}
 .repository-team .repository-manage-feedback.success{border-left-color:var(--fgColor-open)}
 .repository-team .repository-manage-feedback.warning{border-left-color:var(--fgColor-attention,#9a6700)}
