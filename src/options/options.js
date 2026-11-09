@@ -311,7 +311,7 @@ function renderTeammatePicker(details, destination, article) {
   input.placeholder = 'Search GitHub users'; input.autocomplete = 'off';
   const choices = document.createElement('div'); choices.className = 'teammate-choices';
   const invite = document.createElement('button'); invite.type = 'button'; invite.className = 'invite-teammate secondary';
-  invite.textContent = 'Send invitation'; invite.disabled = true;
+  invite.textContent = 'Send invitation to the repository'; invite.disabled = true;
   const feedback = document.createElement('p'); feedback.className = 'teammate-feedback form-feedback';
   feedback.setAttribute('role', 'status'); feedback.setAttribute('aria-live', 'polite');
   label.append(input); panel.append(label, choices, feedback, invite); details.append(panel);
