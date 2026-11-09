@@ -232,7 +232,6 @@ function render() {
       card.append(start);
     }
     content.append(card);
-    updateDescriptionControls();
 
     const section = el('section');
     section.append(el('div', 'Recent entries', 'quick-section-heading'));
@@ -269,6 +268,7 @@ function render() {
   }
   root.append(content);
   content.scrollTop = scrollTop;
+  updateDescriptionControls();
   const footer = el('footer', null, 'quick-footer');
   footer.append(button('Open Activity in a new tab ↗', 'quick-button', () => send({ type: 'OPEN_TIMES' }).catch(showError)));
   root.append(footer);

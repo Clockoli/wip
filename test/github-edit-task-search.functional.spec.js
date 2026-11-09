@@ -7,7 +7,7 @@ const root = new URL('..', import.meta.url);
 const workerSource = `
 globalThis.opens = [];
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
-  if (message.type === 'OPEN_TIMES') {
+  if (message.type === 'OPEN_PREFERRED_SURFACE') {
     globalThis.opens.push({ senderUrl: sender.url, sourceUrl: sender.tab?.url, sourceTitle: sender.tab?.title });
     void (async () => {
       const url = chrome.runtime.getURL('src/times/times.html');
@@ -32,7 +32,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
 });
 `;
 
-test('GitHub Clockoli icon opens or focuses Activity in another tab without an overlay', async () => {
+test('GitHub Clockoli icon uses the tab-mode launcher without an overlay', async () => {
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-github-launch-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-github-launch-profile-'));
   let context;
