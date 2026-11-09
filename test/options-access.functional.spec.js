@@ -78,8 +78,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         { taskUrl: 'https://github.com/acme/app/issues/6', title: 'Tracked issue', destinationIds: ['github:20'] },
       ], currentUsers: { 'github:20': 'octocat' }, availableUsers: ['octocat'],
     },
+    CHECK_REPOSITORY_INVITE_ACCESS: { canInvite: true },
     LOAD_REPOSITORY_COLLABORATORS: {
       users: [{ id: 42, login: 'Member', avatarUrl: null }], hasMore: true,
+      moreUsers: [{ id: 44, login: 'OtherMember', avatarUrl: null }],
       avatarUsers: [{ login: 'Member', avatarUrl: null },
         { login: 'octocat', avatarUrl: 'https://avatars.githubusercontent.com/u/43?v=4' }],
       pendingUsers: [], pendingHasMore: false,
@@ -429,6 +431,46 @@ test('repository field checks only on explicit Check or Enter, with visible acti
     await expect(status).toHaveText('Checked. Ready, but not connected yet. Select "Connect repository" below to start using it.');
     expect(await worker.evaluate(() => globalThis.requests.filter(type => type === 'INSPECT_REPOSITORY').length)).toBe(2);
     expect(errors).toEqual([]);
+  } finally { await closeOptions(fixture); }
+});
+
+test('Copy invitation link and switching browser tabs preserve the expanded repository and teammate controls', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, context } = fixture;
+    const repository = page.locator('.time-repository').first();
+    await repository.locator(':scope > summary').click();
+    await repository.locator('.repository-add-teammate').click();
+    const invitation = repository.locator('.teammate-instructions');
+    await expect(invitation).toBeVisible();
+    await expect(invitation).toHaveAttribute('open', '');
+    await invitation.locator('.teammate-setup > summary').click();
+    await invitation.locator('.teammate-invitation-link button').click();
+    await expect(invitation.locator('.teammate-invitation-link .form-feedback')).not.toBeEmpty();
+    await expect(repository).toHaveAttribute('open', '');
+    await expect(invitation).toHaveAttribute('open', '');
+    const other = await context.newPage();
+    await other.goto('about:blank');
+    await page.bringToFront();
+    await expect(repository).toHaveAttribute('open', '');
+    await expect(invitation).toBeVisible();
+    await expect(invitation.locator('.teammate-setup')).toHaveAttribute('open', '');
+    await other.close();
+  } finally { await closeOptions(fixture); }
+});
+
+test('More collaborators expands the additional GitHub accounts in Settings', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page } = fixture;
+    const repository = page.locator('.time-repository').first();
+    await repository.locator(':scope > summary').click();
+    const more = repository.locator('.repository-collaborator-more');
+    await expect(more.locator('summary')).toContainText('More collaborators');
+    await more.locator('summary').click();
+    await expect(more).toHaveAttribute('open', '');
+    await expect(more.locator('.repository-team-member-identity strong')).toHaveText('@OtherMember');
+    await expect(more.locator('.repository-member-actions-button')).toHaveCount(1);
   } finally { await closeOptions(fixture); }
 });
 
