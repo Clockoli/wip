@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { mergeTaskCatalogIndexes, taskCandidates } from '../src/services/task-catalog.js';
+import { isUrlTaskIdentity } from '../src/domain/values.js';
 import { loadDestinationRecords, mergeDestinationRecords } from '../src/services/reports.js';
 import { assertMessageAllowed, entryTaskSearchForSender } from '../src/background/message-policy.js';
 
@@ -72,6 +73,16 @@ test('task search is extension-only and rejects input before reading other users
   }
   await assert.rejects(context.handle({ type: 'SEARCH_TASKS', query: 'private' }, content), /not allowed/i);
   assert.deepEqual(JSON.parse(JSON.stringify(await context.handle({ type: 'SEARCH_TASKS', query: 'private' }, sender))), { tasks: [] });
+});
+
+test('task search accepts HTTP(S) URL identities but not imported or malformed IDs', () => {
+  for (const id of ['https://github.com/acme/repo/issues/123', 'https://example.com/task', 'http://example.com/']) {
+    assert.equal(isUrlTaskIdentity(id), true, id);
+  }
+  for (const id of ['acme/project/imported', '123', '', null, 'javascript:alert(1)',
+    'https://', 'https://user:password@example.com/task']) {
+    assert.equal(isUrlTaskIdentity(id), false, String(id));
+  }
 });
 
 test('catalog merges users by canonical URL but retains imported destination identity', () => {
@@ -193,22 +204,33 @@ test('search checks a local unified index first and refreshes all users on a mis
       getTaskSearchCache: async () => saved, saveTaskSearchCache: async value => { saved = value; return true; } },
     configuredSnapshot: async () => ({ auth: { githubLogin: 'alice' }, generation: 1, authGeneration: 2 }),
     selectReadDestinations: () => [destination], loadDestinationRecords, mergeDestinationRecords,
-    mergeTaskCatalogIndexes, taskCandidates, githubForConfig: () => destination,
+    mergeTaskCatalogIndexes, taskCandidates, isUrlTaskIdentity, githubForConfig: () => destination,
     ReportService: class { async loadRepositoryTaskCatalog() {
       reads++;
-      return { tasks: [{ taskUrl: 'https://example.org/colleague', title: 'Colleague task',
-        recordIds: ['bob-1'] }, ...(newTask ? [{ taskUrl: 'https://example.org/new', title: 'New task',
-          recordIds: ['bob-2'] }] : [])], recordIds: newTask ? ['bob-1', 'bob-2'] : ['bob-1'] };
+      return { tasks: [
+        { taskUrl: 'https://example.org/colleague', title: 'Colleague task', recordIds: ['bob-1'] },
+        { taskUrl: 'acme/project/imported', title: 'Imported task', recordIds: ['bob-import'] },
+        ...(newTask ? [{ taskUrl: 'https://example.org/new', title: 'New task', recordIds: ['bob-2'] }] : []),
+      ], recordIds: newTask ? ['bob-1', 'bob-import', 'bob-2'] : ['bob-1', 'bob-import'] };
     } },
   });
   vm.runInContext(worker.slice(start, end), context);
   const first = await context.searchTasks(sender, 'colleague');
   assert.equal(reads, 1, 'first search builds a complete local snapshot');
   assert.equal(saved.version, 2, 'the new catalog must not reuse title-enriched snapshots from the old format');
-  assert.equal(first.tasks[0].title, 'Colleague task');
+  assert.deepEqual(first.tasks.map(task => task.taskUrl), ['https://example.org/colleague']);
+  assert.equal(saved.indexTasks.some(task => task.taskUrl === 'acme/project/imported'), true,
+    'keep imported identities internally for verified historical edits');
   const cached = await context.searchTasks(sender, 'colleague');
   assert.equal(reads, 1, 'a hit after a worker restart must not touch GitHub');
   assert.equal(cached.tasks[0].title, 'Colleague task');
+  const hidden = await context.searchTasks(sender, 'Imported task');
+  assert.deepEqual(hidden.tasks.map(task => task.taskUrl), ['https://example.org/colleague'],
+    'normal search excludes imported identities even when they match the query');
+  const historical = await context.searchTasks(sender, 'Imported task', { includeImported: true });
+  assert.equal(historical.tasks.some(task => task.taskUrl === 'acme/project/imported'), true,
+    'scoped historical entry editing can still resolve verified imported identities');
+  assert.equal(reads, 1, 'filtered cache hits and misses avoid repeated GitHub reads');
   newTask = true;
   const missing = await context.searchTasks(sender, 'new task');
   assert.equal(reads, 1, 'a recent complete catalog also caches misses during typing');
@@ -225,13 +247,19 @@ test('search checks a local unified index first and refreshes all users on a mis
     destinationStates: { entries: { 'github:1': { pendingWrites: [{ id: 'queued' }] } } },
   });
   context.trackerForDestination = async () => ({ projectActivityRecords: async () => ({
-    records: [{ id: 'queued', taskUrl: 'https://example.org/pending', taskTitle: 'Pending task',
-      startedAt: '2026-11-09T10:00:00Z' }], replacedRecordIds: [],
+    records: [
+      { id: 'queued', taskUrl: 'https://example.org/pending', taskTitle: 'Pending task',
+        startedAt: '2026-11-09T10:00:00Z' },
+      { id: 'queued-import', taskUrl: 'acme/project/pending', taskTitle: 'Imported pending',
+        startedAt: '2026-11-09T10:00:00Z' },
+    ], replacedRecordIds: [],
   }) });
   const pending = await context.searchTasks(sender, 'colleague');
   assert.equal(reads, 2, 'pending local work must not force another GitHub scan on a cached hit');
   assert.equal(pending.partial, true);
   assert.equal(pending.tasks.some(task => task.title === 'Pending task'), true);
+  assert.equal(pending.tasks.some(task => task.taskUrl === 'acme/project/pending'), false,
+    'an imported task from local pending writes must not appear in search');
   const snapshot = saved;
   context.store.getTaskSearchCache = async () => null;
   context.store.isTaskSearchDirty = async () => true;
@@ -249,7 +277,7 @@ test('exact search fallback detects a within-destination collision before the pe
       isTaskSearchDirty: async () => false, getTrackingSnapshot: async () => ({ destinationStates: { entries: {} } }) },
     configuredSnapshot: async () => ({ auth: { githubLogin: 'alice' } }),
     selectReadDestinations: () => destinations, githubForConfig: destination => destination,
-    mergeTaskCatalogIndexes, taskCandidates, loadDestinationRecords, mergeDestinationRecords,
+    mergeTaskCatalogIndexes, taskCandidates, isUrlTaskIdentity, loadDestinationRecords, mergeDestinationRecords,
     trackerForDestination: async () => ({ projectActivityRecords: async records => ({
       records: [...new Map(records.map(record => [record.id, record])).values()],
     }) }),
@@ -289,7 +317,7 @@ test('worker searches verified user branches across destinations and reports par
       getTrackingSnapshot: async () => ({ destinationStates: { entries: {} } }) },
     configuredSnapshot: async () => ({ auth: { githubLogin: 'alice' } }),
     selectReadDestinations: () => [destinationA, destinationB],
-    loadDestinationRecords, mergeDestinationRecords, mergeTaskCatalogIndexes, taskCandidates,
+    loadDestinationRecords, mergeDestinationRecords, mergeTaskCatalogIndexes, taskCandidates, isUrlTaskIdentity,
     githubForConfig: destination => destination,
     trackerForDestination: async () => ({ projectActivityRecords: async records => ({ records }) }),
     ReportService: class { constructor({ github, cache, concurrency }) {
