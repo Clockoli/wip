@@ -91,7 +91,7 @@ test('Activity has three compact metrics without Daily average and an icon view 
   assert.match(read('src/times/times.css'), /\.activity-overview-layout\{[^}]*grid-template-columns:minmax\(0,1fr\) minmax\(0,7fr\)/);
   assert.match(read('src/times/times.css'), /#activity-summary \.activity-weekly-cards\{display:grid;grid-template-columns:1fr/);
   assert.match(read('src/times/times.html'), /class="activity-overview-layout"[\s\S]*id="activity-summary"[\s\S]*id="activity-running-status"/);
-  assert.match(ui, /\[shadow, fullWidthPopupShadow, timesMode \? document\.getElementById\?\.\('activity-summary'\) : null\]/);
+  assert.match(ui, /\[shadow, timesMode \? document\.getElementById\?\.\('activity-summary'\) : null\]/);
   assert.match(ui, /viewHost\.replaceChildren\(views\)/);
   assert.match(read('src/times/times.html'), /id="activity-view-switcher"[\s\S]*class="page-theme-toggle"/);
   assert.match(read('src/ui/theme.js'), /group\.append\(brand, control\)/);
