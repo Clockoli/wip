@@ -1435,7 +1435,7 @@ test('Activity Timeline and Calendar edit a running timer start without exposing
     const dialog = page.getByRole('dialog', { name: 'Edit timer start' });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByLabel('Start', { exact: true })).toBeVisible();
-    await expect(dialog.getByLabel('Date', { exact: true })).toBeVisible();
+    await expect(dialog.getByLabel('Start date', { exact: true })).toBeVisible();
     await expect(dialog.getByLabel('End (optional)')).toBeHidden();
     await expect(dialog.getByLabel('Description (optional)')).toBeHidden();
     await worker.evaluate(() => { globalThis.deferActiveEdit = true; });
@@ -2224,7 +2224,7 @@ test('List, Timeline and Calendar Edit open the shared time form', async () => {
       };
       return range.map(format);
     }, originalRange);
-    await expect(dialog.getByLabel('Date', { exact: true })).toHaveValue(visibleRange[0].slice(0, 10));
+    await expect(dialog.getByLabel('Start date', { exact: true })).toHaveValue(visibleRange[0].slice(0, 10));
     await expect(dialog.getByLabel('Start', { exact: true })).toHaveValue(visibleRange[0].slice(11));
     await expect(dialog.getByLabel('End (optional)')).toHaveValue(visibleRange[1].slice(11));
     const movedRange = await page.evaluate(range => range.map(value => {
@@ -2331,7 +2331,7 @@ test('List, Timeline and Calendar Edit open the shared time form', async () => {
       taskUrl: 'https://example.com/other', taskTitle: '',
     });
     await page.evaluate(() => window.__openFixtureEdit(window.__zeroEntry));
-    const dateInput = dialog.getByLabel('Date', { exact: true });
+    const dateInput = dialog.getByLabel('Start date', { exact: true });
     const originalDay = await dateInput.inputValue();
     const previousDay = day => {
       const date = new Date(`${day}T12:00:00Z`);
