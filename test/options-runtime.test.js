@@ -2964,6 +2964,20 @@ test('signed-in account avatar is not offered a self-removal action', async () =
   assert.equal(page.nodes.get('time-repository-list').querySelectorAll('.remove-repository-user').length, 1);
 });
 
+test('a renamed signed-in GitHub user is never offered their own removal action', async () => {
+  const page = harness({ collaboratorReplies: true, reply: request => request.type === 'LOAD_REPOSITORY_COLLABORATORS'
+    ? { users: [{ id: 42, login: 'NewLogin' }, { id: 43, login: 'Other' }], hasMore: false } : {} });
+  page.render({ ...connectedState,
+    auth: { mode: 'github_app', githubLogin: 'OldLogin', githubUserId: 42 },
+    destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const row = page.nodes.get('time-repository-list').children[0];
+  const members = row.querySelectorAll('.repository-team-member');
+  assert.match(members[0].querySelector('.repository-team-member-identity').textContent || members[0].querySelector('.repository-team-member-identity').children[0].textContent, /you/);
+  assert.equal(members[0].querySelector('.repository-member-actions-button'), null);
+  assert.ok(members[1].querySelector('.repository-member-actions-button'));
+});
+
 test('repository avatar hover uses the GitHub login and overflow does not impersonate add', async () => {
   const page = harness({ collaboratorReplies: true, reply: () => ({
     users: [{ id: 7, login: 'New', avatarUrl: null }], hasMore: true,
