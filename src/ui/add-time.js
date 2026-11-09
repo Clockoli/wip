@@ -162,14 +162,12 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   descriptionFields.append(descriptionLabel, description, moreDescription);
   const preview = document.createElement('div'); preview.className = 'add-time-preview'; preview.setAttribute('aria-live', 'polite'); preview.hidden = true;
   const error = document.createElement('p'); error.className = 'add-time-error'; error.setAttribute('role', 'alert'); error.hidden = true;
-  const checkingStatus = document.createElement('p'); checkingStatus.className = 'add-time-status';
-  checkingStatus.setAttribute('role', 'status'); checkingStatus.textContent = 'Checking existing time on GitHub…'; checkingStatus.hidden = true;
   const actions = document.createElement('div'); actions.className = 'add-time-actions';
   const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
   const add = document.createElement('button'); add.type = 'button'; add.className = 'add-time-submit'; add.textContent = 'Add';
   actions.append(cancel, add);
   dialog.append(close, heading, intro, taskLabel, searchContainer, dayRangeLabel, times, rangeFields,
-    hint, rangeHint, boundaryHint, descriptionFields, preview, error, checkingStatus, actions);
+    hint, rangeHint, boundaryHint, descriptionFields, preview, error, actions);
   container.append(dialog);
   const saved = document.createElement('span');
   saved.className = 'add-time-success'; saved.textContent = 'Saved'; saved.prepend(octicon(CHECK_PATH)); saved.setAttribute('role', 'status'); saved.hidden = true;
@@ -318,7 +316,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     const now = new Date();
     tasks = []; selected = null; lastSearch = ''; searchIncomplete = false; catalogLoaded = false; searching = false; showRepository = false;
     busy = false; search.value = ''; setSearchBusy(false);
-    overlapProgress.hidden = true; overlapStatus.hidden = true; checkingStatus.hidden = true;
+    overlapProgress.hidden = true; overlapStatus.hidden = true;
     heading.textContent = runningEdit ? 'Edit timer start' : boundary ? 'Resolve time overlap' : entry ? 'Edit time' : 'Add new time';
     close.setAttribute('aria-label', runningEdit ? 'Close Edit timer start' : entry ? 'Close Edit time' : 'Close Add time');
     add.textContent = entry ? 'Save' : 'Add';
@@ -479,7 +477,6 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     // Only the short local IndexedDB acceptance is in flight. Never show a
     // GitHub saving status: the shared 15-second sync happens silently later.
     busy = true; add.disabled = true; cancel.disabled = true; setError('');
-    checkingStatus.hidden = Boolean(editing);
     try {
       const value = runningEdit ? { startedAt }
         : { taskUrl: task.taskUrl, taskTitle: task.title || '', startedAt, endedAt,
@@ -502,7 +499,6 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
         ? `${message} Go to List for the affected week and resolve the overlapping entries manually.` : message);
     }
     finally {
-      checkingStatus.hidden = true;
       busy = false; add.disabled = false; cancel.disabled = false;
     }
   };

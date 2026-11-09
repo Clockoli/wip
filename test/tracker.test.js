@@ -3151,44 +3151,6 @@ test('linked time edits remain atomic when an adjusted Start moves across monthl
 });
 
 
-test('manual Add time preflight rejects remote history outside local caches and accepts adjacent time', async () => {
-  const github = new FakeGitHub(), store = new MemoryStore();
-  const previous = entry('2026-07-31T23:30:00.000Z', '2026-08-01T00:30:00.000Z');
-  seedText(github, 'times/2026-07/alice.jsonl', serializeMonthlyRecords([previous]), 'older-month');
-  const tracker = service({ github, store, timezone: 'UTC' });
-  await assert.rejects(() => tracker.addTime({
-    taskUrl: issue.url, startedAt: '2026-08-01T00:15:00.000Z', endedAt: '2026-08-01T00:45:00.000Z',
-  }, { background: true, preflight: true }), /overlap/i);
-  assert.deepEqual(store.value.pendingWrites, [], 'remote overlaps must fail before local acceptance');
-  assert.deepEqual(store.value.recentCache, []);
-  assert.ok(github.reads.includes('times/2026-07/alice.jsonl'), 'read earlier-month history');
-  const accepted = await tracker.addTime({
-    taskUrl: issue.url, startedAt: '2026-08-01T00:30:00.000Z', endedAt: '2026-08-01T01:00:00.000Z',
-  }, { background: true, preflight: true });
-  assert.equal(accepted.pending, true);
-  assert.equal(store.value.pendingWrites.length, 1);
-  assert.equal(github.atomicWrites.length, 0, 'remote preflight must not bypass deferred synchronization');
-});
-
-test('manual Add time preflight rejects a remote running timer and unavailable GitHub', async () => {
-  const github = new FakeGitHub(), store = new MemoryStore();
-  seedText(github, 'active/alice.json', serializeActiveRecord(active('2026-08-18T08:30:00.000Z')), 'remote-active');
-  const tracker = service({ github, store, timezone: 'UTC' });
-  await assert.rejects(() => tracker.addTime({
-    taskUrl: issue.url, startedAt: '2026-08-18T08:00:00.000Z', endedAt: '2026-08-18T08:45:00.000Z',
-  }, { background: true, preflight: true }), /running timer on GitHub/i);
-  assert.deepEqual(store.value.pendingWrites, []);
-  assert.equal(store.value.activeCache, null);
-
-  const offline = new FakeGitHub(), offlineStore = new MemoryStore();
-  offline.listTextFilesSnapshot = async () => { throw new TypeError('offline'); };
-  await assert.rejects(() => service({ github: offline, store: offlineStore }).addTime({
-    taskUrl: issue.url, startedAt: '2026-08-18T08:00:00.000Z', endedAt: '2026-08-18T08:15:00.000Z',
-  }, { background: true, preflight: true }), /Could not check existing time on GitHub/);
-  assert.deepEqual(offlineStore.value.pendingWrites, []);
-  assert.deepEqual(offlineStore.value.recentCache, []);
-});
-
 test('completed Add time is accepted and projected locally without any GitHub request, then synced', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
   const request = { taskUrl: issue.url, taskTitle: 'Investigate',
@@ -3220,6 +3182,34 @@ test('activity projection reports indexed IDs replaced by queued deletes and edi
   const projected = await tracker.projectActivityRecords([]);
   assert.deepEqual(projected.replacedRecordIds, [deleted.id, moved.id]);
   assert.deepEqual(projected.records.map(record => record.taskUrl), ['https://example.org/new']);
+});
+
+test('completed Add time rejects locally known overlaps without waiting for GitHub', async () => {
+  const previous = entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z');
+  for (const source of ['recent', 'week', 'queued']) {
+    const github = new FakeGitHub(), store = new MemoryStore();
+    if (source === 'recent') store.value.recentCache = [previous];
+    if (source === 'week') store.value.summaryCache = { weekEntries: [previous] };
+    if (source === 'queued') store.value.pendingWrites = [{
+      operation: 'addTime', id: 'pending-add', entry: previous, status: 'pending',
+    }];
+    const tracker = service({ github, store });
+    const before = structuredClone(store.value);
+    await assert.rejects(() => tracker.addTime({
+      taskUrl: issue.url, startedAt: '2026-08-18T07:30:00.000Z',
+      endedAt: '2026-08-18T08:30:00.000Z',
+    }, { background: true }), /overlap/i, `completed time overlapping ${source} must be rejected`);
+    assert.deepEqual(store.value, before, 'rejected completed time must not be queued');
+    assert.deepEqual(github.reads, [], 'no GitHub request should delay manual Add time');
+
+    const accepted = await tracker.addTime({
+      taskUrl: issue.url, startedAt: '2026-08-18T08:00:00.000Z',
+      endedAt: '2026-08-18T08:30:00.000Z',
+    }, { background: true });
+    assert.equal(accepted.pending, true);
+    assert.equal(accepted.entry.startedAt, '2026-08-18T08:00:00.000Z');
+    assert.deepEqual(github.reads, [], 'accepting adjacent completed time is local-only');
+  }
 });
 
 test('running Add time rejects locally known overlapping entries before queuing', async () => {
