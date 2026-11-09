@@ -350,6 +350,29 @@ async function expectReadOnlyRequests(worker) {
   ].includes(type)), `Unexpected request types: ${requests.join(', ')}`).toBe(true);
 }
 
+test('Disconnect repository clearly explains browser-local effects and Cancel leaves the connection intact', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, worker } = fixture;
+    const repository = page.locator('.time-repository').first();
+    await repository.locator(':scope > summary').click();
+    const repositoryName = await repository.locator('.repository-card-heading h3').textContent();
+    await repository.locator('.remove-destination').click();
+    const confirmation = repository.locator('.repository-removal');
+    await expect(confirmation).toBeVisible();
+    await expect(confirmation.locator('h4')).toHaveText('Disconnect time repository?');
+    await expect(confirmation.locator('.repository-removal-name strong')).toHaveText(repositoryName);
+    await expect(confirmation).toContainText('This will remove the repository from Clockoli in this browser.');
+    await expect(confirmation).toContainText("Your tracked time and GitHub repository will not be deleted. Other team members won't be affected.");
+    await expect(confirmation).toContainText('You can reconnect this repository later.');
+    await expect(confirmation.getByRole('button', { name: 'Disconnect repository' })).toBeVisible();
+    await confirmation.getByRole('button', { name: 'Cancel' }).click();
+    await expect(confirmation).toBeHidden();
+    await expect(repository).toHaveAttribute('open', '');
+    expect(await worker.evaluate(() => globalThis.requests)).not.toContain('REMOVE_DESTINATION');
+  } finally { await closeOptions(fixture); }
+});
+
 test('repository disclosures rotate in Chromium and remain usable at narrow widths', async () => {
   const fixture = await openOptions();
   try {
