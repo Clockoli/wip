@@ -210,12 +210,28 @@ test('search checks a local unified index first and refreshes all users on a mis
   assert.equal(reads, 1, 'a hit after a worker restart must not touch GitHub');
   assert.equal(cached.tasks[0].title, 'Colleague task');
   newTask = true;
+  const missing = await context.searchTasks(sender, 'new task');
+  assert.equal(reads, 1, 'a recent complete catalog also caches misses during typing');
+  assert.equal(missing.tasks.some(task => task.title === 'New task'), false);
+  saved.refreshedAt -= 61_000;
   const refreshed = await context.searchTasks(sender, 'new task');
-  assert.equal(reads, 2, 'a miss rechecks all marked personal branches');
+  assert.equal(reads, 2, 'a miss rechecks marked personal branches after the freshness window');
   assert.equal(refreshed.tasks.some(task => task.title === 'New task'), true);
   await context.searchTasks(sender, 'new task');
   assert.equal(reads, 2, 'the refreshed local snapshot serves subsequent hits');
   assert.equal(JSON.stringify(saved).includes('accessToken'), false);
+
+  context.store.getTrackingSnapshot = async () => ({
+    destinationStates: { entries: { 'github:1': { pendingWrites: [{ id: 'queued' }] } } },
+  });
+  context.trackerForDestination = async () => ({ projectActivityRecords: async () => ({
+    records: [{ id: 'queued', taskUrl: 'https://example.org/pending', taskTitle: 'Pending task',
+      startedAt: '2026-11-09T10:00:00Z' }], replacedRecordIds: [],
+  }) });
+  const pending = await context.searchTasks(sender, 'colleague');
+  assert.equal(reads, 2, 'pending local work must not force another GitHub scan on a cached hit');
+  assert.equal(pending.partial, true);
+  assert.equal(pending.tasks.some(task => task.title === 'Pending task'), true);
   const snapshot = saved;
   context.store.getTaskSearchCache = async () => null;
   context.store.isTaskSearchDirty = async () => true;
