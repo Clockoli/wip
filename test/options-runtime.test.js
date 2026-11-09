@@ -2643,6 +2643,28 @@ test('teammate picker does not invite when confirmation is cancelled', async () 
   assert.equal(page.requests.some(request => request.type === 'INVITE_REPOSITORY_USER'), false);
 });
 
+test('read-only collaborator can be rechecked after write access is granted on GitHub', async () => {
+  let upgraded = false;
+  const page = harness({ confirm: () => true, reply: request => request.type === 'SEARCH_INVITEE_USERS'
+    ? { users: [{ id: 42, login: 'Bob' }] }
+    : request.type === 'INVITE_REPOSITORY_USER'
+      ? { status: upgraded ? 'already_has_access' : 'read_only_access', login: 'Bob' } : {} });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  const picker = page.nodes.get('time-repository-list').querySelector('.teammate-picker');
+  const input = picker.querySelector('.teammate-search'), invite = picker.querySelector('.invite-teammate');
+  input.value = 'Bo'; input.listeners.input();
+  await page.timers.filter(timer => timer.delay === 250).at(-1).callback();
+  await picker.querySelector('.teammate-choice').listeners.click();
+  await invite.listeners.click();
+  assert.match(picker.querySelector('.teammate-feedback').textContent, /read-only access/i);
+  assert.match(picker.querySelector('.teammate-feedback').className, /error/);
+  assert.equal(invite.disabled, false, 'read-only access must be retryable after an external GitHub upgrade');
+  upgraded = true;
+  await invite.listeners.click();
+  assert.match(picker.querySelector('.teammate-feedback').textContent, /already has repository access/i);
+  assert.equal(invite.disabled, true, 'completed access must not offer unnecessary repeat invitations');
+});
+
 test('a failed GitHub teammate search does not leave later searches styled as an error', async () => {
   let attempts = 0;
   const page = harness({ reply: request => request.type === 'SEARCH_INVITEE_USERS'
