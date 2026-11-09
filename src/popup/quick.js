@@ -86,6 +86,7 @@ function updateDescriptionControls() {
   save.hidden = !dirty && !descriptionSaving;
   save.disabled = Boolean(descriptionSaving) || busy || !dirty;
   status.textContent = descriptionSaving ? 'Saving…' : descriptionStatus;
+  status.parentElement.hidden = save.hidden && !status.textContent;
 }
 function saveDescription() {
   if (descriptionSaving) return descriptionSaving;
