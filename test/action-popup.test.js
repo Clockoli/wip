@@ -18,7 +18,7 @@ test('toolbar opens Activity in its own tab and hands off only the clicked URL',
   assert.equal(manifest.permissions.includes('storage'), false);
   assert.match(worker, /chrome\.action\.onClicked\.addListener\(tab => \{[\s\S]*toggleActionSurface\(tab\)/);
   assert.match(worker, /actionContextBackend\.setMany\(\{ \[ACTION_CONTEXT_KEY\]: toolbarTaskContext\(tab\) \}\)/);
-  const handler = worker.slice(worker.indexOf('async function toggleActionSurface('), worker.indexOf('async function dismissInactivePanels('));
+  const handler = worker.slice(worker.indexOf('async function openActivityFromTab('), worker.indexOf("void chrome.action.setPopup({ popup: '' })"));
   assert.doesNotMatch(handler, /chrome\.scripting|chrome\.tabs\.sendMessage|TOGGLE_FULL_WIDTH_POPUP/);
   assert.match(content, /renderActionSourceContext\(\)/);
   const times = read('src/times/times.html');
@@ -299,35 +299,19 @@ test('toolbar normalizes Projects issue links and clears context on restricted p
   assert.equal(harness.calls.filter(([kind]) => kind === 'context').at(-1)[1]['clockoli-toolbar-task-context'], null);
 });
 
-test('activating another tab dismisses panels in inactive tabs even without page visibility events', async () => {
-  assert.match(worker, /chrome\.tabs\.onActivated\.addListener\(/);
-  const calls = [];
-  const { default: vm } = await import('node:vm');
-  const context = vm.createContext({ chrome: { tabs: {
-    query: async () => [{ id: 11, active: false }, { id: 12, active: true }, { id: 13, active: false }],
-    sendMessage: async (id, message) => { calls.push({ id, message }); if (id === 13) throw new Error('No receiver'); },
-  } } });
-  const helper = worker.match(/async function dismissInactivePanels\([^]*?\n\}/)?.[0];
-  assert.ok(helper);
-  vm.runInContext(helper, context);
-  await context.dismissInactivePanels({ tabId: 12, windowId: 4 });
-  assert.deepEqual(calls.map(({ id, message }) => [id, message.type]), [[11, 'DISMISS_FULL_WIDTH_POPUP'], [13, 'DISMISS_FULL_WIDTH_POPUP']]);
-});
-
-test('action panel opens from local state and lets handled Escape stay inside the editor', () => {
-  const start = content.indexOf('  async function toggleFullWidthPopup()');
-  const end = content.indexOf('\n  function renderUi()', start);
-  const open = content.slice(start, end);
-  assert.ok(open.indexOf('refresh: false') >= 0);
-  assert.ok(open.indexOf('refresh: true') > open.indexOf('refresh: false'));
-  assert.match(content, /event\.defaultPrevented/);
-  assert.match(content, /prefers-reduced-motion: no-preference/);
-  assert.doesNotMatch(content, /#ff2d55|summaryFrames|summaryIndex|displayMs/);
+test('GitHub page icon opens Activity through the same source-context handoff, never an overlay', () => {
+  assert.match(content, /main\.addEventListener\('click',[\s\S]*?send\(\{ type: 'OPEN_TIMES' \}\)/);
+  assert.match(worker, /if \(githubPage\) await openActivityFromTab\(sender\.tab\)/);
+  assert.doesNotMatch(content, /toggleFullWidthPopup|renderFullWidthPopup|fullWidthPopupOpen|full-width-popup-surface/);
+  assert.doesNotMatch(worker, /DISMISS_FULL_WIDTH_POPUP|TOGGLE_FULL_WIDTH_POPUP/);
+  const origin = 'chrome-extension://clockoli/';
+  assert.doesNotThrow(() => assertMessageAllowed('OPEN_TIMES', { url: 'https://github.com/acme/repo/issues/7', tab: { id: 9 } }, origin));
+  assert.throws(() => assertMessageAllowed('CONSUME_TOOLBAR_TASK_CONTEXT', { url: 'https://github.com/acme/repo/issues/7', tab: { id: 9 } }, origin));
 });
 
 test('shadow chrome defines local light and dark tokens without bare theme colors in selectors', () => {
   const start = content.indexOf("    const style = el('style', `", content.indexOf('  function renderUi()'));
-  const end = content.indexOf('    if (fullWidthPopupOpen) {', start);
+  const end = content.indexOf('    if (popupMode) style.textContent +=', start);
   const stylesheet = content.slice(start, end);
   assert.match(stylesheet, /@media \(prefers-color-scheme: dark\) \{\s*:host, :where\(:host > :not\(style\)\) \{/);
   const definitions = [...stylesheet.matchAll(/--ck-[\w-]+:\s*var\(--[^;]+;/g)].map(match => match[0]);
