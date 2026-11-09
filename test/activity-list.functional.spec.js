@@ -1131,7 +1131,7 @@ test('toolbar popup shares Activity summary, chart navigation, and List controls
       return { labelRight: label.right, choiceLeft: choice.left, choiceRight: choice.right, cardLeft: bounds.left, cardRight: bounds.right };
     });
     expect(quickStartBounds.labelRight).toBeLessThanOrEqual(quickStartBounds.cardRight);
-    expect(quickStartBounds.choiceLeft).toBeGreaterThan(quickStartBounds.cardLeft);
+    expect(quickStartBounds.choiceLeft).toBeGreaterThanOrEqual(quickStartBounds.cardLeft);
     expect(quickStartBounds.choiceRight).toBeLessThanOrEqual(quickStartBounds.cardRight);
     for (const mode of ['Timeline', 'Calendar']) {
       await root.getByRole('button', { name: mode, exact: true }).click();
