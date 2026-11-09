@@ -473,7 +473,7 @@ function avatarAccessMenu(article, destination, root, user, kind) {
     link.href = `https://github.com/${encodeURIComponent(destination.owner)}/${encodeURIComponent(destination.repo)}/settings/access`;
     link.target = '_blank'; link.rel = 'noreferrer';
     link.textContent = 'Manage repository access on GitHub';
-    feedback.append(' ', link);
+    feedback.append(link);
   };
   trigger.setAttribute('aria-expanded', 'false'); trigger.setAttribute('aria-haspopup', 'true');
   const outside = event => { if (!wrapper.contains(event.target)) close(); };
