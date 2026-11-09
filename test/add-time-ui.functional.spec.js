@@ -8,6 +8,7 @@ const taskUrl = 'https://example.com/work/1';
 const workerSource = `
 globalThis.messages = [];
 globalThis.failAdd = false;
+globalThis.overlapAdd = false;
 globalThis.staleDayRangeWorker = false;
 globalThis.overlapDayRange = false;
 globalThis.deferAdd = false;
@@ -44,6 +45,8 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       ? { ok: false, error: { message: 'Message ADD_DAY_RANGE is not allowed from this sender' } }
       : message.type === 'ADD_DAY_RANGE' && globalThis.overlapDayRange
       ? { ok: false, error: { message: 'Selected day 2026-11-02 overlaps an existing time entry. No days were added.' } }
+      : message.type === 'ADD_TIME' && globalThis.overlapAdd
+      ? { ok: false, error: { message: 'Added time would overlap an existing entry on GitHub. Choose a free time range.' } }
       : globalThis.failAdd
       ? { ok: false, error: { message: 'Cannot add time' } }
       : { ok: true, data: { accepted: true } });
@@ -716,14 +719,22 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       await expect(dialog.getByRole('alert')).toContainText('Cannot add time');
       await expect(dialog.locator('.add-time-progress:visible, .add-time-status:visible')).toHaveCount(0);
       await expect(dialog).toBeVisible();
-      await worker.evaluate(() => { globalThis.failAdd = false; });
+      await worker.evaluate(() => { globalThis.failAdd = false; globalThis.overlapAdd = true; });
+      const keptTask = await search.inputValue(), keptStart = await startTime.inputValue();
+      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      await expect(dialog.getByRole('alert')).toContainText('overlap an existing entry on GitHub');
+      await expect(dialog.locator('.add-time-status:visible')).toHaveCount(0);
+      await expect(dialog).toBeVisible();
+      await expect(search).toHaveValue(keptTask);
+      await expect(startTime).toHaveValue(keptStart);
+      await worker.evaluate(() => { globalThis.overlapAdd = false; });
       const urlBefore = await page.evaluate(() => Date.now());
       await dialog.getByRole('button', { name: 'Add', exact: true }).click();
       const urlAfter = await page.evaluate(() => Date.now());
       await expect(dialog).not.toBeVisible();
       messages = await worker.evaluate(() => globalThis.messages);
       const submitted = messages.filter(message => message.type === 'ADD_TIME');
-      expect(submitted).toHaveLength(before + 3);
+      expect(submitted).toHaveLength(before + 4);
       expect(submitted.at(-1)).toEqual({ type: 'ADD_TIME', taskUrl: 'https://example.org/new-task', taskTitle: '', startedAt: expect.any(String), endedAt: null, description: '' });
       expect(new Date(submitted.at(-1).startedAt).getTime()).toBeGreaterThanOrEqual(urlBefore);
       expect(new Date(submitted.at(-1).startedAt).getTime()).toBeLessThanOrEqual(urlAfter);
