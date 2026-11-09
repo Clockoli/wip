@@ -2641,7 +2641,33 @@ export class TrackerService {
     return { files: await Promise.all(paths.map(path => this.readMonthly(path))), headSha: snapshot?.headSha || null };
   }
 
-  async queueAddTime({ taskUrl, taskTitle = '', startedAt, endedAt = null, description = '' }) {
+  async assertAddTimeRemoteOverlapFree(start, end, now) {
+    let remoteActive, files;
+    try {
+      [remoteActive, { files }] = await Promise.all([
+        this.readRemoteActive(),
+        this.readEditOverlapFiles([{
+          entryDate: localDateInTimezone(start, this.timezone),
+          startedAt: start.toISOString(), endedAt: (end ?? now).toISOString(),
+        }]),
+      ]);
+    } catch (error) {
+      if (isRetryableReadFailure(error)) {
+        throw new Error('Could not check existing time on GitHub. Reconnect and try again; no time was added.');
+      }
+      throw error;
+    }
+    const startMs = start.getTime(), endMs = (end ?? now).getTime();
+    if (remoteActive && (!end || endMs > timerStartedAt(remoteActive))) {
+      throw new TrackerConflictError('Added time would overlap the running timer on GitHub. Choose a free time range.');
+    }
+    if (files.some(file => file.entries.some(entry =>
+      new Date(entry.startedAt).getTime() < endMs && new Date(entry.endedAt).getTime() > startMs))) {
+      throw new TrackerConflictError('Added time would overlap an existing entry on GitHub. Choose a free time range.');
+    }
+  }
+
+  async queueAddTime({ taskUrl, taskTitle = '', startedAt, endedAt = null, description = '' }, { preflight = false } = {}) {
     const canonical = normalizeStoredTaskIdentity(taskUrl);
     const now = this.clock(), start = startedAt == null ? now : new Date(startedAt);
     const end = endedAt == null ? null : new Date(endedAt);
@@ -2652,6 +2678,7 @@ export class TrackerService {
     if (typeof taskTitle !== 'string' || taskTitle.length > 500 || typeof description !== 'string' || description.length > 2000) {
       throw new Error('Task title or description is too long.');
     }
+    if (preflight) await this.assertAddTimeRemoteOverlapFree(start, end, now);
     if (!end) {
       const state = await this.store.getState();
       if (state.activeCache) throw new Error(`A timer is already tracking ${taskLabel(state.activeCache)}`);
@@ -2690,9 +2717,9 @@ export class TrackerService {
   }
 
   async addTime({ taskUrl, taskTitle = '', startedAt, endedAt = null, description = '' }, {
-    background = false, fixedId = null, acceptedEntry = null, updateCache = true,
+    background = false, preflight = false, fixedId = null, acceptedEntry = null, updateCache = true,
   } = {}) {
-    if (background) return this.queueAddTime({ taskUrl, taskTitle, startedAt, endedAt, description });
+    if (background) return this.queueAddTime({ taskUrl, taskTitle, startedAt, endedAt, description }, { preflight });
     const canonical = normalizeStoredTaskIdentity(taskUrl);
     const now = this.clock(), start = startedAt == null ? now : new Date(startedAt);
     const startMs = start.getTime(), end = endedAt == null ? null : new Date(endedAt), endMs = end?.getTime();
