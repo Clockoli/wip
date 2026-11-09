@@ -2490,6 +2490,53 @@ test('backup reminder appears once per page load and stays dismissed after an ex
   assert.equal(reopened.nodes.get('settings-export-reminder').hidden, false);
 });
 
+test('Disconnect repository clearly explains local-only removal and requires explicit confirmation', async () => {
+  const destination = { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 };
+  const page = harness({ reply: request => request.type === 'REMOVE_DESTINATION'
+    ? new Error('Pending time writes must synchronize before disconnecting') : {} });
+  page.render({ ...connectedState, destinations: [destination] });
+  const row = page.nodes.get('time-repository-list').children[0];
+  const action = row.querySelector('.remove-destination');
+  const panel = row.querySelector('.repository-removal');
+  assert.equal(action.textContent, 'Disconnect repository');
+  assert.equal(panel.hidden, true);
+  action.listeners.click();
+  assert.equal(panel.hidden, false);
+  assert.equal(panel.querySelector('h4').textContent, 'Disconnect time repository?');
+  assert.equal(panel.querySelector('.repository-removal-name').children[0].textContent, 'acme/time-data');
+  assert.ok(panel.children.some(child => child.textContent === 'This will remove the repository from Clockoli in this browser.'));
+  assert.ok(panel.children.some(child => child.textContent === "Your tracked time and GitHub repository will not be deleted. Other team members won't be affected."));
+  assert.ok(panel.children.some(child => child.textContent === 'You can reconnect this repository later.'));
+  const confirm = panel.querySelector('.danger'), cancel = panel.querySelector('.secondary');
+  assert.equal(confirm.textContent, 'Disconnect repository');
+  assert.equal(cancel.textContent, 'Cancel');
+  assert.equal(page.requests.some(request => request.type === 'REMOVE_DESTINATION'), false);
+  cancel.listeners.click();
+  assert.equal(panel.hidden, true);
+  assert.equal(page.requests.some(request => request.type === 'REMOVE_DESTINATION'), false);
+  action.listeners.click();
+  await confirm.listeners.click();
+  assert.deepEqual(JSON.parse(JSON.stringify(page.requests.find(request => request.type === 'REMOVE_DESTINATION'))),
+    { type: 'REMOVE_DESTINATION', destinationId: 'github:20' });
+  assert.match(panel.querySelector('.error').textContent, /Pending time writes must synchronize/);
+  assert.equal(confirm.disabled, false);
+  assert.equal(cancel.disabled, false);
+});
+
+test('Disconnect repository still blocks removal when active or pending work would be lost', () => {
+  const destination = { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10,
+    removalBlockers: ['Stop the running timer before disconnecting.'] };
+  const page = harness();
+  page.render({ ...connectedState, destinations: [destination] });
+  const row = page.nodes.get('time-repository-list').children[0];
+  row.querySelector('.remove-destination').listeners.click();
+  const panel = row.querySelector('.repository-removal');
+  assert.match(panel.querySelector('.error').textContent, /Stop the running timer/);
+  assert.equal(panel.querySelector('.danger').hidden, true);
+  assert.equal(panel.querySelector('.secondary').textContent, 'Cancel');
+  assert.equal(page.requests.some(request => request.type === 'REMOVE_DESTINATION'), false);
+});
+
 test('destructive confirmations name their button scope and cancellation makes no request', async () => {
   const prompts = [];
   const page = harness({ confirm: text => { prompts.push(text); return false; } });
