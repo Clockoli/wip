@@ -118,15 +118,15 @@ test('Add time selects individual calendar days with required daily hours on Act
       await expect(dialog.getByLabel('Hours per day')).toHaveAttribute('required', '');
       await dialog.getByLabel('Hours per day').fill('8');
       await worker.evaluate(() => { globalThis.staleDayRangeWorker = true; });
-      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      await dialog.locator('.add-time-submit').click();
       await expect(dialog.getByRole('alert')).toContainText('Reload Clockoli');
       await expect(dialog.getByRole('button', { name: 'November 2, 2026' })).toHaveAttribute('aria-pressed', 'true');
       await worker.evaluate(() => { globalThis.staleDayRangeWorker = false; globalThis.overlapDayRange = true; });
-      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      await dialog.locator('.add-time-submit').click();
       await expect(dialog.getByRole('alert')).toHaveText('Selected day 2026-11-02 overlaps an existing time entry. No days were added.');
       await expect(dialog.getByRole('button', { name: 'November 2, 2026' })).toHaveAttribute('aria-pressed', 'true');
       await worker.evaluate(() => { globalThis.overlapDayRange = false; });
-      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      await dialog.locator('.add-time-submit').click();
       await expect(dialog).toBeHidden();
       let sent = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_DAY_RANGE');
       expect(sent.at(-1)).toMatchObject({ taskUrl, description: 'Paid time off',
@@ -137,18 +137,18 @@ test('Add time selects individual calendar days with required daily hours on Act
       await dialog.getByLabel('Multiple days').check();
       await dialog.getByRole('button', { name: 'November 2, 2026' }).click();
       const sentBeforeBlank = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_DAY_RANGE').length;
-      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      await dialog.locator('.add-time-submit').click();
       await expect(dialog.getByRole('alert')).toContainText('Enter hours per day');
       expect((await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_DAY_RANGE')).toHaveLength(sentBeforeBlank);
       await dialog.getByRole('button', { name: 'November 2, 2026' }).click();
       await dialog.getByLabel('Hours per day').fill('0');
-      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      await dialog.locator('.add-time-submit').click();
       await expect(dialog.getByRole('alert')).toContainText('Select at least one day');
       await dialog.getByRole('button', { name: 'November 1, 2026' }).click();
       await dialog.getByRole('button', { name: 'November 2, 2026' }).click();
       await dialog.getByRole('button', { name: 'November 1, 2026' }).click();
       await expect(dialog.getByRole('button', { name: 'November 1, 2026' })).toHaveAttribute('aria-pressed', 'false');
-      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      await dialog.locator('.add-time-submit').click();
       sent = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_DAY_RANGE');
       expect(sent.at(-1)).toMatchObject({ dates: ['2026-11-02'], durationSeconds: 0 });
       if (surface === 'times') {
@@ -170,12 +170,12 @@ test('Add time selects individual calendar days with required daily hours on Act
         await dialog.getByRole('button', { name: 'November 1, 2026' }).click();
         await dialog.getByRole('button', { name: 'November 2, 2026' }).click();
         await dialog.getByLabel('Hours per day').fill('25');
-        await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+        await dialog.locator('.add-time-submit').click();
         await expect(dialog.getByRole('alert')).toContainText('0–24');
         expect((await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_DAY_RANGE')).toHaveLength(4);
         await dialog.getByLabel('Hours per day').fill('8');
         await expect(dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).resolves.toBe(true);
-        await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+        await dialog.locator('.add-time-submit').click();
         await expect(dialog).toBeHidden();
         sent = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_DAY_RANGE');
         expect(sent.at(-1)).toMatchObject({ taskUrl, durationSeconds: 28800 });
@@ -214,7 +214,7 @@ test('default running Add time starts at submission precision, while an explicit
     await expect(dialog.getByLabel('Start', { exact: true })).toHaveValue('12:01');
     await dialog.getByRole('combobox', { name: 'Task' }).fill(taskUrl);
     await page.clock.setFixedTime(new Date('2026-11-02T12:01:45.321Z'));
-    await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+    await dialog.locator('.add-time-submit').click();
     let payloads = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME');
     expect(payloads.at(-1).startedAt).toBe('2026-11-02T12:01:45.321Z');
     expect(payloads.at(-1).endedAt).toBeNull();
@@ -222,14 +222,14 @@ test('default running Add time starts at submission precision, while an explicit
     await page.getByRole('button', { name: 'Add time', exact: true }).click();
     await dialog.getByRole('combobox', { name: 'Task' }).fill(taskUrl);
     await dialog.getByLabel('Start', { exact: true }).fill('12:00');
-    await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+    await dialog.locator('.add-time-submit').click();
     payloads = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME');
     expect(payloads.at(-1).startedAt).toBe('2026-11-02T12:00:00.000Z');
 
     await page.getByRole('button', { name: 'Add time', exact: true }).click();
     await dialog.getByRole('combobox', { name: 'Task' }).fill(taskUrl);
     await dialog.getByLabel('Start', { exact: true }).fill('12:01');
-    await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+    await dialog.locator('.add-time-submit').click();
     payloads = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME');
     expect(payloads.at(-1).startedAt).toBe('2026-11-02T12:01:00.000Z', 'explicitly chosen minute must not be silently moved');
     await page.clock.setFixedTime(new Date('2026-11-02T23:59:55.000Z'));
@@ -237,7 +237,7 @@ test('default running Add time starts at submission precision, while an explicit
     await expect(dialog.getByLabel('Start', { exact: true })).toHaveValue('23:59');
     await dialog.getByRole('combobox', { name: 'Task' }).fill(taskUrl);
     await page.clock.setFixedTime(new Date('2026-11-03T00:00:05.987Z'));
-    await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+    await dialog.locator('.add-time-submit').click();
     payloads = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME');
     expect(payloads.at(-1).startedAt).toBe('2026-11-03T00:00:05.987Z', 'untouched start follows submission across midnight');
     expect(errors).toEqual([]);
@@ -248,7 +248,7 @@ test('default running Add time starts at submission precision, while an explicit
   }
 });
 
-test('Add and Edit time accept four-digit keyboard times with one date and an overnight End', async () => {
+test('Add and Edit time accept separate dates, keyboard times and an overnight End', async () => {
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-time-fields-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-time-fields-profile-'));
   let context;
@@ -271,11 +271,13 @@ test('Add and Edit time accept four-digit keyboard times with one date and an ov
     await expect(hint).not.toContainText('Type 1000 for 10:00. An End earlier than Start is on the next day.');
     const form = page.locator('.add-time-dialog');
     const start = form.getByLabel('Start', { exact: true }), end = form.getByLabel('End (optional)');
-    const date = form.getByLabel('Date', { exact: true });
-    await expect(dialog.locator('.add-time-times input')).toHaveCount(3);
+    const date = form.getByLabel('Start date', { exact: true });
+    const endDate = form.getByLabel('End date', { exact: true });
+    await expect(endDate).toBeDisabled();
+    await expect(dialog.locator('.add-time-times input')).toHaveCount(4);
     await expect(date).toHaveAttribute('type', 'date');
     expect(await dialog.locator('.add-time-times input').evaluateAll(inputs => inputs.map(input => input.id)))
-      .toEqual(['add-time-start', 'add-time-end', 'add-time-date']);
+      .toEqual(['add-time-date', 'add-time-start', 'add-time-end-date', 'add-time-end']);
     await dialog.getByRole('combobox', { name: 'Task' }).fill(taskUrl);
     await date.fill('2026-10-18');
     await start.click();
@@ -288,8 +290,11 @@ test('Add and Edit time accept four-digit keyboard times with one date and an ov
     await end.pressSequentially('1200');
     await end.press('Tab');
     await expect(end).toHaveValue('12:00');
-    await expect(date).toBeFocused();
-    await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+    await expect(form.getByLabel('Description (optional)')).toBeFocused();
+    await expect(endDate).toHaveValue('2026-10-18');
+    await expect(dialog.locator('.add-time-duration')).toHaveText('Duration: 2h 0m');
+    await expect(dialog.locator('.add-time-submit')).toHaveText('Add time');
+    await dialog.locator('.add-time-submit').click();
     let payload = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME').at(-1);
     expect([payload.startedAt, payload.endedAt]).toEqual(['2026-10-18T10:00:00.000Z', '2026-10-18T12:00:00.000Z']);
     await page.getByRole('button', { name: 'Add time', exact: true }).click();
@@ -297,13 +302,27 @@ test('Add and Edit time accept four-digit keyboard times with one date and an ov
     await date.fill('2026-10-18');
     await start.fill('2300');
     await end.fill('2300');
-    await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+    await dialog.locator('.add-time-submit').click();
     await expect(dialog.getByRole('alert')).toContainText('after start');
     expect((await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME')).toHaveLength(1);
     await end.fill('0100');
-    await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+    await expect(endDate).toHaveValue('2026-10-19');
+    await expect(dialog.locator('.add-time-duration')).toHaveText('Duration: 2h 0m');
+    await dialog.locator('.add-time-submit').click();
     payload = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME').at(-1);
     expect([payload.startedAt, payload.endedAt]).toEqual(['2026-10-18T23:00:00.000Z', '2026-10-19T01:00:00.000Z']);
+
+    await page.getByRole('button', { name: 'Add time', exact: true }).click();
+    await dialog.getByRole('combobox', { name: 'Task' }).fill(taskUrl);
+    await date.fill('2026-10-17');
+    await start.fill('10:00');
+    await end.fill('10:00');
+    await expect(endDate).toHaveValue('2026-10-17');
+    await endDate.fill('2026-10-18');
+    await expect(dialog.locator('.add-time-duration')).toHaveText('Duration: 24h 0m');
+    await dialog.locator('.add-time-submit').click();
+    payload = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME').at(-1);
+    expect([payload.startedAt, payload.endedAt]).toEqual(['2026-10-17T10:00:00.000Z', '2026-10-18T10:00:00.000Z']);
 
     await page.evaluate(url => {
       const entry = { id: 'synthetic', taskUrl: url, taskTitle: 'Existing task', destinationId: 'github:1',
@@ -315,6 +334,7 @@ test('Add and Edit time accept four-digit keyboard times with one date and an ov
     await expect(date).toHaveValue('2026-10-18');
     await expect(start).toHaveValue('23:00');
     await expect(end).toHaveValue('01:00');
+    await expect(endDate).toHaveValue('2026-10-19');
     await end.click();
     expect(await end.evaluate(input => [input.selectionStart, input.selectionEnd])).toEqual([0, 5]);
     await editing.getByRole('button', { name: 'Save' }).click();
@@ -559,7 +579,7 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
         await importedRow.getByRole('button', { name: 'Add time' }).click();
         await expect(prefilled.getByRole('combobox', { name: 'Task' })).toHaveValue('Imported conversational task');
         await expect(prefilled.locator('.add-time-preview')).toContainText('acme/project/imported');
-        await prefilled.getByRole('button', { name: 'Add', exact: true }).click();
+        await prefilled.locator('.add-time-submit').click();
         await expect(prefilled).not.toBeVisible();
         expect((await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME').at(-1))
           .toMatchObject({ taskUrl: 'acme/project/imported', taskTitle: 'Imported conversational task', destinationId: 'github:2' });
@@ -591,12 +611,14 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       await expect(dialog).not.toContainText('Select a task to preview it here.');
       await expect(dialog.getByRole('group', { name: 'Time range' })).toBeVisible();
       await expect(dialog.locator('input[type="datetime-local"]')).toHaveCount(0);
-      await expect(dialog.locator('input[type="date"]:visible')).toHaveCount(1);
+      await expect(dialog.locator('input[type="date"]:visible')).toHaveCount(2);
       await expect(dialog.locator('.add-time-times input[type="text"]')).toHaveCount(2);
+    await expect(dialog.getByLabel('End date', { exact: true })).toBeDisabled();
+    await expect(dialog.locator('.add-time-submit')).toHaveText('Start timer');
       await expect(dialog.locator('.add-time-progress, .add-time-status')).toHaveCount(0);
       const startTime = dialog.getByLabel('Start', { exact: true });
       const endTime = dialog.getByLabel('End (optional)');
-      const day = dialog.getByLabel('Date', { exact: true });
+      const day = dialog.getByLabel('Start date', { exact: true });
       expect([beforeOpen, await localTime()].map(value => value.slice(0, 10))).toContain(await day.inputValue());
       expect([beforeOpen, await localTime()].map(value => value.slice(11))).toContain(await startTime.inputValue());
       await expect(endTime).toHaveValue('');
@@ -661,10 +683,10 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       await expect(dialog.locator('.add-time-preview')).toContainText('https://example.org/colleague-task');
       await worker.evaluate(() => { globalThis.deferAdd = true; });
       const importedBefore = await page.evaluate(() => Date.now());
-      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      await dialog.locator('.add-time-submit').click();
       const importedAfter = await page.evaluate(() => Date.now());
       await expect(dialog.locator('.add-time-progress, .add-time-status')).toHaveCount(0);
-      await expect(dialog.getByRole('button', { name: 'Add', exact: true })).toBeDisabled();
+      await expect(dialog.locator('.add-time-submit')).toBeDisabled();
       await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeDisabled();
       await expect(dialog).toBeVisible();
       await worker.evaluate(() => {
@@ -707,18 +729,18 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       await expect(dialog.getByRole('alert')).toBeHidden();
       await search.fill('javascript:alert(1)');
       await expect(dialog.locator('.add-time-preview')).toBeHidden();
-      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      await dialog.locator('.add-time-submit').click();
       await expect(dialog.getByRole('alert')).toContainText('Select a task or enter an HTTP(S) URL');
       await search.fill('https://example.org/new-task');
       await expect(dialog.locator('.add-time-preview')).toContainText('https://example.org/new-task');
       await worker.evaluate(() => { globalThis.failAdd = true; });
-      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      await dialog.locator('.add-time-submit').click();
       await expect(dialog.getByRole('alert')).toContainText('Cannot add time');
       await expect(dialog.locator('.add-time-progress, .add-time-status')).toHaveCount(0);
       await expect(dialog).toBeVisible();
       await worker.evaluate(() => { globalThis.failAdd = false; });
       const urlBefore = await page.evaluate(() => Date.now());
-      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      await dialog.locator('.add-time-submit').click();
       const urlAfter = await page.evaluate(() => Date.now());
       await expect(dialog).not.toBeVisible();
       messages = await worker.evaluate(() => globalThis.messages);
@@ -753,7 +775,7 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       await worker.evaluate(() => { globalThis.deferAdd = true; });
       await multiline.press('Enter');
       await expect(dialog.locator('.add-time-progress, .add-time-status')).toHaveCount(0);
-      await expect(dialog.getByRole('button', { name: 'Add', exact: true })).toBeDisabled();
+      await expect(dialog.locator('.add-time-submit')).toBeDisabled();
       await page.evaluate(() => { globalThis.__addTimeNoReload = 'accepted locally'; });
       if (path === 'tasks/tasks.html') await worker.evaluate(() => { globalThis.deferTasks = true; });
       await worker.evaluate(() => {
@@ -783,7 +805,7 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       await startTime.fill('23:00');
       await endTime.fill('22:59');
       const count = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME').length;
-      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      await dialog.locator('.add-time-submit').click();
       await expect(dialog).not.toBeVisible();
       const historical = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME').at(-1);
       expect((await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME')).toHaveLength(count + 1);
@@ -798,13 +820,13 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       await day.fill(tomorrow);
       await startTime.fill('08:00');
       const beforeInvalid = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME').length;
-      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      await dialog.locator('.add-time-submit').click();
       await expect(dialog.getByRole('alert')).toContainText('future');
       expect((await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME')).toHaveLength(beforeInvalid);
       await day.fill('2026-08-18');
       await startTime.fill('08:00');
       await endTime.fill('25:59');
-      await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+      await dialog.locator('.add-time-submit').click();
       await expect(dialog.getByRole('alert')).toContainText('valid date and start/end time');
       expect((await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME')).toHaveLength(beforeInvalid);
       if (path === 'tasks/tasks.html') {
