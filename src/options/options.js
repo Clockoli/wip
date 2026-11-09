@@ -672,9 +672,12 @@ async function loadRepositoryCollaborators(article, destination, root) {
     }
     const readyIds = new Set(Array.isArray(result.readyUserIds) ? result.readyUserIds : []);
     for (const [user, isPending] of [...users.map(user => [user, false]), ...pending.map(user => [user, true])]) {
+      const isSelf = Number.isSafeInteger(state.auth?.githubUserId) && state.auth.githubUserId > 0
+        ? user.id === state.auth.githubUserId
+        : user.login.toLowerCase() === state.auth?.githubLogin?.toLowerCase();
       const interactive = state?.auth?.mode === 'github_app' && destination.initialized !== false
         && /^github:[1-9]\d*$/.test(destination.id || '') && Number.isSafeInteger(destination.installationId)
-        && user.login.toLowerCase() !== state.auth.githubLogin?.toLowerCase();
+        && !isSelf;
       const member = document.createElement('div'); member.className = 'repository-team-member';
       const avatar = document.createElement('span');
       avatar.className = `repository-collaborator${isPending ? ' repository-invitation' : ''}`;
@@ -689,7 +692,7 @@ async function loadRepositoryCollaborators(article, destination, root) {
         avatar.append(image);
       }
       const identity = document.createElement('div'); identity.className = 'repository-team-member-identity';
-      const login = document.createElement('strong'); login.textContent = `@${user.login}${user.login.toLowerCase() === state.auth?.githubLogin?.toLowerCase() ? ' (you)' : ''}`;
+      const login = document.createElement('strong'); login.textContent = `@${user.login}${isSelf ? ' (you)' : ''}`;
       const status = document.createElement('span'); status.className = 'repository-team-member-status';
       status.textContent = isPending ? 'GitHub invitation pending'
         : readyIds.has(user.id) ? 'Clockoli storage ready' : 'GitHub access granted';
