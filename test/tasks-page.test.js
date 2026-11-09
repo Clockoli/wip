@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { effectiveTrackedSeconds, sortTrackedTasks, taskPeriodRange, trackedTaskKey } from '../src/domain/tasks.js';
 import { formatClockDuration } from '../src/domain/reporting.js';
-import { normalizeTaskUrl, normalizeStoredTaskIdentity, localDateParts, entryDateValue } from '../src/domain/values.js';
+import { isUrlTaskIdentity, normalizeTaskUrl, normalizeStoredTaskIdentity, localDateParts, entryDateValue } from '../src/domain/values.js';
 import { dateValue, timeValue, parseTime, localTimestamp } from '../src/ui/local-time.js';
 
 const html = fs.readFileSync(new URL('../src/tasks/tasks.html', import.meta.url), 'utf8');
@@ -252,7 +252,7 @@ async function tasksHarness({ configured = true, tasks = [], active = null, pend
   document.addEventListener = () => {};
   class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : [now])); } static now() { return now; } }
   const context = vm.createContext({ document, Date: FixedDate, URL, console, queueMicrotask,
-    effectiveTrackedSeconds, sortTrackedTasks, taskPeriodRange, trackedTaskKey, formatClockDuration, normalizeTaskUrl, normalizeStoredTaskIdentity, localDateParts, entryDateValue,
+    effectiveTrackedSeconds, sortTrackedTasks, taskPeriodRange, trackedTaskKey, formatClockDuration, isUrlTaskIdentity, normalizeTaskUrl, normalizeStoredTaskIdentity, localDateParts, entryDateValue,
     dateValue, timeValue, parseTime, localTimestamp, mountRunningStatus() {}, mountAddTime() {},
     localStorage: { getItem: () => null, setItem() {} }, confirm: () => true,
     ClockoliRecovery: { actionFor: () => null },
@@ -337,23 +337,27 @@ test('Top tasks starts and switches imported identities without making them link
   assert.equal(switching.messages.find(message => message.type === 'SWITCH_TASK')?.taskUrl, imported.taskUrl);
 });
 
-test('Top tasks distinguishes identical imported identities by time repository only when multiple are configured', async () => {
+test('Top tasks retains imported identities in unfiltered history, but excludes them from search', async () => {
   const candidates = ['one', 'two'].map(id => ({ taskUrl: 'team/project/imported', title: 'Imported',
-    destinationId: id, timeRepository: `team/${id}` }));
+    destinationId: id, timeRepository: `team/${id}`, totalSeconds: 30 }));
   const page = await tasksHarness({ respond: message => message.type === 'SEARCH_TASKS'
     ? { configured: true, tasks: candidates, readStatus: [{ status: 'ok' }, { status: 'ok' }] }
-    : { configured: true, tasks: [], active: null, pendingWrites: [], sourceRepositories: ['team/one', 'team/two'] } });
+    : { configured: true, tasks: candidates, active: null, pendingWrites: [], sourceRepositories: ['team/one', 'team/two'] } });
+  assert.deepEqual(page.rows().map(row => row.querySelector('.task-repository')?.textContent), ['team/one', 'team/two']);
   page.nodes['task-filter'].value = 'Imported';
   await page.nodes['task-filter'].dispatch('input'); await page.settle();
-  assert.deepEqual(page.rows().map(row => row.querySelector('.task-repository')?.textContent), ['team/one', 'team/two']);
+  assert.equal(page.rows().length, 0, 'even an own imported task must not match the title filter');
+  page.nodes['task-filter'].value = '';
+  await page.nodes['task-filter'].dispatch('input'); await page.settle();
   await page.rows()[1].querySelector('.timer-button').click(); await page.settle();
   assert.equal(page.messages.find(message => message.type === 'START')?.destinationId, 'two');
   const single = await tasksHarness({ respond: message => message.type === 'SEARCH_TASKS'
     ? { configured: true, tasks: [candidates[0]], readStatus: [{ status: 'ok' }] }
-    : { configured: true, tasks: [], active: null, pendingWrites: [], sourceRepositories: ['team/one'] } });
+    : { configured: true, tasks: [candidates[0]], active: null, pendingWrites: [], sourceRepositories: ['team/one'] } });
+  assert.equal(single.rows()[0].querySelector('.task-repository'), null);
   single.nodes['task-filter'].value = 'Imported';
   await single.nodes['task-filter'].dispatch('input'); await single.settle();
-  assert.equal(single.rows()[0].querySelector('.task-repository'), null);
+  assert.equal(single.rows().length, 0);
 });
 
 test('Top tasks distinguishes read failures from conflict-only omissions', async () => {
