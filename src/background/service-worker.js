@@ -1051,6 +1051,8 @@ async function handle(message, sender) {
     try {
       const pending = await github.listRepositoryPendingInvitations();
       return { ...collaborators, readyUserIds, pendingUsers: pending.users, pendingHasMore: pending.hasMore,
+        ...(pending.moreUsers ? { pendingMoreUsers: pending.moreUsers } : {}),
+        ...(pending.truncated ? { pendingTruncated: true } : {}),
         ...(pending.incomplete ? { pendingUnavailable: true } : {}) };
     } catch {
       return { ...collaborators, readyUserIds, pendingUnavailable: true };
