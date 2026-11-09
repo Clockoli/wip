@@ -415,10 +415,14 @@ export class GitHubClient {
       }
       ids.add(user.id); logins.add(user.login.toLowerCase());
     }
-    return { users: collaborators.slice(0, 4).map(user => ({
+    const profiles = collaborators.map(user => ({
       id: user.id, login: user.login, avatarUrl: githubAvatarUrl(user.avatar_url, user.id),
-    })), hasMore: collaborators.length > 4,
-    avatarUsers: collaborators.map(user => ({ login: user.login, avatarUrl: githubAvatarUrl(user.avatar_url, user.id) })) };
+    }));
+    return { users: profiles.slice(0, 4), hasMore: profiles.length > 4,
+      ...(profiles.length > 4 ? { moreUsers: profiles.slice(4) } : {}),
+      // GitHub provides 100 collaborators per page. A full page might have more.
+      ...(profiles.length === 100 ? { truncated: true } : {}),
+      avatarUsers: profiles.map(({ login, avatarUrl }) => ({ login, avatarUrl })) };
   }
 
   async listRepositoryCollaboratorProfiles() {
@@ -467,9 +471,15 @@ export class GitHubClient {
         ids.add(user.id); logins.add(user.login.toLowerCase());
         users.push({ id: user.id, login: user.login, avatarUrl: githubAvatarUrl(user.avatar_url, user.id) });
       }
-      if (users.length > 4 || invitations.length < 100) return { users: users.slice(0, 4), hasMore: users.length > 4 };
+      if (users.length > 4 || invitations.length < 100) {
+        return { users: users.slice(0, 4), hasMore: users.length > 4,
+          ...(users.length > 4 ? { moreUsers: users.slice(4) } : {}),
+          ...(invitations.length === 100 ? { truncated: true } : {}) };
+      }
     }
-    return { users: users.slice(0, 4), hasMore: false, incomplete: true };
+    return { users: users.slice(0, 4), hasMore: users.length > 4,
+      ...(users.length > 4 ? { moreUsers: users.slice(4) } : {}),
+      incomplete: true };
   }
 
   async getAuthenticatedUser() { return (await this.getAuthenticatedIdentity()).login; }
