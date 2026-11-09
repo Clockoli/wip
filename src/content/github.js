@@ -4735,8 +4735,9 @@
       .activity-list .entry-actions .entry-edit:hover { background:var(--bgColor-muted,var(--ck-bg-muted)); color:var(--fgColor-default,var(--ck-fg)) }
       .activity-list .entry-actions .entry-delete:hover { border-color:var(--borderColor-danger-muted,var(--ck-border-danger)); background:var(--bgColor-danger-muted,var(--ck-bg-danger)); color:var(--fgColor-danger,var(--ck-danger)) }
       .activity-list .entry-actions.dirty .entry-edit,.activity-list .entry-actions.dirty .entry-delete,.activity-list .entry-actions.dirty .entry-track-control { display:none }
-      :host(.times-surface) .bulk-time { margin-top:18px; padding:0; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
-      :host(.times-surface) .bulk-time summary { padding:10px 12px; font-weight:600 }
+      :host(.times-surface) .bulk-time { margin-top:18px; padding:0 12px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.times-surface) .bulk-time[open] { padding-bottom:12px }
+      :host(.times-surface) .bulk-time summary { padding:10px 0; font-weight:600 }
       :host(.times-surface) .bulk-time-examples { margin:8px 0 12px; padding:10px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:var(--bgColor-default,var(--ck-bg)) }
       :host(.times-surface) .bulk-time-examples strong { display:block; font-size:12px }
       :host(.times-surface) .bulk-time-examples pre { margin:4px 0 0; color:var(--fgColor-muted,var(--ck-fg-muted)); font:12px/1.6 var(--fontStack-monospace,ui-monospace,monospace); white-space:pre-wrap; overflow-wrap:anywhere }
