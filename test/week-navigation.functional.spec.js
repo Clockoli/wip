@@ -363,7 +363,9 @@ async function expectVisibleTimelineInsideSelectedWeek(root) {
 }
 
 test('Activity and GitHub popup share Monday–Sunday Timeline and Calendar week navigation', async () => {
-  test.setTimeout(90000);
+  // This integration scenario covers Activity, the GitHub panel, and the toolbar popup,
+  // including many viewport changes; 90 seconds is too short on loaded CI runners.
+  test.setTimeout(180000);
   const fixedNow = new Date(); fixedNow.setSeconds(0, 0);
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-week-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-week-profile-'));
