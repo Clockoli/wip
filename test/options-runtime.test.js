@@ -2945,6 +2945,8 @@ test('removing inherited GitHub access reports that the member still has access'
   assert.match(feedback.textContent, /still have repository access/i);
   assert.match(feedback.textContent, /team or organization/i);
   assert.match(feedback.className, /warning/);
+  assert.equal(feedback.querySelector('a').href, 'https://github.com/acme/time-data/settings/access');
+  assert.equal(feedback.querySelector('a').target, '_blank');
   assert.equal(feedback.focused, true);
   assert.ok(row.querySelector('.repository-team-member'), 'inherited collaborator should still appear');
 });
@@ -2967,6 +2969,7 @@ test('GitHub remove failure is immediately visible in Team and leaves the action
   assert.equal(feedback.parentNode, row.querySelector('.repository-team'));
   assert.match(feedback.textContent, /GitHub denied removing/);
   assert.match(feedback.className, /error/);
+  assert.equal(feedback.querySelector('a').href, 'https://github.com/acme/time-data/settings/access');
   assert.equal(feedback.focused, true);
   assert.equal(remove.disabled, false);
 });
