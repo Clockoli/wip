@@ -147,7 +147,7 @@ function exactKeys(value, keys) {
     && keys.every(key => Object.prototype.hasOwnProperty.call(value, key));
 }
 
-function parseMarker(text) {
+export function parseMarker(text) {
   if (typeof text !== 'string' || new TextEncoder().encode(text).byteLength > MAX_MARKER_BYTES) {
     throw new OnboardingError('The existing Clockoli repository marker is too large.', 'incompatible_storage_format');
   }
