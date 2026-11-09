@@ -377,6 +377,7 @@ test('repository collaborator read checks sender and configured destination befo
   const calls = [];
   let pendingFails = false, pendingIncomplete = false;
   const context = vm.createContext({ assertMessageAllowed, chrome: { runtime: { getURL: () => origin } },
+    readyRepositoryMemberIds: async () => [],
     store: {}, requireConfiguredDestinationId: async (_store, id) => {
       calls.push(['destination', id]);
       if (id !== 'github:20') throw new Error('The requested destination is not configured.');
@@ -402,15 +403,15 @@ test('repository collaborator read checks sender and configured destination befo
   assert.deepEqual(calls, [['destination', 'github:21']]);
   assert.deepEqual(JSON.parse(JSON.stringify(await context.handle(request, extension))),
     { users: [{ id: 42, login: 'bob', avatarUrl: null }], hasMore: false,
-      pendingUsers: [{ id: 43, login: 'alice', avatarUrl: null }], pendingHasMore: false });
+      readyUserIds: [], pendingUsers: [{ id: 43, login: 'alice', avatarUrl: null }], pendingHasMore: false });
   assert.deepEqual(calls.slice(1), [['destination', 'github:20'], ['snapshot', 'github:20'], ['verified'], ['listed'], ['pending']]);
   pendingIncomplete = true;
   assert.deepEqual(JSON.parse(JSON.stringify(await context.handle(request, extension))),
     { users: [{ id: 42, login: 'bob', avatarUrl: null }], hasMore: false,
-      pendingUsers: [{ id: 43, login: 'alice', avatarUrl: null }], pendingHasMore: false, pendingUnavailable: true });
+      readyUserIds: [], pendingUsers: [{ id: 43, login: 'alice', avatarUrl: null }], pendingHasMore: false, pendingUnavailable: true });
   pendingFails = true;
   assert.deepEqual(JSON.parse(JSON.stringify(await context.handle(request, extension))),
-    { users: [{ id: 42, login: 'bob', avatarUrl: null }], hasMore: false, pendingUnavailable: true });
+    { users: [{ id: 42, login: 'bob', avatarUrl: null }], hasMore: false, readyUserIds: [], pendingUnavailable: true });
 });
 
 test('repository access removal validates payload and sender before loading a destination or mutating', async () => {
