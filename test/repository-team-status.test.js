@@ -56,3 +56,8 @@ test('missing repository context never triggers a remote storage check', async (
   assert.deepEqual(await readyRepositoryMemberIds(github, 'main', []), []);
   assert.deepEqual(calls, []);
 });
+
+test('renamed GitHub accounts keep storage readiness through their stable ID and stored login', async () => {
+  const { github } = fixture();
+  assert.deepEqual(await readyRepositoryMemberIds(github, 'main', [{ id: 2, login: 'renamed-bob' }]), [2]);
+});
