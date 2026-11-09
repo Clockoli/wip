@@ -1407,30 +1407,50 @@ test('hydrates running and pending entries with Clockoli block styling', async (
   expect(state.blocks.find(block => block.key === 'entry:b').pending).toBeTruthy();
 });
 
-test('a completed record of the running task offers Stop and save rather than disabled Start', async ({ page }) => {
-  const now = Date.now();
-  await mount(page, { items: [
-    { id: 'entry:old', url: 'https://example.com/c', title: 'Task C', startedAt: now - 3 * HOUR, endedAt: now - 2 * HOUR, rowId: 'one', isEditable: true, isCurrentTask: true, isStartDisabled: true },
-    { id: 'active:now', url: 'https://example.com/c', title: 'Task C', startedAt: now - 120_000, endedAt: null, rowId: 'one', isRunning: true, isEditable: false },
-  ] });
-  await page.locator('#timeline .task[data-task-key="entry:old"]').click();
-  const action = page.locator('#timeline .clockoli-timeline-action.primary');
-  await expect(action).toHaveText('Stop and save');
-  await expect(action).toBeEnabled();
-  await page.locator('#timeline .task[data-task-key="active:now"]').click();
-  await expect(action).toHaveText('Stop and save');
-  await expect(action).toBeEnabled();
-  await page.locator('#timeline .task[data-task-key="entry:old"]').click();
-  await action.click();
-  expect(await page.evaluate(() => window.__calls)).toContainEqual(['stop', 'entry:old']);
-  expect(await page.evaluate(() => window.__calls)).not.toContainEqual(['start', 'entry:old']);
-  await page.evaluate(() => {
-    window.__items = window.__items.filter(item => item.id !== 'active:now').map(item => ({ ...item, isCurrentTask: false, isStartDisabled: false }));
-    window.__timeline.update({ items: window.__items });
+for (const mode of ['timeline', 'calendar']) {
+  test(`a completed record of the currently tracked task cannot stop its running entry in ${mode}`, async ({ page }) => {
+    const now = Date.parse('2026-10-14T12:00:00Z');
+    await page.clock.setFixedTime(now);
+    await mount(page, { weeklyCalendar: true, items: [
+      { id: 'entry:old', url: 'https://example.com/c', title: 'Task C', startedAt: now - 3 * HOUR,
+        endedAt: now - 2 * HOUR, rowId: 'one', isEditable: true, isCurrentTask: true, isStartDisabled: true },
+      { id: 'active:now', url: 'https://example.com/c', title: 'Task C', startedAt: now - 120_000,
+        endedAt: null, rowId: 'one', isRunning: true, isEditable: false },
+    ] });
+    if (mode === 'calendar') await page.evaluate(() => window.__timeline.setViewMode('calendar'));
+    const selector = mode === 'calendar' ? '.calendar-task' : '.task';
+    const past = page.locator(`#timeline ${selector}[data-task-key="entry:old"]`).first();
+    const running = page.locator(`#timeline ${selector}[data-task-key="active:now"]`).first();
+    const details = page.locator('#timeline .details');
+    const action = details.locator('.clockoli-timeline-action.primary');
+
+    await past.hover();
+    await expect(details).toContainText('Task C');
+    await expect(action).toHaveText('Track again');
+    await expect(action).toBeDisabled();
+    await expect(details.getByRole('button', { name: 'Stop and save' })).toHaveCount(0);
+    expect(await page.evaluate(() => window.__calls)).toEqual([]);
+
+    await running.hover();
+    await expect(action).toHaveText('Stop and save');
+    await expect(action).toBeEnabled();
+    await action.click();
+    await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([['stop', 'active:now']]);
+
+    await page.evaluate(() => {
+      window.__items = window.__items.filter(item => item.id !== 'active:now')
+        .map(item => ({ ...item, isStartDisabled: false }));
+      window.__timeline.update({ items: window.__items, now: Date.now() });
+    });
+    await past.hover();
+    await expect(action).toHaveText('Track again');
+    await expect(action).toBeEnabled();
+    await action.click();
+    await expect.poll(() => page.evaluate(() => window.__calls)).toEqual([
+      ['stop', 'active:now'], ['start', 'entry:old'],
+    ]);
   });
-  await expect(action).toHaveText('Track again');
-  await expect(action).toBeEnabled();
-});
+}
 
 test('completed details expose Edit even when the task is currently running', async ({ page }) => {
   const now = Date.now();
