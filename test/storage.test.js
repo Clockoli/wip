@@ -482,7 +482,7 @@ test('billable rates and settings export stay local, version changes, and import
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   await store.saveConfiguration({ owner: 'acme', repo: 'time', branch: 'main', recentDays: 7 }, 'secret', {});
   assert.deepEqual(await store.getLocalPreferences(), {
-    recentDays: 7, projects: [], interfaceWidth: 'contained', otherProjectName: 'Other', otherProjectClient: '', reportingUtc: false, showQueueDiagnostics: false, clientRates: {}, invoicing: invoicingSettings(), revision: 0, exportedRevision: 0, exportRecommended: false,
+    recentDays: 7, projects: [], interfaceWidth: 'contained', toolbarClickMode: 'tab', otherProjectName: 'Other', otherProjectClient: '', reportingUtc: false, showQueueDiagnostics: false, clientRates: {}, invoicing: invoicingSettings(), revision: 0, exportedRevision: 0, exportRecommended: false,
   });
   const saved = await store.saveBillingSettings({ clientRates: { 'client-1': { alice: [{ amountMinorPerHour: 12500, currency: 'EUR', currencyPosition: 'suffix', startDate: '', endDate: '' }] } }, invoicing: { clients: [{ id: 'client-1', name: 'Client One' }] } });
   assert.equal(saved.revision, 1);
