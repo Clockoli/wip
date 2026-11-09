@@ -468,6 +468,13 @@ function avatarAccessMenu(article, destination, root, user, kind) {
   const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-repository-user';
   remove.textContent = kind === 'pending' ? `Cancel invitation for @${user.login}` : `Remove @${user.login}`;
   menu.append(label, remove);
+  const showGitHubAccessLink = feedback => {
+    const link = document.createElement('a');
+    link.href = `https://github.com/${encodeURIComponent(destination.owner)}/${encodeURIComponent(destination.repo)}/settings/access`;
+    link.target = '_blank'; link.rel = 'noreferrer';
+    link.textContent = 'Manage repository access on GitHub';
+    feedback.append(' ', link);
+  };
   trigger.setAttribute('aria-expanded', 'false'); trigger.setAttribute('aria-haspopup', 'true');
   const outside = event => { if (!wrapper.contains(event.target)) close(); };
   const close = () => {
@@ -521,10 +528,12 @@ function avatarAccessMenu(article, destination, root, user, kind) {
         feedback.textContent = kind === 'pending' ? `Invitation for @${outcome.login} cancelled.` : `@${outcome.login} removed from the repository.`;
       }
       feedback.className = `repository-manage-feedback form-feedback ${!refreshed || stillListed ? 'warning' : 'success'}`;
+      if (!refreshed || stillListed) showGitHubAccessLink(feedback);
       feedback.focus();
     } catch (error) {
       feedback.textContent = error.message;
       feedback.className = 'repository-manage-feedback form-feedback error';
+      showGitHubAccessLink(feedback);
       feedback.focus();
     } finally { remove.disabled = false; }
   });
