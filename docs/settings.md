@@ -37,6 +37,8 @@ Choose what clicking the browser toolbar icon does:
 
 The choice applies immediately and survives browser and extension worker restarts. It stays on this browser and is not included in GitHub data or exported settings. Before setup is complete, opening Clockoli takes you to Settings.
 
+The Clockoli button shown on GitHub pages uses the same choice. When set to quick popup, it opens the browser action popup where supported (Chrome 127+); if the browser cannot open it, Activity is the fallback. In the quick popup, the **Open Activity in a new tab** button stays visible while entries scroll.
+
 ## Projects and routing
 
 Ordered URL rules choose the time repository for each new Start. See [Projects and routing](projects-and-routing.md).
