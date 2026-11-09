@@ -201,7 +201,12 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     editEndInstant = localTimestamp(day && startTime ? dateValue(day) : dateValue(editEndInstant), endTime) || editEndInstant;
   });
   const setError = text => { error.textContent = text; error.hidden = !text; };
-  const updateSearchPopup = () => { searchPopup.hidden = searchStatus.hidden && !suggestions.childElementCount; };
+  const hasTaskUrl = () => {
+    try { normalizeTaskUrl(search.value.trim()); return true; } catch { return false; }
+  };
+  const updateSearchPopup = () => {
+    searchPopup.hidden = hasTaskUrl() || (searchStatus.hidden && !suggestions.childElementCount);
+  };
   const setSearchBusy = value => {
     searchStatus.hidden = !value; search.setAttribute('aria-busy', String(value)); updateSearchPopup();
   };
@@ -215,7 +220,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   };
   const update = () => {
     suggestions.replaceChildren();
-    if (taskSearch.query && !selected) {
+    if (taskSearch.query && !selected && !hasTaskUrl()) {
       for (const task of taskSearch.matches(tasks, () => true, 8)) {
         const option = document.createElement('button'); option.type = 'button'; option.className = 'add-time-option';
         const optionTitle = document.createElement('strong'); optionTitle.textContent = task.title || task.taskUrl;
