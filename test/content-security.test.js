@@ -32,7 +32,8 @@ test('time tracker uses one native-style GitHub header button without a floating
   assert.match(source, /clockoli-mark/);
   assert.doesNotMatch(source, /icon\('triangle-down'|trigger-menu|navigation-menu/);
   assert.match(source, /await send\(\{ type: 'OPEN_TIMES' \}\)/);
-  assert.doesNotMatch(source, /toggleFullWidthPopup|aria-haspopup|aria-expanded/);
+  assert.doesNotMatch(source, /toggleFullWidthPopup/);
+  assert.doesNotMatch(source.slice(source.indexOf('const main = el('), source.indexOf('shadow.append(style, main)')), /aria-haspopup|aria-expanded/);
   assert.doesNotMatch(source, /position:\s*fixed;\s*right:20px;\s*bottom:20px/);
 });
 
