@@ -199,6 +199,7 @@ function render() {
       descriptionFeedback.setAttribute('role', 'status');
       descriptionFeedback.setAttribute('aria-live', 'polite');
       const descriptionSave = button('Save', 'quick-button quick-description-save', () => saveDescription());
+      descriptionSave.addEventListener('mousedown', event => event.preventDefault());
       descriptionActions.append(descriptionFeedback, descriptionSave);
       descriptionWrap.append(description, descriptionActions);
       card.append(descriptionWrap);
