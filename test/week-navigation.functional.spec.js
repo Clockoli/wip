@@ -364,7 +364,10 @@ async function expectVisibleTimelineInsideSelectedWeek(root) {
 
 test('Activity preserves Monday–Sunday Timeline and Calendar week navigation', async () => {
   test.setTimeout(90000);
-  const fixedNow = new Date('2026-10-14T12:00:00Z');
+  // Keep the fixture in the browser's current week; pin all test clocks to the
+  // same instant so a running block cannot disappear into a past week.
+  const fixedNow = new Date();
+  fixedNow.setSeconds(0, 0);
   const clockOffset = fixedNow.getTime() - Date.now();
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-week-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-week-profile-'));
