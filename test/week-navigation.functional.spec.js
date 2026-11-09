@@ -365,25 +365,18 @@ async function expectVisibleTimelineInsideSelectedWeek(root) {
 test('Activity preserves Monday–Sunday Timeline and Calendar week navigation', async () => {
   // This browser scenario exercises multiple views, screen sizes, and week transitions.
   test.setTimeout(180000);
-  // Keep the fixture in the browser's current week; pin all test clocks to the
-  // same instant so a running block cannot disappear into a past week.
-  const fixedNow = new Date();
-  fixedNow.setSeconds(0, 0);
-  const clockOffset = fixedNow.getTime() - Date.now();
+  // Activity is an extension page, so Playwright's clock also controls its
+  // renderer. Use one fixed instant for the page and service worker fixture.
+  const fixedNow = new Date('2026-10-14T12:00:00Z');
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-week-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-week-profile-'));
   let context;
   try {
     await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
     const rendererPath = join(extension, 'src/content/github.js');
-    // The isolated content-script world does not follow page.clock.
-    // Pin it too so the running timer cannot overlap the completed fixture.
-    await writeFile(rendererPath, `const RealDate = Date;
-    globalThis.Date = class extends RealDate {
-      constructor(...args) { super(...(args.length ? args : [RealDate.now() + ${clockOffset}])); }
-      static now() { return RealDate.now() + ${clockOffset}; }
-    };
-    ` + (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    // Do not inject another Date shim here: page.clock.setFixedTime() already
+    // freezes the Activity page, and a second offset shifts the timer twice.
+    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
     const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
     manifest.background = { service_worker: 'test-worker.js' };
     await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
