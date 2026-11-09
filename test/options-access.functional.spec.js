@@ -346,7 +346,7 @@ test('repository disclosures rotate in Chromium and remain usable at narrow widt
       const icon = row.locator('.repository-disclosure-icon');
       await expect(icon).toHaveAttribute('aria-hidden', 'true');
       await expect.poll(() => icon.evaluate(element => getComputedStyle(element).transform)).toBe('none');
-      await row.locator(':scope > summary').click();
+      await row.locator('.repository-heading-title').click();
       await expect(row).toHaveAttribute('open', '');
       await expect.poll(() => icon.evaluate(element => getComputedStyle(element).transform)).toBe('matrix(-1, 0, 0, -1, 0, 0)');
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -432,20 +432,21 @@ test('repository field checks only on explicit Check or Enter, with visible acti
   } finally { await closeOptions(fixture); }
 });
 
-test('repository avatar menu closes on outside click without requesting access removal', async () => {
+test('Team member menu closes on outside click without requesting access removal', async () => {
   const fixture = await openOptions();
   try {
     const { page } = fixture;
     const row = page.locator('.time-repository').first();
-    const avatar = row.locator('.repository-collaborator').first();
+    await row.locator('.repository-heading-title').click();
+    const trigger = row.locator('.repository-member-actions-button').first();
     const menu = row.locator('.repository-avatar-actions');
-    await avatar.click();
-    await expect(avatar).toHaveAttribute('aria-expanded', 'true');
+    await trigger.click();
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true');
     await expect(menu).toBeVisible();
     await page.locator('#connection-title').click();
     await expect(menu).toBeHidden();
-    await expect(avatar).toHaveAttribute('aria-expanded', 'false');
-    await expect(row).not.toHaveAttribute('open', '');
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    await expect(row).toHaveAttribute('open', '');
     await expectReadOnlyRequests(fixture.worker);
   } finally { await closeOptions(fixture); }
 });
