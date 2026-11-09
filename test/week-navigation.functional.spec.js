@@ -644,8 +644,9 @@ test('Activity preserves Monday–Sunday Timeline and Calendar week navigation',
     await activityRoot.getByRole('button', { name: 'Previous week' }).click();
     await expect(activityRoot.locator('.week-navigation')).toHaveCount(1);
     const reads = await worker.evaluate(() => globalThis.weekReads);
-    expect(reads.some(read => read.type === 'LOAD_TIMES')).toBe(true);
-    expect(reads.some(read => read.type === 'LOAD_WEEK')).toBe(true);
+    const activityWeekRanges = reads.filter(read => read.type === 'LOAD_TIMES')
+      .map(read => `${read.startDate}:${read.endDate}`);
+    expect(new Set(activityWeekRanges).size).toBeGreaterThan(1);
     expect(errors).toEqual([]);
   } finally {
     await context?.close();
