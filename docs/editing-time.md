@@ -6,7 +6,7 @@ Every change is saved locally first and synchronized with GitHub in the backgrou
 
 ## Add a single entry
 
-The **Add time** button in the upper right of **Top tasks** and **Activity** adds one entry or entries for multiple selected days; it is not available in the GitHub-page stopwatch panel.
+The **Add time** button in the upper right of **Top tasks** and **Activity** adds one entry or entries for multiple selected days.
 
 1. Search tracked tasks from all joined people in the connected time repositories by title or identity, including imported tasks without an HTTP(S) URL, or paste a new HTTP(S) task URL.
 2. Choose Start and optional End as keyboard-editable local times, followed by one native Date picker for the start day. Clicking either time field selects its entire current value for immediate replacement. Enter `1000`, Tab, `1200` for 10:00–12:00; leaving either field formats four digits as `HH:MM`.
@@ -62,26 +62,25 @@ If the batch cannot fit or overlaps another device's work, it stays locally stor
 
 ## Edit a completed entry
 
-**Edit time** opens the same task/date/time/optional-description form used by **Add time**, prefilled with the selected completed record, without a duplicate task-title field. It is available from Activity List and from **Edit** in Timeline or Calendar details in Activity, the toolbar popup, and the GitHub-page panel.
+**Edit time** opens the same task/date/time/optional-description form used by **Add time**, prefilled with the selected completed record, without a duplicate task-title field. It is available from Activity List and from **Edit** in Activity's Timeline or Calendar details.
 
 - Editing the same task preserves its title; selecting another task uses its title, while a newly pasted URL has no title.
 - An imported task without an HTTP(S) URL can replace the task only when it already exists in the entry's time repository. Clockoli verifies its identity against that repository before queuing the edit and again before synchronizing. An imported task from another repository cannot silently move the entry there; choose a task in the same repository or use an HTTP(S) URL.
-- In the GitHub-page panel, task suggestions for a completed entry are limited to titled imported tasks in that entry's time repository. The panel checks the stored entry before searching and does not expose the full cross-repository catalog to the page.
 - The one Date picker shows the entry's start day; changing it retains the two time-of-day fields. End is on that day unless its time is earlier than Start, in which case it is on the following day.
 - Editing Start moves End by the same amount, preserving the interval's exact duration (including seconds and overnight dates). Editing only End keeps Start unchanged. Moving the Date in the completed-entry form also moves the entire interval.
 - An unchanged range preserves the original timestamps, including seconds.
 - Existing zero-duration or longer-than-24-hour records remain editable without changing their times; an interval changed to exceed 24 hours is rejected rather than shortened.
 - Cancel does not mutate the record.
-- Escape closes the form on the first press, including when the Task search field is focused; it does not save the draft or close the underlying panel.
+- Escape closes the form on the first press, including when the Task search field is focused; it does not save the draft or close Activity.
 
 You can also drag and resize entries in Timeline and Calendar; see [Move and resize entries](activity.md#move-and-resize-entries).
 
 ## Correct times inline
 
-Each completed row in the panel and in Activity List has one compact `HH : MM - HH : MM` range. The four hour/minute values stay on one line; their accessible Start and Stop labels remain available to assistive technology. The underlying Start and Stop fields preserve each timestamp's stored timezone offset.
+Each completed row in Activity List has one compact `HH : MM - HH : MM` range. The four hour/minute values stay on one line; their accessible Start and Stop labels remain available to assistive technology. The underlying Start and Stop fields preserve each timestamp's stored timezone offset.
 
 - Type an hour or minute directly in the always-visible Start/Stop inputs. Changing Start moves Stop by the same amount and preserves the duration; changing Stop alone leaves Start fixed.
-- Wheel and trackpad gestures never mutate time values or trap panel scrolling, and there are no `−`/`+` step controls.
+- Wheel and trackpad gestures never mutate time values or trap page scrolling, and there are no `−`/`+` step controls.
 - A direct correction remains a local draft until **Save time** is selected; **Cancel** discards it.
 - All relevant row controls are disabled while a mutation is in flight.
 - Validation or network errors keep the draft available for correction or retry.
