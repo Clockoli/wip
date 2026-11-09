@@ -125,12 +125,12 @@ test('standalone selects use an inset custom caret while the GitHub header caret
   assert.doesNotMatch(content, /trigger-menu[^}]*translateX/);
 });
 
-test('GitHub header icon opens Activity in its own tab without a dropdown', () => {
+test('GitHub header icon follows the preferred surface without a dropdown', () => {
   assert.match(content, /trigger-main/);
   assert.doesNotMatch(content, /trigger-menu|navigation-menu|renderNavigationMenu/);
   const start = content.indexOf("main.addEventListener('click'");
   const click = content.slice(start, content.indexOf('shadow.append(style, main)', start));
-  assert.match(click, /send\(\{ type: 'OPEN_TIMES' \}\)/);
+  assert.match(click, /send\(\{ type: 'OPEN_PREFERRED_SURFACE' \}\)/);
   assert.doesNotMatch(click, /menuOpen = !menuOpen|renderMenu\(/);
   assert.doesNotMatch(content, /renderFullWidthPopup|toggleFullWidthPopup|full-width-popup/);
 });
