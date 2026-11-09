@@ -3184,6 +3184,31 @@ test('activity projection reports indexed IDs replaced by queued deletes and edi
   assert.deepEqual(projected.records.map(record => record.taskUrl), ['https://example.org/new']);
 });
 
+test('running Add time rejects locally known overlapping entries before queuing', async () => {
+  const previous = entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z');
+  for (const source of ['recent', 'week', 'queued']) {
+    const github = new FakeGitHub(), store = new MemoryStore();
+    if (source === 'recent') store.value.recentCache = [previous];
+    if (source === 'week') store.value.summaryCache = { weekEntries: [previous] };
+    if (source === 'queued') store.value.pendingWrites = [{
+      operation: 'addTime', id: 'pending-add', entry: previous, status: 'pending',
+    }];
+    const tracker = service({ github, store });
+    const before = structuredClone(store.value);
+    await assert.rejects(() => tracker.addTime({
+      taskUrl: issue.url, startedAt: '2026-08-18T07:30:00.000Z',
+    }, { background: true }), /overlap/i, `overlap in ${source} must be rejected`);
+    assert.deepEqual(store.value, before, 'a rejected start must not mutate local state');
+    assert.deepEqual(github.reads, [], 'local overlap checks must work offline');
+
+    const adjacent = await tracker.addTime({
+      taskUrl: issue.url, startedAt: '2026-08-18T08:00:00.000Z',
+    }, { background: true });
+    assert.equal(adjacent.active.startedAt, '2026-08-18T08:00:00.000Z');
+    assert.equal(adjacent.active._pending, true);
+  }
+});
+
 test('Add time with no End accepts a running timer locally before any GitHub access', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), tracker = service({ github, store });
   const result = await tracker.addTime({ taskUrl: issue.url,
