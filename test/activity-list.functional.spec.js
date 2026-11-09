@@ -2454,6 +2454,18 @@ test('Activity List icon switches from Start to Stop and back in the extension p
     await bulk.locator('summary').click();
     const examples = bulk.locator('.bulk-time-examples');
     await expect(examples).toBeVisible();
+    const bulkSpacing = await bulk.evaluate(element => {
+      const border = element.getBoundingClientRect();
+      const content = [element.querySelector('.bulk-time-examples'), element.querySelector('.bulk-time-input'),
+        [...element.querySelectorAll('button')].find(button => button.textContent === 'Add time')]
+        .map(node => node.getBoundingClientRect());
+      return { left: Math.min(...content.map(box => box.left)) - border.left,
+        right: border.right - Math.max(...content.map(box => box.right)),
+        bottom: border.bottom - content[2].bottom };
+    });
+    expect(bulkSpacing.left).toBeGreaterThanOrEqual(12);
+    expect(bulkSpacing.right).toBeGreaterThanOrEqual(12);
+    expect(bulkSpacing.bottom).toBeGreaterThanOrEqual(12);
     await expect(examples).toContainText('2026/08/21 https://example.com/task Search relevance 6:00');
     await expect(examples).toContainText('2026-08-22 https://github.com/acme/app/issues/42 Fix ranking 6.5');
     const bulkInput = bulk.getByRole('textbox', { name: 'Bulk time entries' });
