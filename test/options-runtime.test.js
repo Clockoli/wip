@@ -3010,10 +3010,71 @@ test('repository avatar hover uses the GitHub login and overflow does not impers
   const avatar = row.querySelector('.repository-collaborator');
   assert.equal(avatar.dataset.login, '@New');
   assert.equal(avatar.dataset.clockoliTooltip, '@New');
-  assert.equal(row.querySelector('.repository-collaborator-more').textContent, '…');
+  const more = row.querySelector('.repository-collaborator-more');
+  assert.equal(more.tagName, 'details');
+  assert.match(more.querySelector('summary').textContent, /More collaborators/i);
+  assert.match(more.querySelector('.repository-view-all').href, /github.com\/acme\/time-data\/settings\/access/);
   assert.equal(row.querySelectorAll('.repository-add-teammate').length, 1);
   const css = await readFile(new URL('../src/options/options.css', import.meta.url), 'utf8');
   assert.doesNotMatch(css, /\.repository-collaborator\[data-login\]:hover::after/);
+});
+
+test('More collaborators and pending invitations expand into verified full member rows', async () => {
+  const users = Array.from({ length: 5 }, (_, index) => ({ id: 20 + index, login: `member${index}`, avatarUrl: null }));
+  const invites = Array.from({ length: 5 }, (_, index) => ({ id: 30 + index, login: `invitee${index}`, avatarUrl: null }));
+  const destination = { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 };
+  const page = harness({ collaboratorReplies: true, reply: request => request.type === 'LOAD_REPOSITORY_COLLABORATORS'
+    ? { users: users.slice(0, 4), moreUsers: users.slice(4), hasMore: true,
+      pendingUsers: invites.slice(0, 4), pendingMoreUsers: invites.slice(4), pendingHasMore: true } : {} });
+  page.render({ ...connectedState, destinations: [destination] });
+  await new Promise(resolve => setImmediate(resolve));
+  const article = page.nodes.get('time-repository-list').children[0];
+  const more = article.querySelector('.repository-collaborator-more');
+  const pending = article.querySelector('.repository-invitation-more');
+  assert.equal(more.tagName, 'details');
+  assert.match(more.querySelector('summary').textContent, /More collaborators \(1\)/);
+  assert.equal(more.querySelector('.repository-team-member-identity').children[0].textContent, '@member4');
+  assert.match(pending.querySelector('summary').textContent, /More pending invitations \(1\)/);
+  assert.equal(pending.querySelector('.repository-team-member-identity').children[0].textContent, '@invitee4');
+  assert.equal(more.querySelectorAll('.remove-repository-user').length, 1);
+  more.open = true; pending.open = true;
+  page.render({ ...connectedState, destinations: [destination] });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(page.nodes.get('time-repository-list').children[0], article);
+  assert.equal(article.querySelector('.repository-collaborator-more'), more);
+  assert.equal(more.open, true);
+  assert.equal(pending.open, true);
+});
+
+test('Settings refresh preserves open Time repositories, invitation controls and copy feedback', async () => {
+  const destination = { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 };
+  const current = { ...connectedState, destinations: [destination] };
+  const page = harness();
+  page.render(current);
+  const article = page.nodes.get('time-repository-list').children[0];
+  article.open = true;
+  const instructions = article.querySelector('.teammate-instructions');
+  instructions.open = true; instructions.hidden = false;
+  const setup = article.querySelector('.teammate-setup');
+  setup.open = true;
+  const input = article.querySelector('.teammate-search'); input.value = 'Someone';
+  const copy = article.querySelector('.teammate-invitation-link').querySelector('button');
+  page.context.navigator = { clipboard: { async writeText() { page.render(current); } } };
+  await copy.listeners.click();
+  assert.equal(page.nodes.get('time-repository-list').children[0], article);
+  assert.equal(article.open, true);
+  assert.equal(instructions.open, true);
+  assert.equal(instructions.hidden, false);
+  assert.equal(setup.open, true);
+  assert.equal(input.value, 'Someone');
+  assert.match(article.querySelector('.teammate-invitation-link').querySelector('.form-feedback').textContent, /copied/i);
+  page.render({ ...current, destinations: [{ ...destination, verificationStatus: 'access_checked' }] });
+  assert.equal(page.nodes.get('time-repository-list').children[0], article);
+  assert.equal(article.open, true);
+  assert.equal(instructions.open, true);
+  page.render({ ...current, auth: { mode: 'github_app', githubLogin: 'other' } });
+  assert.notEqual(page.nodes.get('time-repository-list').children[0], article,
+    'a different GitHub identity must not inherit the previous account’s invitation form');
 });
 
 test('pending GitHub invitations show distinct noninteractive avatars and accessible status', async () => {
