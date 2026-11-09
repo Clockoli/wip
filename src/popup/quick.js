@@ -106,7 +106,7 @@ function saveDescription() {
       if (activeKey(state.active) !== key) break;
       state.active = { ...state.active, description };
     }
-    descriptionStatus = 'Saved';
+    if (activeKey(state.active) === key) descriptionStatus = 'Saved';
   })().catch(error => {
     message = error?.message || 'Could not save description.';
   }).finally(() => {
@@ -313,6 +313,10 @@ async function mutate(request, kind) {
   message = '';
   render();
   try {
+    // Finish any in-flight description edit before stopping or switching tasks.
+    if (descriptionSaving) await descriptionSaving;
+    if (state.active && ['STOP', 'SWITCH_TASK'].includes(request.type))
+      request = { ...request, description: draftDescription() };
     const result = await send(request);
     if (kind === 'start') state.active = result;
     else if (kind === 'switch') state.active = result?.active || null;
