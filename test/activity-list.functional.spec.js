@@ -2153,6 +2153,8 @@ test('toolbar popup loads the full week before moving an entry past its neighbor
     page.on('pageerror', error => errors.push(error.message));
     worker.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.setViewportSize({ width: 420, height: 650 });
+    // Monday's sample entries must already be completed, even when CI runs on Monday morning.
+    await page.clock.install({ time: currentWeekFriday() });
     await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
     const root = page.locator('#clockoli-popup-root');
     const source = root.locator('.task-timeline-host .task[data-task-key="entry:record"]');
