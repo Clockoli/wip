@@ -329,7 +329,7 @@ function renderTeammatePicker(details, destination, article) {
   input.addEventListener('input', () => {
     const current = ++generation;
     clearTimeout(searchTimer); selected = null; invite.disabled = true;
-    choices.replaceChildren(); feedback.textContent = '';
+    choices.replaceChildren(); feedback.textContent = ''; feedback.className = 'teammate-feedback form-feedback';
     const query = input.value.trim();
     if (query.length < 2) return;
     searchTimer = setTimeout(async () => {
