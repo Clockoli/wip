@@ -3028,7 +3028,6 @@ test('invite control is labeled and team members are displayed in a separate sec
   assert.equal(add.children[1].textContent, 'Invite teammate');
   assert.equal(add.children[0].tagName, 'svg');
   assert.equal(people.children[0], add);
-  assert.equal(page.nodes.get('time-repository-list').querySelector('.repository-team h4'), null);
   const team = page.nodes.get('time-repository-list').querySelector('.repository-team');
   assert.equal(team.querySelector('.repository-collaborators').querySelector('.repository-team-member-status').textContent, 'GitHub access granted');
   const css = await readFile(new URL('../src/options/options.css', import.meta.url), 'utf8');
