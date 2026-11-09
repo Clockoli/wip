@@ -158,12 +158,12 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   overlapStatus.setAttribute('role', 'status'); overlapStatus.textContent = 'Checking overlap and syncing queued time with GitHub…';
   overlapStatus.hidden = true;
   const descriptionLabel = document.createElement('label'); descriptionLabel.textContent = 'Description (optional)'; descriptionLabel.htmlFor = 'add-time-description';
-  const description = document.createElement('textarea'); description.id = 'add-time-description'; description.rows = 3; description.maxLength = 2000;
+  const description = document.createElement('textarea'); description.id = 'add-time-description'; description.rows = 2; description.maxLength = 2000;
   const moreDescription = document.createElement('small');
   moreDescription.className = 'add-time-description-more'; moreDescription.textContent = '↓ More lines — scroll'; moreDescription.hidden = true;
   const resizeDescription = () => {
     const count = description.value.split('\n').length;
-    description.rows = Math.min(9, Math.max(3, count));
+    description.rows = Math.min(9, Math.max(dayRange.checked ? 3 : 2, count));
     description.style.height = 'auto';
     const height = Number(description.scrollHeight) || 0;
     const clipped = count > 9 || height > 240 + 1;
