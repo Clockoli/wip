@@ -595,10 +595,15 @@ async function searchTasks(sender, query = '', { refresh = false } = {}) {
     const cacheDirty = await store.isTaskSearchDirty();
     const hasPending = destinations.some(destination =>
       tracking.destinationStates?.entries?.[destination.id]?.pendingWrites?.length);
-    const cached = searchText && !refresh && !hasPending ? await store.getTaskSearchCache?.(scope) : null;
+    const cached = searchText && !refresh ? await store.getTaskSearchCache?.(scope) : null;
     const cachedTasks = cached && taskCandidates(cached.indexTasks.map(task => ({ ...task, taskTitle: task.title })));
     const hit = cachedTasks?.some(task => `${task.title} ${task.taskUrl}`.toLowerCase().includes(searchText));
-    const indexed = hit ? { indexTasks: cached.indexTasks, records: cachedTasks,
+    // A recent complete catalog also proves a miss: do not rescan every branch
+    // after each keystroke. Pending local changes are projected below.
+    const recent = cached && Number.isFinite(cached.refreshedAt)
+      && requestedAt >= cached.refreshedAt && requestedAt - cached.refreshedAt < 60_000;
+    const useCached = Boolean(hit || recent);
+    const indexed = useCached ? { indexTasks: cached.indexTasks, records: cachedTasks,
       readStatus: cached.readStatus, partial: false, conflicts: [], fallback: false }
       : await loadDestinationRecords(destinations, async (destination, signal) => {
         signal.throwIfAborted(); loadCoordinator.assertCurrent(loadEpoch);
@@ -610,7 +615,7 @@ async function searchTasks(sender, query = '', { refresh = false } = {}) {
       }, { signal: controller.signal, merge: mergeTaskCatalogIndexes });
     if (!indexed.fallback) {
       loadCoordinator.assertCurrent(loadEpoch);
-      if (!hit && !hasPending && !directCompletedWrites && (!cacheDirty || refresh)
+      if (!useCached && !hasPending && !directCompletedWrites && (!cacheDirty || refresh)
           && !indexed.partial && !indexed.conflicts.length) {
         const saved = await store.saveTaskSearchCache?.({ version: 2, scope, refreshedAt: requestedAt, indexTasks: indexed.indexTasks,
           readStatus: indexed.readStatus }, scope, cacheRevision);
@@ -641,7 +646,7 @@ async function searchTasks(sender, query = '', { refresh = false } = {}) {
           readStatus: indexed.readStatus, partial: true, conflicts: [...indexed.conflicts, ...pending.conflicts],
           ...(pendingFailures.length ? { pendingProjectionUnavailable: true } : {}) };
       }
-      if (hit && await store.getTaskSearchRevision() !== cacheRevision) {
+      if (useCached && await store.getTaskSearchRevision() !== cacheRevision) {
         throw new DOMException('Task search changed during the read.', 'AbortError');
       }
       return { configured: true, tasks: indexed.records, readStatus: indexed.readStatus,
