@@ -100,7 +100,10 @@ export function mountRunningStatus(container, { send, onChange, onReconnect, onA
       error.textContent = ''; error.hidden = true;
       return;
     }
-    error.textContent = cause?.code === 'auth_expired' ? 'GitHub sign-in required.' : cause?.message || '';
+    error.textContent = cause?.code === 'auth_expired' ? 'GitHub sign-in required.'
+      : cause?.code === 'rate_limit'
+        ? globalThis.ClockoliRecovery?.describeConnectionError?.(cause).headline || 'GitHub rate limit reached'
+        : cause?.message || '';
     if (cause?.code === 'auth_expired') error.append(reconnect);
     error.hidden = !error.textContent;
   }
@@ -362,12 +365,17 @@ export function mountRunningStatus(container, { send, onChange, onReconnect, onA
 
   async function readState(refresh = false) {
     const id = ++requestId;
+    let localLoaded = false;
     try {
       // Read durable local state first, even when GitHub cannot be reached.
       const local = await send({ type: 'GET_PAGE_STATE' });
       if (destroyed || id !== requestId) return;
       state = local; readAt = Date.now(); reportDate = localDate(); container.classList.toggle('is-loading', false); render();
-      if (local.summaryError?.code === 'auth_expired') refreshFailure = local.summaryError;
+      localLoaded = true;
+      if (local.summaryError?.code === 'auth_expired'
+        || (local.summaryError?.code === 'rate_limit' && refreshFailure?.code !== 'auth_expired')) {
+        refreshFailure = local.summaryError;
+      }
       showError(local.summaryError || refreshFailure);
       if (focusDescriptionOnLoad && state.active) {
         focusDescriptionOnLoad = false;
@@ -379,16 +387,16 @@ export function mountRunningStatus(container, { send, onChange, onReconnect, onA
         state = remote; readAt = Date.now(); reportDate = localDate(); render();
         const wasExpired = refreshFailure?.code === 'auth_expired';
         refreshFailure = remote.summaryError?.code === 'auth_expired' ? remote.summaryError
-          : remote.summaryError ? refreshFailure : null;
+          : remote.summaryError?.code === 'rate_limit' && !wasExpired ? remote.summaryError
+            : remote.summaryError ? refreshFailure : null;
         showError(remote.summaryError);
         if (wasExpired && !remote.summaryError) onAuthRestored?.();
       }
     } catch (cause) {
       if (!destroyed && id === requestId) {
-        refreshFailure = cause?.code === 'auth_expired' ? cause : null;
+        refreshFailure = cause?.code === 'auth_expired' || (localLoaded && cause?.code === 'rate_limit') ? cause : null;
         container.classList.toggle('is-loading', false);
-        showError(cause?.code === 'auth_expired' ? cause
-          : new Error('Could not load tracking status. Reload Activity to try again.'));
+        showError(refreshFailure || new Error('Could not load tracking status. Reload Activity to try again.'));
       }
     }
   }
