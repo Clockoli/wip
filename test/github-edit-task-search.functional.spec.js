@@ -38,6 +38,9 @@ test('GitHub Clockoli icon opens or focuses Activity in another tab without an o
   let context;
   try {
     await cp(new URL('src/', root), join(extension, 'src'), { recursive: true });
+    // Read controls inside the extension-owned Shadow DOM in this browser test.
+    const rendererPath = join(extension, 'src/content/github.js');
+    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
     const manifest = JSON.parse(await readFile(new URL('manifest.json', root), 'utf8'));
     manifest.background = { service_worker: 'test-worker.js' };
     await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest));
