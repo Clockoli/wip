@@ -35,7 +35,7 @@ Inviting requires both the signed-in user's repository-admin rights and **Admini
 
 ## View the team
 
-Each connected repository has a **Team** section. The list shows up to four GitHub collaborators and four pending GitHub account invitations, with a separate overflow marker for each category. Each account has a labeled state:
+Each connected repository has a **Team** section. The list initially shows up to four GitHub collaborators and four pending GitHub account invitations. **More collaborators** and **More pending invitations** expand the additional verified accounts directly in Settings. When the GitHub API page is incomplete, the expanded section links to GitHub for the remaining accounts. Each account has a labeled state:
 
 - **GitHub invitation pending** — GitHub has not yet confirmed access.
 - **GitHub access granted** — GitHub permits access, but Clockoli storage readiness has not been verified.
@@ -49,7 +49,7 @@ For each other person's row in **Team**, select the **⋯** menu and choose **Re
 
 Clockoli asks for confirmation, checks repository identity, administrator permissions, account ID and current access, then uses GitHub to remove the collaborator or cancel the invitation. Removing access does **not** delete existing time records or Git history. A failure leaves the action available for retry; a success refreshes the Team list.
 
-The Team section displays only the first four accounts in each category; choose **Manage GitHub access** for others and for email-only invitations. Changes require a GitHub App connection with Administration write permission and repository-admin rights. PAT connections allow viewing verified repository collaborators, but do not expose invitation or removal controls.
+The Team section initially displays four accounts in each category; expand **More collaborators** or **More pending invitations** to see the additional verified accounts available from GitHub. Use **Manage GitHub access** for other accounts and email-only invitations. Changes require a GitHub App connection with Administration write permission and repository-admin rights. PAT connections allow viewing verified repository collaborators, but do not expose invitation or removal controls.
 
 ## Report across the team
 
