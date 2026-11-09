@@ -3066,6 +3066,7 @@ test('repository avatar hover uses the GitHub login and overflow does not impers
   assert.equal(avatar.dataset.clockoliTooltip, '@New');
   const more = row.querySelector('.repository-collaborator-more');
   assert.equal(more.tagName, 'details');
+  assert.equal(more.title, undefined, 'More collaborators should not show a redundant hover tooltip');
   assert.match(more.querySelector('summary').textContent, /More collaborators/i);
   assert.match(more.querySelector('.repository-view-all').href, /github.com\/acme\/time-data\/settings\/access/);
   assert.equal(row.querySelectorAll('.repository-add-teammate').length, 1);
@@ -3144,7 +3145,7 @@ test('pending GitHub invitations show distinct noninteractive avatars and access
   assert.match(pending.attributes['aria-label'], /@Invitee.*pending invitation/i);
   assert.equal(pending.children.find(child => child.tagName === 'img').src, 'https://avatars.githubusercontent.com/u/8?v=4');
   assert.match(row.querySelector('.repository-collaborators').attributes['aria-label'], /pending invitation/i);
-  assert.match(row.querySelector('.repository-invitation-more').title, /pending invitation/i);
+  assert.equal(row.querySelector('.repository-invitation-more').title, undefined, 'overflow panels should not show redundant hover tooltips');
   assert.equal(row.querySelectorAll('.repository-add-teammate').length, 1);
   const css = await readFile(new URL('../src/options/options.css', import.meta.url), 'utf8');
   assert.match(css, /\.repository-invitation\{[^}]*border-style:dashed/);
