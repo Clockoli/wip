@@ -1507,7 +1507,7 @@ async function handle(message, sender) {
       }
       const tracker = await trackerForDestination(destinationId, { localOnly: true });
       const { destinationId: _requestedDestination, ...entry } = payload;
-      const result = await tracker.addTime(entry, { background: true });
+      const result = await tracker.addTime(entry, { background: true, preflight: true });
       if (result.pending || result.active?._pending) requestPendingSync();
       return { ...result, destinationId };
     }
