@@ -372,6 +372,50 @@ test('GitHub App onboarding and credential operations are extension-page only', 
 });
 
 
+test('invitation preflight and user search obtain configuration without provisioning storage', async () => {
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  const calls = [];
+  const context = vm.createContext({
+    store: {},
+    requireConfiguredDestinationId: async (_store, id) => id,
+    configuredSnapshot: async options => {
+      calls.push(['snapshot', options]);
+      return { config: { repoId: 20, installationId: 88 }, auth: { mode: 'github_app' } };
+    },
+    githubForConfig: config => {
+      calls.push(['github', config.repoId]);
+      return {};
+    },
+    RepositoryInvitationService: class {
+      constructor({ installationId }) { assert.equal(installationId, 88); }
+      async assertAdminAccess() { calls.push(['checked permissions']); }
+    },
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function repositoryInvitationService('),
+    worker.indexOf('async function contextForDestination(')), context);
+  const invitation = await context.repositoryInvitationService('github:20', { localOnly: true });
+  await invitation.assertAdminAccess();
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
+    ['snapshot', { destinationId: 'github:20', measureMigration: false, localOnly: true }],
+    ['github', 20], ['checked permissions'],
+  ]);
+
+  const handler = vm.createContext({ assertMessageAllowed,
+    chrome: { runtime: { getURL: () => origin } },
+    repositoryInvitationService: async (id, options) => {
+      assert.equal(id, 'github:20');
+      calls.push(['route', options]);
+      return { assertAdminAccess: async () => {} };
+    },
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('),
+    worker.indexOf('chrome.runtime.onMessage.addListener')), handler);
+  assert.deepEqual(JSON.parse(JSON.stringify(await handler.handle(
+    { type: 'CHECK_REPOSITORY_INVITE_ACCESS', destinationId: 'github:20' }, extension))), { canInvite: true });
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.at(-1))), ['route', { localOnly: true }]);
+  await assert.rejects(handler.handle({ type: 'CHECK_REPOSITORY_INVITE_ACCESS', destinationId: 'github:20' }, content), /not allowed/i);
+});
+
 test('repository collaborator read checks sender and configured destination before GitHub access', async () => {
   const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
   const calls = [];
@@ -382,7 +426,8 @@ test('repository collaborator read checks sender and configured destination befo
       calls.push(['destination', id]);
       if (id !== 'github:20') throw new Error('The requested destination is not configured.');
       return id;
-    }, configuredSnapshot: async ({ destinationId }) => {
+    }, configuredSnapshot: async ({ destinationId, localOnly }) => {
+      assert.equal(localOnly, true, 'viewing team members must not provision storage');
       calls.push(['snapshot', destinationId]); return { config: { repoId: 20 }, auth: { mode: 'github_app' } };
     }, githubForConfig: () => ({
       assertDestinationReachable: async () => { calls.push(['verified']); },
