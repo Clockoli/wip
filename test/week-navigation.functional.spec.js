@@ -364,18 +364,31 @@ async function expectVisibleTimelineInsideSelectedWeek(root) {
 
 test('Activity preserves Monday–Sunday Timeline and Calendar week navigation', async () => {
   test.setTimeout(90000);
-  const fixedNow = new Date(); fixedNow.setSeconds(0, 0);
+  const fixedNow = new Date('2026-10-14T12:00:00Z');
+  const clockOffset = fixedNow.getTime() - Date.now();
   const extension = await mkdtemp(join(tmpdir(), 'clockoli-week-extension-'));
   const profile = await mkdtemp(join(tmpdir(), 'clockoli-week-profile-'));
   let context;
   try {
     await cp(new URL('src/', ROOT), join(extension, 'src'), { recursive: true });
     const rendererPath = join(extension, 'src/content/github.js');
-    await writeFile(rendererPath, (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
+    // The isolated content-script world does not follow page.clock.
+    // Pin it too so the running timer cannot overlap the completed fixture.
+    await writeFile(rendererPath, `const RealDate = Date;
+    globalThis.Date = class extends RealDate {
+      constructor(...args) { super(...(args.length ? args : [RealDate.now() + ${clockOffset}])); }
+      static now() { return RealDate.now() + ${clockOffset}; }
+    };
+    ` + (await readFile(rendererPath, 'utf8')).replaceAll("mode: 'closed'", "mode: 'open'"));
     const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
     manifest.background = { service_worker: 'test-worker.js' };
     await writeFile(join(extension, 'manifest.json'), `${JSON.stringify(manifest)}\n`);
-    await writeFile(join(extension, 'test-worker.js'), workerSource.replaceAll('configured: true, active,', "configured: true, interfaceWidth: 'full', active,"));
+    const fixtureWorker = workerSource
+      .replace('const today = new Date();', `const today = new Date('${fixedNow.toISOString()}');`)
+      .replace('const runningStart = new Date(Date.now() - 10 * 60_000);',
+        `const runningStart = new Date('${new Date(fixedNow.getTime() - 10 * 60_000).toISOString()}');`)
+      .replaceAll('configured: true, active,', "configured: true, interfaceWidth: 'full', active,");
+    await writeFile(join(extension, 'test-worker.js'), fixtureWorker);
     context = await chromium.launchPersistentContext(profile, {
       channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
