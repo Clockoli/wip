@@ -674,7 +674,7 @@ test('stale participant responses cannot cross SPA routes and active time stays 
 
 test('GitHub SPA route changes reset saved panel scroll before the next reopen', () => {
   assert.match(source, /lastRoute = route; recent = \[\]; recentLoaded = false; recentFresh = false; recentFreshAfterPendingId = null; cancelActiveInlineDraft\(\); menuOpen = false; menuScrollTop = 0/);
-  assert.match(source, /if \(\(menuOpen \|\| fullWidthPopupOpen\) && pageState\.configured\) \{\s*try \{ await refreshRecent\(\); \}/,
+  assert.match(source, /if \(menuOpen && pageState\.configured\) \{\s*try \{ await refreshRecent\(\); \}/,
     'an open shared panel reloads route-specific entries after GitHub SPA navigation');
 });
 
@@ -2175,15 +2175,15 @@ function dailyPanelHarness({ state, records = [], participants = null, now = Dat
   vm.runInContext(taskSearchSource, context);
   const end = source.lastIndexOf('\n  if (timesMode) {');
   vm.runInContext(header ? source : source.slice(0, end) + `
-    globalThis.panel = { renderMenu, restoreActivityViewMode, loadSelectedTimes, refreshActivityState: (...args) => refreshActivityState(...args), applyPageState, trackCurrentTimelineTask, refreshMountedTimeline, restartTimelineEntry, stopTimelineEntry, queueCalendarEntry, queueActiveStartEdit, queueActiveDescriptionEdit, acceptTimelineStartImmediately, rollbackTimelineStart, closeFullWidthPopup, toggleFullWidthPopup, refreshTimelineOverlaps, updatePanelClocks, refreshCompactSurface, setTimelineViewMode,
+    globalThis.panel = { renderMenu, restoreActivityViewMode, loadSelectedTimes, refreshActivityState: (...args) => refreshActivityState(...args), applyPageState, trackCurrentTimelineTask, refreshMountedTimeline, restartTimelineEntry, stopTimelineEntry, queueCalendarEntry, queueActiveStartEdit, queueActiveDescriptionEdit, acceptTimelineStartImmediately, rollbackTimelineStart, refreshTimelineOverlaps, updatePanelClocks, refreshCompactSurface, setTimelineViewMode,
       renderActivity() { root ||= document.createElement('div'); root.isConnected = true; shadow ||= document.createElement('shadow'); renderUi(); return shadow; },
       set(value, entries, participants) { pageState = value; recent = entries; recentLoaded = true; participantData = participants; },
       trackedTotalText: key => trackedTotalText(key),
       debugWeek: () => ({ errorText, selectedWeekStart, recentLoaded, recentLoadId, timesLoadId }),
       mount(instance, view = null) { timelineInstance = instance; timelineWindow = { historyStart: 0, now: 1 }; if (view) timelineView = view; },
       surface() { return compactSurface; },
-      popupRoot() { return fullWidthPopupShadow; },
-      attach(menu) { fullWidthPopupShadow = document.createElement('shadow'); document.panelShadow = fullWidthPopupShadow; fullWidthPopupShadow.append(menu); },
+      popupRoot() { return shadow; },
+      attach(menu) { shadow = document.createElement('shadow'); document.panelShadow = shadow; shadow.append(menu); },
       attachCompact(menu) { shadow = document.createElement('shadow'); shadow.append(menu); },
       overlapHost(host, entries) { compactSurface.host = host; timelineEntriesById = new Map(entries); },
       optimisticEdit(id) { return timelineOptimisticEdits.get(id); },
@@ -3007,26 +3007,22 @@ test('Activity Timeline includes the running task from local state without repla
   assert.ok(items.some(item => item.id === 'active:running' && item.isRunning && item.endedAt === null));
 });
 
-test('selected completion of the active task stops the active timer rather than its old record', async () => {
+test('a completed record of the active task does not stop that timer', async () => {
   const now = new Date('2026-09-05T12:00:00Z').getTime();
   const entry = activityEntry('completed', '2026-09-05', '08', 'https://example.com/running');
   const active = { id: 'running', taskUrl: entry.taskUrl, taskTitle: entry.taskTitle, startedAt: new Date(now - 60_000).toISOString() };
   const state = { configured: true, active, pendingWrites: [] };
   const h = dailyPanelHarness({ state, records: [entry], now, timelineEnabled: true, pageUrl: 'chrome-extension://clockoli/src/times/times.html',
-    respond(message, callback) {
-      if (message.type === 'STOP') {
-        state.active = null;
-        callback({ ok: true, data: { entry: { ...entry, id: 'stopped', endedAt: new Date(now).toISOString() } } });
-      } else callback({ ok: true, data: state });
-    },
+    respond(message, callback) { callback({ ok: true, data: state }); },
   });
   h.renderActivity();
   h.frames.splice(0).forEach(frame => frame());
-  const item = h.timelineItems(0, now).find(value => value.id === `entry:${entry.id}`);
-  assert.equal(item.isCurrentTask, true);
-  assert.equal(item.isStartDisabled, true);
-  await h.timelineMounts.at(-1).onStop(item);
-  assert.equal(h.messages.some(message => message.type === 'STOP'), true);
+  const completed = h.timelineItems(0, now).find(item => item.id === `entry:${entry.id}`);
+  assert.equal(completed.isRunning, false);
+  assert.equal(completed.isStartDisabled, true);
+  assert.equal(completed.isCurrentTask, undefined);
+  assert.equal(await h.timelineMounts.at(-1).onStop(completed), false);
+  assert.equal(h.messages.some(message => message.type === 'STOP'), false);
   assert.equal(h.messages.some(message => message.type === 'SWITCH_TASK'), false);
 });
 
