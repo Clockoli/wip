@@ -36,7 +36,7 @@ Clockoli builds an extension-local IndexedDB catalog from each person's Git-back
 
 Only tasks with a valid HTTP(S) URL identity and a nonempty title appear in ordinary search suggestions, including when a cached index or pending write contains an imported identity. Untitled tasks and time records stay in their personal indexes and Activity, and a pasted HTTP(S) URL can still create a task without a title. Existing imported non-URL records remain editable and usable from their original entry or unfiltered Top tasks row; they are not offered as normal search results. While the Task field searches, it shows a spinner and **Searching tasks…**; a pasted URL remains usable if lookup fails.
 
-After Add, the dialog closes as soon as the change has been durably accepted in local extension storage, without a GitHub-saving spinner or page reload. GitHub synchronization is silent and is scheduled after 15 seconds without local changes. Known local intervals and the current timer are checked for overlap immediately.
+After Add, the dialog closes as soon as the change has been durably accepted in local extension storage, without a GitHub-saving spinner or page reload. GitHub synchronization is silent and is scheduled after 15 seconds without local changes. Known local intervals and the current timer are checked for overlap immediately, including when **End** is empty and the new entry starts a running timer. A completed interval that ends exactly at the chosen Start does not conflict. GitHub history that is not cached locally is validated during background synchronization; if another device has changed it, Clockoli retains the new entry as a recoverable sync conflict.
 
 ### How a queued addition is checked at sync
 
