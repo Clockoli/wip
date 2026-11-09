@@ -142,7 +142,8 @@ test('Activity Calendar shows a compact inline details card with accessible acti
   ]);
   await page.setViewportSize({ width: 420, height: 900 });
   await page.locator('#timeline').evaluate(host => { host.style.width = '404px'; });
-  await page.locator('#timeline .calendar-task[data-task-key="entry:a"]').first().hover();
+  // The card is already open and can overlap the task after resizing; do not hover through it.
+  await expect(details).toBeVisible();
   await expect.poll(() => details.evaluate(card => card.getBoundingClientRect().right)).toBeLessThanOrEqual(420);
   if (process.env.CLOCKOLI_COMPACT_POPOVER_SCREENSHOT) {
     await page.screenshot({ path: process.env.CLOCKOLI_COMPACT_POPOVER_SCREENSHOT.replace(/\.png$/, '-narrow.png') });
