@@ -261,9 +261,9 @@ async function checkCurrentRepositoryAccess(destinationId = null) {
   };
 }
 
-async function repositoryInvitationService(destinationId, { measureMigration = false } = {}) {
+async function repositoryInvitationService(destinationId, { measureMigration = false, localOnly = false } = {}) {
   const id = await requireConfiguredDestinationId(store, destinationId);
-  const { config, auth } = await configuredSnapshot({ destinationId: id, measureMigration });
+  const { config, auth } = await configuredSnapshot({ destinationId: id, measureMigration, localOnly });
   if (!config || auth?.mode !== 'github_app' || !Number.isSafeInteger(config.repoId)) {
     throw new Error('Invite teammates only from a connected GitHub App time repository.');
   }
@@ -1042,7 +1042,7 @@ async function handle(message, sender) {
   if (message.type === 'LOAD_REPOSITORY_COLLABORATORS') {
     if (Object.keys(message).length !== 2 || typeof message.destinationId !== 'string') throw new Error('Invalid collaborator request');
     const destinationId = await requireConfiguredDestinationId(store, message.destinationId);
-    const { config, auth } = await configuredSnapshot({ destinationId });
+    const { config, auth } = await configuredSnapshot({ destinationId, localOnly: true });
     if (!config || !auth) throw new Error('Connect a time repository before viewing collaborators.');
     const github = githubForConfig(config);
     await github.assertDestinationReachable();
@@ -1058,7 +1058,7 @@ async function handle(message, sender) {
   }
   if (message.type === 'CHECK_REPOSITORY_INVITE_ACCESS') {
     if (Object.keys(message).length !== 2 || typeof message.destinationId !== 'string') throw new Error('Invalid invitation access check');
-    const invitation = await repositoryInvitationService(message.destinationId);
+    const invitation = await repositoryInvitationService(message.destinationId, { localOnly: true });
     await invitation.assertAdminAccess();
     return { canInvite: true };
   }
@@ -1071,7 +1071,7 @@ async function handle(message, sender) {
         || (message.type === 'INVITE_REPOSITORY_USER' && (!Number.isSafeInteger(payload.userId) || payload.userId <= 0))) {
       throw new Error('Invalid teammate request');
     }
-    const invitation = await repositoryInvitationService(payload.destinationId);
+    const invitation = await repositoryInvitationService(payload.destinationId, { localOnly: message.type === 'SEARCH_INVITEE_USERS' });
     return message.type === 'SEARCH_INVITEE_USERS'
       ? { users: await invitation.search(payload.query) } : invitation.invite(payload.login, payload.userId);
   }
