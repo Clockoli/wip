@@ -2547,19 +2547,22 @@ test('repository-first empty discovery asks for a concrete target before offerin
   assert.equal(page.requests.filter(request => request.type === 'SELECT_REPOSITORY').length, 0);
 });
 
-test('connected sharing instructions use the owner-neutral path for user and organization repositories', () => {
+test('Clockoli invitation message includes repository name and setup URL for personal and organization repositories', () => {
   const page = harness();
   for (const destination of [
     { owner: 'alice', repo: 'clockoli-data', ownerType: 'User' },
     { owner: 'acme', repo: 'team-time', ownerType: 'Organization' },
   ]) {
     page.context.testDestination = destination;
-    const text = vm.runInContext('teammateInstructions(testDestination)', page.context);
-    assert.match(text, /Install Clockoli and sign in with GitHub\./);
-    assert.match(text, /Connect .* in Time repositories/);
-    assert.match(text, new RegExp(`grant the Clockoli GitHub App access to ${destination.owner}\/${destination.repo}`));
-    assert.doesNotMatch(text, /Connect GitHub|Join an organization repository/);
+    const message = vm.runInContext('clockoliInvitationMessage(testDestination)', page.context);
+    assert.match(message, /^Hi! You're invited to track time with our team using Clockoli\./);
+    assert.ok(message.includes('Accept the GitHub invitation to ' + destination.owner + '/' + destination.repo));
+    assert.ok(message.includes('https://clockoli.com/join/?repo=' + destination.owner + '%2F' + destination.repo));
+    assert.match(message, /Keep the page open while you install the Clockoli extension/);
+    assert.match(message, /That's it! You're ready to track time with the team\.$/);
   }
+  page.context.testDestination = { owner: 'invalid space', repo: 'repo' };
+  assert.equal(vm.runInContext('clockoliInvitationMessage(testDestination)', page.context), '');
 });
 
 test('teammate picker selects a searched GitHub user and requires confirmation before inviting', async () => {
@@ -3214,20 +3217,40 @@ test('invite control is labeled and team members are displayed in a separate sec
   assert.match(css, /\.repository-add-teammate\{[^}]*min-height:32px/);
 });
 
-test('shareable teammate steps copy the rewritten guide and expose a readable fallback', async () => {
+test('Copy Clockoli invitation message shares the approved text and offers a multiline fallback', async () => {
   const page = harness();
   page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
-  const setup = page.nodes.get('time-repository-list').querySelector('.teammate-setup');
-  const copy = setup.children.find(child => child.textContent === 'Copy instructions');
-  const feedback = setup.querySelector('.form-feedback');
+  const invite = page.nodes.get('time-repository-list').querySelector('.teammate-instructions');
+  const actions = invite.querySelector('.teammate-invitation-link');
+  const copy = actions.querySelector('button'), feedback = actions.querySelector('.form-feedback');
+  const fallback = actions.querySelector('textarea');
+  const setup = invite.querySelector('.teammate-setup');
+  assert.equal(copy.textContent, 'Copy Clockoli invitation message');
+  assert.equal(setup.querySelector('button'), null, 'How invitations work must not duplicate the copy action');
+  assert.equal(fallback.hidden, true);
   let copied = '';
   page.context.navigator = { clipboard: { async writeText(text) { copied = text; } } };
   await copy.listeners.click();
-  assert.match(copied, /Join acme\/time-data in Clockoli/);
-  assert.match(copied, /Do not create clockoli\/users/);
-  assert.match(feedback.textContent, /copied/);
+  assert.equal(copied, [
+    "Hi! You're invited to track time with our team using Clockoli.",
+    '',
+    "1. Accept the GitHub invitation to acme/time-data (if you haven't already).",
+    '2. Open this link to set up Clockoli:',
+    '   https://clockoli.com/join/?repo=acme%2Ftime-data',
+    '3. Keep the page open while you install the Clockoli extension and connect your GitHub account. Follow the steps to join the shared time repository.',
+    '',
+    "That's it! You're ready to track time with the team.",
+  ].join('\n'));
+  assert.equal(fallback.value, copied);
+  assert.match(feedback.textContent, /Invitation message copied/);
+  assert.equal(fallback.hidden, true);
+  assert.equal(copy.disabled, false);
   page.context.navigator.clipboard.writeText = async () => { throw new Error('Clipboard denied'); };
   await copy.listeners.click();
-  assert.equal(setup.open, true);
-  assert.match(feedback.textContent, /Select the steps above/);
+  assert.equal(fallback.hidden, false);
+  assert.equal(fallback.focused, true);
+  assert.match(feedback.textContent, /Select and copy the invitation message/);
+  assert.match(feedback.className, /error/);
+  assert.equal(copy.disabled, false);
 });
+
