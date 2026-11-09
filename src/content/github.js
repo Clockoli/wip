@@ -5,7 +5,6 @@
   const extensionPageMode = location.href.startsWith(chrome.runtime.getURL(''));
   const timesMode = extensionPageMode && location.pathname.endsWith('/src/times/times.html');
   const popupMode = extensionPageMode && !timesMode;
-  const actionSurfaceMode = globalThis.__CLOCKOLI_ACTION_SURFACE__ === true;
   const STOPWATCH_PATH = 'M5.75.75A.75.75 0 0 1 6.5 0h3a.75.75 0 0 1 0 1.5h-.75v1l-.001.041a6.724 6.724 0 0 1 3.464 1.435l.007-.006.75-.75a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734l-.75.75-.006.007a6.75 6.75 0 1 1-10.548 0L2.72 5.03l-.75-.75a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018l.75.75.007.006A6.72 6.72 0 0 1 7.25 2.541V1.5H6.5a.75.75 0 0 1-.75-.75ZM8 14.5a5.25 5.25 0 1 0-.001-10.501A5.25 5.25 0 0 0 8 14.5Zm.389-6.7 1.33-1.33a.75.75 0 1 1 1.061 1.06L9.45 8.861A1.503 1.503 0 0 1 8 10.75a1.499 1.499 0 1 1 .389-2.95Z';
 
   const SYNC_PATH = 'M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z';
@@ -41,10 +40,6 @@
   let extensionContextActive = true;
   let root = null;
   let shadow = null;
-  let fullWidthPopupRoot = null;
-  let fullWidthPopupShadow = null;
-  let fullWidthPopupOpen = false;
-  let timelineWindowTimer = null;
   let timelineView = null;
   let activityTimelineView = null;
   let activityInitialFocusPending = false;
@@ -175,9 +170,6 @@
   let summaryActive = null;
   let connectionError = null;
   let compactSurface = null;
-  let popupReturnFocus = null;
-  let popupFocusPending = false;
-  let popupOpening = false;
   let timeEntryFormLoad = null;
   let timeEntryFormHost = null;
   let timeEntryFormDialog = null;
@@ -189,6 +181,8 @@
   const resolveTaskColor = globalThis.ClockoliTaskTimeline?.createColorResolver?.();
   const motionPreference = globalThis.matchMedia?.('(prefers-reduced-motion: no-preference)');
   let popupTask = null;
+  let actionSourceTask = null;
+  const ACTION_CONTEXT_KEY = 'clockoli-toolbar-task-context';
 
   function normalizeTaskUrl(value) {
     const candidate = String(value || '');
@@ -622,7 +616,6 @@
     clearInterval(tick); tick = null;
     clearInterval(actionAnimationTimer); actionAnimationTimer = null;
     clearInterval(navigationTimer); navigationTimer = null;
-    clearInterval(timelineWindowTimer); timelineWindowTimer = null;
     if (typeof clearTimeout === 'function') clearTimeout(pendingRefreshTimer); pendingRefreshTimer = null;
     clearClockoliParticipantRetry();
     timelineObserver?.disconnect?.(); timelineObserver = null;
@@ -881,7 +874,7 @@
       try { timelineInstance.setCalendarRange(weekWindow()); }
       finally { suppressCalendarNavigate = false; }
     }
-    const navigation = (fullWidthPopupShadow || shadow)?.querySelector('.week-navigation');
+    const navigation = (shadow)?.querySelector('.week-navigation');
     const { startDate, endDate } = timesRange();
     const label = navigation?.querySelector('.week-navigation-label');
     if (label) label.textContent = `${startDate} – ${endDate}`;
@@ -908,7 +901,7 @@
     let nextControl;
     const updateNavigation = () => {
       const { startDate, endDate } = timesRange();
-      label.textContent = (timesMode && activityViewMode === 'list') || ((popupMode || fullWidthPopupOpen) && timelineViewMode === 'list')
+      label.textContent = (timesMode && activityViewMode === 'list') || ((popupMode) && timelineViewMode === 'list')
         ? activityWeekRangeLabel({ startDate, endDate }) : `${startDate} – ${endDate}`;
       nextControl.disabled = weekWindow().start >= weekWindow(Date.now()).start;
     };
@@ -931,10 +924,10 @@
 
   function updateWeekNavigationLabel() {
     const { startDate, endDate } = timesRange();
-    for (const scope of [shadow, fullWidthPopupShadow]) {
+    for (const scope of [shadow]) {
       const navigation = scope?.querySelector('.week-navigation');
       const label = navigation?.querySelector('.week-navigation-label');
-      if (label) label.textContent = (timesMode && activityViewMode === 'list') || ((popupMode || fullWidthPopupOpen) && timelineViewMode === 'list')
+      if (label) label.textContent = (timesMode && activityViewMode === 'list') || ((popupMode) && timelineViewMode === 'list')
         ? activityWeekRangeLabel({ startDate, endDate }) : `${startDate} – ${endDate}`;
       const next = navigation?.querySelector('[aria-label="Next week"]');
       if (next) next.disabled = weekWindow().start >= weekWindow(Date.now()).start;
@@ -943,7 +936,7 @@
 
   function updateCalendarWeekLoading() {
     const active = calendarWeekLoadingId !== null || selectedTimesCalendarLoadingId !== null;
-    for (const scope of [shadow, fullWidthPopupShadow]) {
+    for (const scope of [shadow]) {
       const overlay = scope?.querySelector('.calendar-week-loading');
       if (overlay) overlay.hidden = !active || (timesMode ? activityViewMode !== 'calendar' : timelineViewMode !== 'calendar');
     }
@@ -957,14 +950,14 @@
     if (!navigation) return;
     const oldNavigation = host.querySelector('.week-navigation');
     if (oldNavigation && oldNavigation !== navigation) oldNavigation.remove();
-    const activityChart = timesMode || popupMode || fullWidthPopupOpen ? root.querySelector('.timeline-shell') : null;
+    const activityChart = timesMode || popupMode ? root.querySelector('.timeline-shell') : null;
     const oldChartNavigation = activityChart?.querySelector('.week-navigation');
     if (oldChartNavigation && oldChartNavigation !== navigation) oldChartNavigation.remove();
     activityChart?.classList.toggle('calendar-week-navigation', mode === 'calendar');
     if (activityChart && mode !== 'list') {
       navigation.removeAttribute('slot');
       activityChart.append(navigation);
-    } else if ((popupMode || fullWidthPopupOpen) && mode === 'list') {
+    } else if ((popupMode) && mode === 'list') {
       navigation.removeAttribute('slot');
       const toolbar = root.querySelector('.popup-list-toolbar');
       if (toolbar) toolbar.insertBefore(navigation, toolbar.querySelector('.times-refresh'));
@@ -1063,7 +1056,7 @@
     for (const section of sections) {
       const span = section.querySelector('.activity-weekly-range');
       if (span) {
-        span.textContent = timesMode || popupMode || fullWidthPopupOpen
+        span.textContent = timesMode || popupMode
           ? activityWeekRangeLabel(range)
           : `${range.startDate} – ${range.endDate}`;
       }
@@ -1074,7 +1067,7 @@
   }
 
   function updateListWeekTotal() {
-    for (const scope of [shadow, fullWidthPopupShadow]) {
+    for (const scope of [shadow]) {
       const total = scope?.querySelector('.times-list-total,.popup-list-total');
       if (total) total.textContent = listWeekTotalText();
     }
@@ -1126,7 +1119,7 @@
       selectedTimesCalendarLoadingId = null;
     }
     const nextWeek = weekWindow(range.start).start;
-    (timesMode ? shadow : fullWidthPopupShadow || shadow)?.querySelector('.timeline-edit-error')?.remove();
+    (timesMode ? shadow : shadow)?.querySelector('.timeline-edit-error')?.remove();
     const previousWeek = selectedWeekStart;
     const previousActivityView = activityTimelineView, previousTimelineView = timelineView;
     if (selectedWeekStart !== nextWeek) {
@@ -1306,7 +1299,6 @@
     if (!timesMode && Array.isArray(data?.recent)) quickStartRecent = data.recent;
     mergeLocalPendingActivity(data?.recent);
     root?.setAttribute('data-clockoli-width', pageState.interfaceWidth === 'full' ? 'full' : 'contained');
-    fullWidthPopupRoot?.setAttribute('data-clockoli-width', pageState.interfaceWidth === 'full' ? 'full' : 'contained');
     applyTrackedTotals(data);
     const pendingIds = new Set(pageState.pendingWrites?.map(item => item.id) ?? []);
     reconcileQueuedInlineOperations(pendingIds);
@@ -2258,7 +2250,7 @@
       inline.save.disabled = disabled || inlineGroupSaves.has(draft?.group || key);
       for (const control of [edit, inline.cancel, remove]) control.disabled = disabled;
       inline.setDisabled(disabled);
-      if ((timesMode || popupMode || fullWidthPopupOpen) && trackableTaskIdentityOf(entry)) {
+      if ((timesMode || popupMode) && trackableTaskIdentityOf(entry)) {
         const running = sameTask(entry, pageState.active);
         const label = `${running ? 'Stop' : 'Start'} tracking ${taskTitleOf(entry) || storedTaskIdentityOf(entry)}`;
         const track = button(label, `entry-track-control ${running ? 'entry-stop' : 'entry-track'}`, async (_event, node) => {
@@ -2315,7 +2307,7 @@
         record.append(description);
       }
     if (inlineSavedNotices.has(key)) record.append(savedNotice('description-saved entry-description-saved'));
-    if (timesMode || popupMode || fullWidthPopupOpen) record.prepend(timeRow); else record.prepend(day, timeRow);
+    if (timesMode || popupMode) record.prepend(timeRow); else record.prepend(day, timeRow);
     return record;
   }
 
@@ -2348,7 +2340,7 @@
     inlineEditors.clear();
     if (!timesMode && !hideHeader) {
       const header = el('div', undefined, 'section-head');
-      header.append(el('strong', popupMode || fullWidthPopupOpen ? 'Tracked time' : 'Recent entries'), recentRefreshButton());
+      header.append(el('strong', popupMode ? 'Tracked time' : 'Recent entries'), recentRefreshButton());
       container.append(header);
     }
     if (!recentLoaded && !allowCached) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
@@ -3049,12 +3041,11 @@
         startedAt: Math.max(historyStart, weekWindow().start, new Date(entry.startedAt).getTime()),
         endedAt: entry._active ? null : Math.min(completedDisplayEnd, new Date(entry.endedAt).getTime()),
         isRunning: Boolean(entry._active),
-        isCurrentTask: Boolean(!entry._active && sameTask(entry, pageState.active)),
         isEditable: !entry._active && (timesMode || completeVisualWeekStart === weekWindow().start),
         isPending: Boolean(entry.isPending),
         isStartDisabled: !trackableTaskIdentityOf(entry) || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)
           || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict')),
-        isStopDisabled: Boolean((entry._active || sameTask(entry, pageState.active)) && (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
+        isStopDisabled: Boolean(entry._active && (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
           || pageState.pendingWrites?.some(item => item.status === 'conflict'))),
         isDeleteDisabled: timelineDeleteInFlight || timelineStartInFlight || timelineStopInFlight
           || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict')),
@@ -3119,7 +3110,7 @@
 
   function showTimelineEditConflict(error) {
     if (!/overlap/i.test(error?.message || '')) return false;
-    const section = (timesMode ? shadow : fullWidthPopupShadow || shadow)?.querySelector('.popup-timeline-section');
+    const section = (timesMode ? shadow : shadow)?.querySelector('.popup-timeline-section');
     if (!section) return false;
     section.querySelector('.timeline-edit-error')?.remove();
     const warning = el('div', undefined, 'timeline-edit-error error');
@@ -3136,7 +3127,7 @@
     const warning = timelineWeekError(error);
     if (!warning) return false;
     timelineInstance?.destroy(); timelineInstance = null; timelineWindow = null;
-    const shell = (timesMode ? shadow : fullWidthPopupShadow || shadow)?.querySelector('.popup-timeline-section .timeline-shell');
+    const shell = (timesMode ? shadow : shadow)?.querySelector('.popup-timeline-section .timeline-shell');
     shell?.replaceChildren(warning);
     return Boolean(shell);
   }
@@ -3264,13 +3255,13 @@
     if (!refreshMountedTimeline()) renderUi();
   }
 
-  async function trackCurrentTimelineTask({ preserveSavedDescription = false } = {}) {
+  async function trackCurrentTimelineTask({ preserveSavedDescription = false, sourceTask = null } = {}) {
     if (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight) return;
     timelineStartInFlight = true;
     refreshMountedTimeline();
     let startContext = null;
     try {
-      const task = popupMode ? await refreshPopupTask() : taskFromLocation();
+      const task = sourceTask || (popupMode ? await refreshPopupTask() : taskFromLocation());
       if (!task) throw new Error('Open an HTTP(S) page to start tracking.');
       if (sameTask(task, pageState.active)) return;
       const switching = Boolean(pageState.active);
@@ -3391,7 +3382,7 @@
       timelineOptimisticEdits.set(entry.id, edits);
       applyTimelineOptimisticEntry(entry, edits);
       trackTimelineQueuedOperation(result?.operationId, entry.id, optimisticEditGeneration);
-      (timesMode ? shadow : fullWidthPopupShadow || shadow)?.querySelector('.timeline-edit-error')?.remove();
+      (timesMode ? shadow : shadow)?.querySelector('.timeline-edit-error')?.remove();
       recordTimelineQueueDiagnostic('Edit time entry: accepted locally and queued for GitHub.');
     } catch (error) {
       recordTimelineQueueDiagnostic('Edit time entry: local queue rejected the change.');
@@ -3616,8 +3607,8 @@
         view: initialView,
         viewMode: timesMode ? (activityViewMode === 'list' ? 'timeline' : activityViewMode) : timelineGraphicViewMode,
         weeklyCalendar: true,
-        activityDashboard: timesMode || popupMode || fullWidthPopupOpen,
-        activityPage: timesMode || popupMode || fullWidthPopupOpen,
+        activityDashboard: timesMode || popupMode,
+        activityPage: timesMode || popupMode,
         toolbarPopup: popupMode,
         onCalendarNavigate: range => suppressCalendarNavigate ? undefined : loadActivityCalendarWeek(range),
         onViewModeChange: mode => {
@@ -3638,7 +3629,7 @@
         },
         onStop: item => {
           const entry = timelineEntriesById.get(item.id);
-          return stopTimelineEntry(entry && !entry._active && sameTask(entry, pageState.active) ? pageState.active : entry);
+          return entry?._active ? stopTimelineEntry(entry) : false;
         },
         onDelete: async item => {
           const entry = timelineEntriesById.get(item.id);
@@ -3773,7 +3764,7 @@
   function updatePanelClocks() {
     if ((timesMode && activityViewMode === 'list') || (!timesMode && timelineViewMode === 'list')) updateListWeekTotal();
     else updateActivityWeekSummary();
-    for (const scope of [shadow, fullWidthPopupShadow, timesMode ? document.getElementById?.('activity-summary') : null]) {
+    for (const scope of [shadow, timesMode ? document.getElementById?.('activity-summary') : null]) {
       for (const value of scope?.querySelectorAll?.('[data-tracked-total]') ?? []) value.textContent = trackedTotalText(value.getAttribute('data-tracked-total'));
       for (const value of scope?.querySelectorAll?.('.running-elapsed') ?? []) if (pageState.active) {
         value.textContent = value.classList?.contains?.('running-status-metric-value') || value.className?.includes?.('running-status-metric-value')
@@ -3823,31 +3814,21 @@
     parent.prepend(error);
   }
 
-  function focusPopupAction() {
-    if (!popupFocusPending || popupOpening) return;
-    globalThis.requestAnimationFrame?.(() => {
-      const description = fullWidthPopupShadow?.querySelector?.('.active-task-strip.is-active .strip-description');
-      const action = description || fullWidthPopupShadow?.querySelector?.('[data-strip-primary]');
-      if (!popupFocusPending || !action || action.disabled) return;
-      action.focus({ preventScroll: true }); popupFocusPending = false;
-    });
-  }
-
   function applyCompactViewMode() {
     if (!compactSurface) return;
     const list = timelineViewMode === 'list';
-    placeCalendarWeekNavigation(popupMode || fullWidthPopupOpen ? compactSurface.body : compactSurface.timeline, timelineViewMode);
+    placeCalendarWeekNavigation(popupMode ? compactSurface.body : compactSurface.timeline, timelineViewMode);
     updateWeekNavigationLabel();
-    compactSurface.timeline.hidden = (popupMode || fullWidthPopupOpen) && list;
+    compactSurface.timeline.hidden = (popupMode) && list;
     const toolbar = compactSurface.body.querySelector('.popup-list-toolbar');
     if (toolbar) toolbar.hidden = !list;
     const shell = compactSurface.timeline.querySelector('.timeline-shell');
     if (shell) shell.hidden = list;
     const total = compactSurface.timeline.querySelector('.popup-list-total');
-    if (total) { total.hidden = popupMode || fullWidthPopupOpen || !list; total.textContent = listWeekTotalText(); }
+    if (total) { total.hidden = popupMode || !list; total.textContent = listWeekTotalText(); }
     compactSurface.overlaps.hidden = list;
     compactSurface.today.hidden = !list;
-    for (const control of (fullWidthPopupShadow || shadow)?.querySelectorAll?.('[data-timeline-view-mode]') ?? []) {
+    for (const control of (shadow)?.querySelectorAll?.('[data-timeline-view-mode]') ?? []) {
       control.setAttribute('aria-pressed', String(control.getAttribute('data-timeline-view-mode') === timelineViewMode));
     }
   }
@@ -3869,9 +3850,9 @@
   function refreshCompactSurface() {
     if (!compactSurface) return;
     const { strip, switchAction, today, feedback } = compactSurface;
-    const activeElement = fullWidthPopupShadow?.activeElement || shadow?.activeElement;
+    const activeElement = shadow?.activeElement;
     const actionKey = activeElement?.getAttribute?.('data-panel-action');
-    const scroll = fullWidthPopupShadow?.querySelector?.('.full-width-popup');
+    const scroll = null;
     const scrollTop = scroll?.scrollTop;
     const diagnosticsOpen = feedback.querySelector?.('details')?.open;
     const active = pageState.active, current = taskFromLocation();
@@ -4128,7 +4109,6 @@
       replacement?.focus?.({ preventScroll: true });
     }
     if (scroll && scrollTop !== undefined) scroll.scrollTop = scrollTop;
-    focusPopupAction();
   }
 
   function refreshTimelineOverlaps() {
@@ -4368,91 +4348,57 @@
     globalThis.requestAnimationFrame?.(() => { if (menu.isConnected) menu.scrollTop = scrollTop; });
   }
 
-  function mountFullWidthPopup() {
-    if (fullWidthPopupRoot?.isConnected) return;
-    fullWidthPopupRoot = el('div'); fullWidthPopupRoot.id = 'clockoli-full-width-popup-root';
-    fullWidthPopupRoot.className = 'full-width-popup-surface';
-    fullWidthPopupRoot.setAttribute('data-clockoli-width', pageState.interfaceWidth === 'full' ? 'full' : 'contained');
-    isolateShadowHost(fullWidthPopupRoot, { fullWidth: true });
-    fullWidthPopupShadow = fullWidthPopupRoot.attachShadow({ mode: 'closed' });
-    globalThis.ClockoliInstantTooltips?.attach(fullWidthPopupShadow);
-    (document.body || document.documentElement).append(fullWidthPopupRoot);
+  function renderActionSourceContext() {
+    if (!timesMode) return;
+    const banner = document.getElementById?.('activity-source-context');
+    if (!banner) return;
+    const task = actionSourceTask;
+    banner.hidden = !task;
+    if (!task) return;
+    const link = document.getElementById('activity-source-link');
+    const url = document.getElementById('activity-source-url');
+    const track = document.getElementById('activity-source-track');
+    const label = document.getElementById('activity-source-track-label');
+    link.href = task.taskUrl;
+    link.textContent = githubTabTitle(task.taskTitle) || task.taskUrl;
+    link.title = task.taskUrl;
+    url.textContent = task.taskUrl;
+    const alreadyTracking = sameTask(task, pageState.active);
+    label.textContent = alreadyTracking ? 'Tracking this task' : pageState.active ? 'Switch to this task' : 'Track this task';
+    track.disabled = !pageState.configured || alreadyTracking || timelineStartInFlight
+      || timelineStopInFlight || timelineDeleteInFlight
+      || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
   }
 
-  function closeFullWidthPopup({ restoreFocus = true } = {}) {
-    fullWidthPopupOpen = false;
-    compactSurface = null; popupFocusPending = false;
-    clearInterval(tick); tick = null;
-    clearInterval(timelineWindowTimer); timelineWindowTimer = null;
-    timelineInstance?.destroy(); timelineInstance = null; timelineWindow = null; timelineEntriesById = new Map(); timelineQueueIndicator = null;
-    timelineView = null;
-    fullWidthPopupRoot?.remove(); fullWidthPopupRoot = null; fullWidthPopupShadow = null;
-    renderUi();
-    const target = popupReturnFocus?.isConnected ? popupReturnFocus : shadow?.querySelector?.('.trigger-main');
-    if (restoreFocus) target?.focus?.({ preventScroll: true });
-    popupReturnFocus = null;
+  async function refreshActionSourceContext() {
+    const result = await send({ type: 'CONSUME_TOOLBAR_TASK_CONTEXT' });
+    if (result?.present) receiveActionSourceContext(result.value);
   }
 
-  function renderFullWidthPopup(style) {
-    if (!fullWidthPopupOpen || !fullWidthPopupShadow || !fullWidthPopupRoot?.isConnected) return;
-    const focused = fullWidthPopupShadow.activeElement;
-    const restoreDescriptionFocus = focused?.classList?.contains('strip-description');
-    const restoreStopFocus = focused?.getAttribute?.('data-panel-action') === 'stop';
-    compactSurface = null;
-    timelineInstance?.destroy(); timelineInstance = null; timelineWindow = null; timelineEntriesById = new Map(); timelineQueueIndicator = null;
-    const surface = el('section', undefined, 'full-width-popup');
-    surface.append(renderMenu({ compact: true, onClose: closeFullWidthPopup }));
-    fullWidthPopupShadow.replaceChildren(style.cloneNode(true), surface);
-    updateActivityWeekSummary();
-    if (restoreDescriptionFocus) fullWidthPopupShadow.querySelector('.strip-description')?.focus({ preventScroll: true });
-    else if (restoreStopFocus) fullWidthPopupShadow.querySelector('[data-panel-action="stop"]')?.focus({ preventScroll: true });
-    focusPopupAction();
-  }
-
-  async function toggleFullWidthPopup() {
-    fullWidthPopupOpen = !fullWidthPopupOpen;
-    if (!fullWidthPopupOpen) { closeFullWidthPopup(); return false; }
-    popupReturnFocus = shadow?.activeElement || document.activeElement; popupFocusPending = true;
-    popupOpening = true;
-    mountFullWidthPopup(); renderUi();
-    clearInterval(timelineWindowTimer);
-    timelineWindowTimer = setInterval(() => { if (fullWidthPopupOpen) renderUi(); }, 60_000);
-    timelineWindowTimer?.unref?.();
-    try {
-      applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: false }));
-      if (!fullWidthPopupOpen) return false;
-      renderUi();
-      const refreshedState = send({ type: 'GET_PAGE_STATE', refresh: true });
-      const restoredMode = restoreActivityViewMode();
-      applyPageState(await refreshedState);
-      await restoredMode;
-      if (!fullWidthPopupOpen) return false;
-      if (pageState.configured) {
-        if (timelineViewMode === 'calendar') await loadActivityCalendarWeek(weekWindow(), { showLoading: false });
-        else {
-          await refreshRecent(true);
-          if (fullWidthPopupOpen) await loadActivityCalendarWeek(weekWindow());
-        }
-      }
-      else renderUi();
-    } catch (error) { setError(error); }
-    finally { popupOpening = false; focusPopupAction(); }
-    return true;
+  function receiveActionSourceContext(value) {
+    if (!timesMode) return;
+    const age = Date.now() - Number(value?.openedAt);
+    let task = null;
+    if (age >= -10_000 && age <= 120_000) {
+      try { task = taskFromUrl(value?.taskUrl, value?.taskTitle); } catch { /* Invalid context. */ }
+    }
+    actionSourceTask = task?.taskUrl === value?.taskUrl ? task : null;
+    renderActionSourceContext();
+    // The worker atomically deletes the one-use context on consumption.
   }
 
   function renderUi() {
-    if ((!shadow || !root?.isConnected) && (!fullWidthPopupShadow || !fullWidthPopupRoot?.isConnected)) return;
+    if (!shadow || !root?.isConnected) return;
     if (descriptionDraft && (!pageState.active || descriptionDraft.id !== (pageState.active.id || pageState.active.startedAt)
         || descriptionDraft.taskUrl !== taskUrlOf(pageState.active))) descriptionDraft = null;
     updateTaskAnimation();
     const preservedMenuScrollTop = menuScrollTop;
-    const preserveFullWidthTimeline = Boolean(fullWidthPopupOpen && pageState.configured && timelineInstance && timelineWindow);
     const preservedActivityTimeline = timesMode && pageState.configured && timelineInstance && timelineWindow
       ? shadow?.querySelector('.popup-timeline-section') : null;
     const preservedActivityCalendarScroll = preservedActivityTimeline && timelineInstance.captureCalendarScroll?.();
     preservedActivityTimeline?.remove();
     clearInterval(tick); tick = null;
-    if (!preserveFullWidthTimeline && !preservedActivityTimeline) {
+    if (!preservedActivityTimeline) {
       timelineInstance?.destroy(); timelineInstance = null; timelineWindow = null; timelineEntriesById = new Map(); timelineQueueIndicator = null;
     }
     if (shadow && root?.isConnected) shadow.replaceChildren();
@@ -4637,8 +4583,7 @@
           --control-bgColor-hover:#262c36; --control-bgColor-active:#2a313c; --control-borderColor-disabled:#656c761a; --control-bgColor-disabled:#212830; --control-fgColor-disabled:#656c76;
           --shadow-floating-small:0 0 0 1px #3d444d,0 6px 12px -3px #01040966,0 6px 18px 0 #01040966;
         }
-        :host(.full-width-popup-surface) .clockoli-wordmark { filter:saturate(1.4) brightness(2.1) }
-      }
+        }
       :host { all:initial; position:relative; display:inline-flex; align-items:center; color:var(--fgColor-default,var(--ck-fg)); color-scheme:light dark; font:var(--text-body-shorthand-medium,400 14px/1.5 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") }
       :where(:host > :not(style)) { all:revert; color:var(--fgColor-default,var(--ck-fg)); color-scheme:light dark; font:var(--text-body-shorthand-medium,400 14px/1.5 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") }
       * { box-sizing:border-box } b,strong,h1,h2,h3,h4,h5,h6 { font-weight:600 } button,input,textarea,select { font:inherit } .trigger { display:inline-flex; align-items:center; justify-content:center; gap:3px; width:46px; height:32px; margin:0 8px 0 0; padding:0 6px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; background:var(--button-default-bgColor-rest,var(--ck-button-default-bg-rest)); color:var(--fgColor-muted,var(--ck-fg-muted)); cursor:pointer }
@@ -4815,7 +4760,7 @@
       @media(max-width:700px){:host(.times-surface) .popup-timeline-section{padding-top:16px}}
       @media(max-width:460px){:host(.times-surface) .activity-weekly-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
     `;
-    if (popupMode || fullWidthPopupOpen) style.textContent += `
+    if (popupMode) style.textContent += `
       :host(.popup-surface) .menu { max-height:min(720px,calc(100vh - 16px)); overflow-y:auto }
       :host(.popup-surface) .tracker-toolbar { display:grid; grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"brand end" "actions actions"; align-items:center; gap:8px; margin:0; padding:10px 12px 8px; border-top:0; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
       :host(.popup-surface) .timeline-brand { grid-area:brand; display:flex; justify-content:flex-start; min-width:0 }
@@ -4824,16 +4769,6 @@
       :host(.popup-surface) .header-actions { grid-area:actions; width:100%; justify-content:space-between; gap:0 }
       :host(.popup-surface) .header-navigation { width:100%; justify-content:space-between; gap:0 }
       :host(.popup-surface) .reports-button { gap:4px; padding:5px 4px; font-size:12px }
-      :host(.full-width-popup-surface) { position:fixed; z-index:2147483647; top:0; right:0; left:0; display:block; width:100vw; pointer-events:none }
-      :host(.full-width-popup-surface) .full-width-popup { width:100vw; max-width:none; max-height:min(720px,70vh); margin:0; overflow:auto; pointer-events:auto; border:1px solid var(--borderColor-default,var(--ck-border)); border-top:0; border-radius:0 0 12px 12px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); box-shadow:var(--shadow-floating-small,var(--ck-shadow-overlay)) }
-      :host(.full-width-popup-surface[data-clockoli-width="contained"]) .tracker-toolbar,:host(.full-width-popup-surface[data-clockoli-width="contained"]) .menu-body { max-width:1100px; margin-inline:auto }
-      :host(.full-width-popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:none; margin:0; overflow:visible; border:0; border-radius:0; box-shadow:none }
-      :host(.full-width-popup-surface) .menu-body { padding:0 }
-      :host(.full-width-popup-surface) .tracker-toolbar { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; min-height:48px; padding:8px var(--clockoli-gutter); border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      :host(.full-width-popup-surface) .timeline-brand { display:inline-flex; align-items:center; color:var(--fgColor-default,var(--ck-fg)) }
-      :host(.full-width-popup-surface) .clockoli-wordmark { display:block; width:auto; height:24px; object-fit:contain }
-      :host(.full-width-popup-surface) .header-actions { justify-self:center; display:flex; align-items:center; gap:2px }
-      :host(.full-width-popup-surface) .header-navigation { width:auto; justify-content:flex-start; gap:2px }
       .timeline-view-modes { display:flex; gap:1px; padding:1px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px}
       .popup-switch-action:not(:empty) { display:flex; align-self:center }
             .timeline-view-button { display:flex; align-items:center; justify-content:center; width:28px; height:28px; min-height:0; margin:0; padding:0; border:0; border-radius:6px; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); cursor:pointer }
@@ -4841,135 +4776,9 @@
       .timeline-view-button:hover { background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)); color:var(--fgColor-default,var(--ck-fg)) }
       .timeline-view-button[aria-pressed="true"] { background:var(--bgColor-success-muted,color-mix(in srgb,var(--ck-success) 14%,transparent)); color:var(--ck-success) }
       .timeline-view-button:focus-visible { outline:2px solid var(--focus-outlineColor,var(--ck-accent)); outline-offset:2px }
-      :host(.full-width-popup-surface) .timeline-toolbar-end { justify-self:end; display:flex; align-items:center; gap:12px }
-      :host(.full-width-popup-surface) .popup-timeline-track { white-space:nowrap }
-      :host(.full-width-popup-surface) .popup-timeline-close { display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; padding:0; border:0; border-radius:6px; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)) }
-      @media(max-width:520px) {
-        :host(.full-width-popup-surface) .tracker-toolbar { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"brand end" "actions actions"; row-gap:4px }
-        :host(.full-width-popup-surface) .timeline-brand { grid-area:brand }
-        :host(.full-width-popup-surface) .clockoli-wordmark { height:24px }
-        :host(.full-width-popup-surface) .timeline-toolbar-end { grid-area:end }
-        :host(.full-width-popup-surface) .header-actions { grid-area:actions; justify-self:stretch; width:100%; flex-wrap:wrap }
-        :host(.full-width-popup-surface) .header-navigation { display:grid; flex:1 1 100%; width:100%; max-width:100%; grid-template-columns:repeat(4,minmax(0,1fr)); gap:2px; overflow:visible }
-        :host(.full-width-popup-surface) .header-navigation .reports-button { min-width:0; justify-content:center; gap:4px; padding:5px 2px; font-size:12px; white-space:nowrap }
-      }
-      :host(.full-width-popup-surface) .popup-timeline-section { box-sizing:border-box; position:relative; width:100%; margin:0; padding:16px var(--clockoli-gutter); border:0; border-radius:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)) }
-      :host(.full-width-popup-surface) .popup-list-total { margin:0 0 8px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:600; text-align:center }
-      :host(.full-width-popup-surface) .popup-list-total[hidden] { display:none }
-      :host(.full-width-popup-surface) .timeline-shell { position:relative; width:100%; min-width:0 }
-      :host(.full-width-popup-surface) .task-timeline-host { width:100%; min-height:108px }
-      .active-task-strip { display:flex; align-items:center; gap:12px; padding:14px var(--clockoli-gutter); border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      .active-task-strip.is-active { box-sizing:border-box; width:min(1600px,calc(100% - 2 * var(--clockoli-gutter))); gap:16px; margin:8px auto 0; padding:8px 16px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:linear-gradient(100deg,color-mix(in srgb,var(--ck-success) 5%,var(--ck-bg)),var(--bgColor-default,var(--ck-bg)) 45%); box-shadow:none }
-      .popup-overview-layout { box-sizing:border-box; display:grid; grid-template-columns:minmax(190px,1fr) minmax(0,3fr); align-items:stretch; gap:12px; width:calc(100% - 2 * var(--clockoli-gutter)); margin:14px auto 0 }
-      :host(.full-width-popup-surface[data-clockoli-width="full"]) .popup-overview-layout { grid-template-columns:minmax(0,1fr) minmax(0,7fr) }
-      .popup-overview-layout .activity-weekly-summary { box-sizing:border-box; min-width:0; padding:8px 16px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)); font:400 14px/1.5 var(--fontStack-sansSerif) }
-      .popup-overview-layout .activity-weekly-heading { margin:0 0 6px; color:var(--fgColor-default,var(--ck-fg)); font-size:14px; font-weight:600 }
-      .popup-overview-layout .activity-weekly-range,.popup-overview-layout .activity-weekly-icon { display:none }
-      .popup-overview-layout .activity-weekly-cards { display:grid; grid-template-columns:1fr }
-      .popup-overview-layout .activity-weekly-card { min-width:0; padding:5px 0; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      .popup-overview-layout .activity-weekly-card:last-child { border-bottom:0 }
-      .popup-overview-layout .activity-weekly-copy { display:flex; flex-direction:row-reverse; justify-content:space-between; align-items:baseline; gap:4px; min-width:0 }
-      .popup-overview-layout .activity-weekly-value { color:var(--fgColor-default,var(--ck-fg)); font-size:14px; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap }
-      .popup-overview-layout .activity-weekly-card:first-child .activity-weekly-value { color:var(--fgColor-success,var(--ck-success)) }
-      .popup-overview-layout .activity-weekly-name { min-width:0; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px }
-      .popup-overview-layout .active-task-strip,.popup-overview-layout .active-task-strip.is-active { box-sizing:border-box; width:100%; height:100%; min-height:84px; margin:0; padding:8px 16px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:linear-gradient(100deg,color-mix(in srgb,var(--ck-success) 6%,var(--ck-bg)),var(--ck-bg) 65%,color-mix(in srgb,var(--ck-success) 5%,var(--ck-bg))); box-shadow:none }
-      .popup-overview-layout .active-task-strip.is-active { display:grid; grid-template-columns:minmax(0,1fr) max-content; grid-template-rows:auto auto 1fr; align-items:start; gap:8px 22px }
-      .popup-overview-layout .active-task-strip .running-status-live { grid-column:1; grid-row:1; justify-self:start }
-      .popup-overview-layout .active-task-strip .strip-task-copy { grid-column:1; grid-row:2; max-width:100% }
-      .popup-overview-layout .active-task-strip .strip-description-field { grid-column:1; grid-row:3; width:min(100%,560px); max-width:none; min-width:0 }
-      .popup-overview-layout .active-task-strip .running-status-stats { grid-column:2; grid-row:1/span 2; justify-self:end; margin:0 }
-      .popup-overview-layout .active-task-strip > .danger { grid-column:2; grid-row:3; justify-self:end; align-self:start; min-height:32px }
-      .popup-overview-layout .active-task-strip .strip-idle { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:500; line-height:18px }
-      @media(max-width:1299px) { :host(.full-width-popup-surface[data-clockoli-width="full"]) .popup-overview-layout { grid-template-columns:minmax(190px,1fr) minmax(0,3fr) } }
-      @media(max-width:900px) { .popup-overview-layout,:host(.full-width-popup-surface[data-clockoli-width="full"]) .popup-overview-layout { grid-template-columns:1fr } }
       :host(.popup-surface) .popup-overview-layout { grid-template-columns:1fr }
-      @media(max-width:640px) { .popup-overview-layout .active-task-strip.is-active { grid-template-columns:minmax(0,1fr); grid-template-rows:none; padding:12px; gap:10px } .popup-overview-layout .active-task-strip .running-status-live,.popup-overview-layout .active-task-strip .strip-task-copy,.popup-overview-layout .active-task-strip .strip-description-field,.popup-overview-layout .active-task-strip .running-status-stats,.popup-overview-layout .active-task-strip > .danger { grid-column:1; grid-row:auto; justify-self:start } .popup-overview-layout .active-task-strip .running-status-stats,.popup-overview-layout .active-task-strip > .danger { justify-self:end } }
-      .active-task-strip .running-status-live { flex:none; display:inline-flex; align-items:center; gap:6px; padding:0 7px; border:1px solid color-mix(in srgb,var(--ck-success) 40%,transparent); border-radius:999px; background:color-mix(in srgb,var(--ck-success) 13%,transparent); color:var(--ck-success); font-size:12px; font-weight:500; line-height:18px; white-space:nowrap }
-      .active-task-strip .running-status-live::before { content:""; width:8px; height:8px; border-radius:50%; background:currentColor }
-      .site-favicon { display:block; width:16px; height:16px; flex:none; border-radius:6px; object-fit:contain; background:var(--bgColor-default,var(--ck-bg)) }
-      .site-monogram { display:grid; place-items:center; color:var(--fgColor-default,var(--ck-fg)); font-size:12px; font-weight:600; line-height:1 }
-      .strip-task-copy { display:block; flex:0 1 auto; min-width:0; max-width:340px } .strip-task,.strip-idle { min-width:0 } .strip-task .task-url { display:none } .strip-task.task-result-untitled .task-url { display:block }
-      .strip-task .task-title,.strip-task.task-result-untitled .task-url { display:block; overflow:hidden; margin:0; color:var(--fgColor-default,var(--ck-fg)); font-size:14px; font-weight:600; text-overflow:ellipsis; white-space:nowrap }
-      .strip-description-field { flex:0 1 230px; min-width:160px; max-width:250px }
-      .strip-description,.today-description { width:100%; min-height:0; margin:2px 0 0; padding:1px 96px 1px 0; border:0; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:14px; font-weight:400; line-height:20px }
-      .strip-description { box-sizing:border-box; min-height:32px; margin:0; padding:5px 78px 5px 12px; line-height:20px; border:1px solid var(--control-borderColor-rest,var(--ck-border)); border-radius:6px; background:var(--control-bgColor-rest,var(--ck-bg)); resize:none; max-height:180px; overflow-y:auto; white-space:pre-wrap }
-      .strip-description:hover { background:var(--control-bgColor-hover,var(--ck-bg-muted)) }
-      .strip-description:focus-visible { outline:2px solid var(--focus-outlineColor,var(--ck-accent)); outline-offset:-1px }
-      .today-description:hover,.today-description:focus { background:transparent; box-shadow:inset 0 -1px var(--borderColor-default,var(--ck-border)) }
-      .active-task-strip button,.running-elapsed { flex:none; white-space:nowrap } .running-elapsed { font-variant-numeric:tabular-nums }
-      .active-task-strip .running-status-stats { display:flex; flex:none; max-width:100%; margin-left:auto; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
-      .active-task-strip .running-status-start-field { box-sizing:border-box; position:relative; display:flex; align-items:center; flex:none; min-width:100px; padding:5px 8px 5px 11px; border-right:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      .active-task-strip .running-status-start-field:focus-within { box-shadow:inset 0 0 0 2px var(--fgColor-accent,var(--ck-accent)) }
-      .active-task-strip .running-status-start-label { display:flex; flex-direction:column; gap:2px; margin:0; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:600; line-height:1.2; white-space:nowrap }
-      .active-task-strip .running-status-start-value { display:inline-flex; align-items:center; gap:4px; height:24px }
-      .active-task-strip .running-status-start { box-sizing:border-box; width:55px; height:24px; margin:0; padding:2px 0; border:0; border-bottom:1px dashed var(--fgColor-accent,var(--ck-accent)); border-radius:0; background:transparent; color:var(--fgColor-default,var(--ck-fg)); font:600 14px/20px var(--fontStack-sansSerif); font-variant-numeric:tabular-nums; cursor:text }
-      .active-task-strip .running-status-start:hover { border-bottom-style:solid }
-      .active-task-strip .running-status-start:focus-visible { outline:none }
-      .active-task-strip .running-status-start-save,.active-task-strip .running-status-start-saved { position:absolute; right:4px; bottom:4px; display:grid; width:24px; min-height:0; height:24px; place-items:center }
-      .active-task-strip .running-status-start-save { padding:0; border:0; border-radius:6px; background:transparent; color:var(--fgColor-success,var(--ck-success)); cursor:pointer }
-      .active-task-strip .running-status-start-saved { color:var(--fgColor-success,var(--ck-success)); font-size:0 }
-      .active-task-strip .running-status-start-save[hidden],.active-task-strip .running-status-start-saved[hidden] { display:none }
-      .active-task-strip .running-status-metrics { display:flex; align-items:stretch; flex:none; white-space:nowrap; font-variant-numeric:tabular-nums }
-      .active-task-strip .running-status-elapsed,.active-task-strip .running-status-today { display:flex; flex-direction:column; gap:2px; min-width:0; padding:5px 11px; color:var(--fgColor-default,var(--ck-fg)); font-size:14px; font-weight:600; line-height:1.2 }
-      .active-task-strip .running-status-today { border-left:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      .active-task-strip .running-status-metric-label { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:600; line-height:1.2 }
-      .active-task-strip .running-status-metric-value { min-height:24px; line-height:24px }
-      @media(max-width:900px) { .active-task-strip.is-active { flex-wrap:wrap; gap:10px 14px } .active-task-strip .strip-task-copy { flex-basis:calc(100% - 150px) } }
-      @media(max-width:640px) { .active-task-strip.is-active { padding:12px; gap:10px } .active-task-strip .strip-task-copy { order:1; flex-basis:100% } .active-task-strip .strip-description-field { order:2; flex-basis:100%; max-width:none; min-width:0 } .active-task-strip .running-status-stats { order:3; margin-left:0 } .active-task-strip > .danger { order:4; margin-left:auto; padding:6px 10px; font-size:12px } .active-task-strip > .popup-timeline-track { order:5; flex-basis:100% } }
-      .today-list,.panel-feedback,.timeline-overlaps,.page-tracking-hint { padding:0 var(--clockoli-gutter) 16px } .panel-feedback:empty,.timeline-overlaps:empty { display:none }
-      .today-list-totals { display:flex; gap:24px; margin-bottom:10px } .today-list-totals .today-total { margin:0; padding:0; border:0; background:none; gap:6px }
-      @media(max-width:520px) { .active-task-strip { flex-wrap:wrap } .strip-task-copy,.strip-idle { flex-basis:70% } }
-
-      :host(.full-width-popup-surface) .task-timeline-host { width:100%; min-height:108px }
-      /* Keep popup chrome compact so the week view owns the available height. */
-      :host(.full-width-popup-surface) .tracker-toolbar { grid-template-columns:auto auto minmax(0,1fr) auto; gap:12px; padding-block:6px }
-      :host(.full-width-popup-surface) .header-actions { justify-self:center }
-      :host(.full-width-popup-surface) .timeline-toolbar-end { gap:8px }
-      .tracker-toolbar .activity-weekly-summary { display:flex; align-items:center; gap:10px; min-width:0; padding:4px 8px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
-      .tracker-toolbar .activity-weekly-heading { flex:none; margin:0; font-size:12px }
-      .tracker-toolbar .activity-weekly-range,.tracker-toolbar .activity-weekly-icon { display:none }
-      .tracker-toolbar .activity-weekly-cards { display:flex; align-items:center; gap:8px; min-width:0 }
-      .tracker-toolbar .activity-weekly-card { min-width:0; padding:0 0 0 8px; border-left:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      .tracker-toolbar .activity-weekly-copy { display:flex; flex-direction:column; gap:0; min-width:0; white-space:nowrap }
-      .tracker-toolbar .activity-weekly-name { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; line-height:1.2 }
-      .tracker-toolbar .activity-weekly-value { color:var(--fgColor-default,var(--ck-fg)); font-size:12px; line-height:1.3; font-weight:600; font-variant-numeric:tabular-nums }
-      .tracker-toolbar .activity-weekly-card:first-child .activity-weekly-value { color:var(--fgColor-success,var(--ck-success)) }
       .popup-switch-action .popup-timeline-track { padding:5px 12px; border-color:var(--button-primary-borderColor-rest,var(--ck-button-primary-border-rest)); background:var(--button-primary-bgColor-rest,var(--ck-button-primary-bg-rest)); color:var(--button-primary-fgColor-rest,var(--ck-button-primary-fg-rest)); white-space:nowrap }
       .popup-switch-action .popup-timeline-track:hover:not(:disabled) { background:var(--button-primary-bgColor-hover,var(--ck-button-primary-bg-hover)) }
-      .popup-overview-layout { display:block; margin:8px auto 0 }
-      .popup-overview-layout .active-task-strip,.popup-overview-layout .active-task-strip.is-active { display:flex; align-items:center; gap:12px; width:100%; height:auto; min-height:56px; margin:0; padding:7px 12px }
-      .popup-overview-layout .active-task-strip.is-active .running-status-live,
-      .popup-overview-layout .active-task-strip.is-active .strip-task-copy,
-      .popup-overview-layout .active-task-strip.is-active .strip-description-field,
-      .popup-overview-layout .active-task-strip.is-active .running-status-stats,
-      .popup-overview-layout .active-task-strip.is-active > .danger { grid-column:auto; grid-row:auto; justify-self:auto; align-self:center }
-            .popup-overview-layout .active-task-strip.is-active .strip-task-copy { flex:0 1 26%; max-width:420px }
-      .popup-overview-layout .active-task-strip.is-active .strip-description-field { flex:1 1 180px; width:auto; max-width:none; min-width:120px }
-      .popup-overview-layout .active-task-strip.is-active .strip-description:not(:focus) { max-height:32px }
-      .popup-overview-layout .active-task-strip.is-active .strip-description-field:not(:focus-within) .description-overflow-hint { display:none }
-      .popup-overview-layout .active-task-strip.is-active .running-status-stats { flex:none; margin-left:auto }
-      .popup-overview-layout .active-task-strip.is-active > .danger { flex:none; min-height:32px; padding:5px 12px }
-      .popup-overview-layout .active-task-strip .running-status-quick-start { display:flex; flex:1; align-items:center; gap:12px; min-width:0 }
-      .popup-overview-layout .active-task-strip .running-status-quick-label { flex:none; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:14px; white-space:nowrap }
-      .popup-overview-layout .active-task-strip .running-status-recent { display:flex; flex:1; gap:8px; min-width:0; overflow-x:auto }
-      .popup-overview-layout .active-task-strip .running-status-recent-task { display:inline-flex; flex:1 1 0; align-items:center; gap:8px; min-width:0; max-width:300px; min-height:32px; padding:5px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)); text-align:left }
-      .popup-overview-layout .active-task-strip .running-status-recent-task:nth-child(3n+1) { border-color:color-mix(in srgb,var(--ck-success) 40%,var(--ck-border)); background:color-mix(in srgb,var(--ck-success) 10%,var(--ck-bg)) }
-      .popup-overview-layout .active-task-strip .running-status-recent-task:nth-child(3n+2) { border-color:color-mix(in srgb,var(--ck-danger) 40%,var(--ck-border)); background:color-mix(in srgb,var(--ck-danger) 10%,var(--ck-bg)) }
-      .popup-overview-layout .active-task-strip .running-status-recent-task:nth-child(3n+3) { border-color:color-mix(in srgb,var(--ck-accent) 40%,var(--ck-border)); background:color-mix(in srgb,var(--ck-accent) 9%,var(--ck-bg)) }
-      .popup-overview-layout .active-task-strip .running-status-recent-task:hover:not(:disabled) { border-color:var(--fgColor-accent,var(--ck-accent)) }
-      .popup-overview-layout .active-task-strip .running-status-recent-play { display:inline-flex; flex:none; color:var(--ck-success) }
-      .popup-overview-layout .active-task-strip .running-status-recent-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; font-weight:500 }
-      .popup-overview-layout .active-task-strip .running-status-recent-empty { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:14px }
-      @media(max-width:1450px) { :host(.full-width-popup-surface) .tracker-toolbar { grid-template-columns:auto minmax(0,1fr) auto; grid-template-areas:"brand stats end" "nav nav nav"; row-gap:3px } :host(.full-width-popup-surface) .timeline-brand { grid-area:brand } :host(.full-width-popup-surface) .tracker-toolbar .activity-weekly-summary { grid-area:stats; justify-self:start } :host(.full-width-popup-surface) .header-actions { grid-area:nav } :host(.full-width-popup-surface) .timeline-toolbar-end { grid-area:end } }
-      @media(max-width:900px) { .popup-overview-layout .active-task-strip.is-active { flex-wrap:wrap } .popup-overview-layout .active-task-strip.is-active .strip-task-copy { flex:1 1 40%; max-width:none } .popup-overview-layout .active-task-strip.is-active .strip-description-field { flex:1 1 40% } .popup-overview-layout .active-task-strip.is-active .running-status-stats { margin-left:auto } }
-      @media(min-width:901px) {
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active { display:grid; grid-template-columns:minmax(0,1fr) max-content; grid-template-rows:auto auto 1fr; align-items:start; gap:8px 22px }
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip .running-status-live { grid-column:1; grid-row:1; justify-self:start }
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip .strip-task-copy { grid-column:1; grid-row:2; max-width:100% }
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip .strip-description-field { grid-column:1; grid-row:3; width:100%; max-width:none; min-width:0 }
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip .running-status-stats { grid-column:2; grid-row:1/span 2; justify-self:end; margin-left:0 }
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip > .danger { grid-column:2; grid-row:3; justify-self:stretch; align-self:start; width:100% }
-      }
       :host(.popup-surface) .tracker-toolbar { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"brand end" "stats stats" "actions actions"; gap:4px; padding:8px 12px }
       :host(.popup-surface) .tracker-toolbar .activity-weekly-summary { grid-area:stats; width:100%; justify-content:space-between }
       :host(.popup-surface) .tracker-toolbar .activity-weekly-cards { justify-content:space-between; flex:1 }
@@ -4991,7 +4800,6 @@
       :host(.popup-surface) .strip-idle-caption { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px }
       :host(.popup-surface) .popup-overview-layout .active-task-strip:not(.is-active) .running-status-quick-start { display:grid; grid-template-columns:minmax(0,1fr); width:100% }
       :host(.popup-surface) .popup-overview-layout .active-task-strip:not(.is-active) .running-status-recent { width:100% }
-      /* Keep the toolbar popup's Activity hierarchy within its scrollable width. */
       :host(.popup-surface) .popup-overview-layout .activity-weekly-summary { margin-bottom:10px; padding:12px }
       :host(.popup-surface) .popup-overview-layout .activity-weekly-label { display:none }
       :host(.popup-surface) .popup-overview-layout .activity-weekly-range { display:block; font-size:14px }
@@ -5025,76 +4833,13 @@
       :host(.popup-surface) .activity-list .entry-record:last-child { border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px}
       :host(.popup-surface) .activity-list .entry-actions { position:static; margin:8px 0 0 24px; opacity:1; transform:none; pointer-events:auto }
       :host(.popup-surface) .times-search-pagination { display:flex; flex-wrap:wrap; justify-content:center; gap:8px; margin:16px 0; font-size:12px }
-      @media(max-width:520px) { :host(.full-width-popup-surface) .tracker-toolbar { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"brand end" "stats stats" "nav nav" } :host(.full-width-popup-surface) .tracker-toolbar .activity-weekly-summary { width:100%; justify-content:space-between } :host(.full-width-popup-surface) .tracker-toolbar .activity-weekly-cards { justify-content:space-between; flex:1 } :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip .running-status-quick-start { flex-wrap:wrap; gap:6px } :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip .running-status-recent-task { flex:0 0 145px } }
-      /* The injected page panel uses the same Activity hierarchy, not toolbar chrome. */
-      :host(.full-width-popup-surface) .tracker-toolbar { grid-template-areas:none; grid-template-columns:auto minmax(0,1fr) auto; gap:12px; padding-block:10px }
-      :host(.full-width-popup-surface) .timeline-brand,:host(.full-width-popup-surface) .header-actions,:host(.full-width-popup-surface) .timeline-toolbar-end { grid-area:auto }
-      :host(.full-width-popup-surface) .header-actions { justify-self:center }
-      :host(.full-width-popup-surface) .timeline-toolbar-end { justify-self:end }
-      :host(.full-width-popup-surface) .popup-overview-layout,:host(.full-width-popup-surface[data-clockoli-width="full"]) .popup-overview-layout { display:grid; grid-template-columns:minmax(190px,1fr) minmax(0,7fr); align-items:stretch; gap:12px; margin:14px auto 0 }
-      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-summary { padding:8px 16px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
-      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-heading { margin:0 0 6px; font-size:14px }
-      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-label { display:none }
-      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-range { display:block }
-      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-card { padding:5px 0; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-card:last-child { border-bottom:0 }
-      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-copy { flex-direction:row-reverse; justify-content:space-between; font-size:14px }
-      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-value { font-size:14px }
-      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-name { font-size:12px }
-      :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip:not(.is-active) { min-height:84px; padding:8px 16px; gap:16px }
-      :host(.full-width-popup-surface) .strip-idle-status { display:flex; flex-direction:column; flex:none; gap:4px; min-width:150px; padding-right:20px; border-right:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      :host(.full-width-popup-surface) .strip-idle { align-self:flex-start; padding:0 7px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:999px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
-      :host(.full-width-popup-surface) .strip-idle-caption { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px }
-      :host(.full-width-popup-surface) .popup-timeline-section { padding-top:24px }
-      :host(.full-width-popup-surface) .popup-timeline-section[hidden],:host(.full-width-popup-surface) .popup-list-toolbar[hidden] { display:none }
-      :host(.full-width-popup-surface) .timeline-shell > .week-navigation { position:absolute; z-index:30; inset:0 0 auto; grid-template-columns:1fr 1fr; height:84px; min-height:0; margin:0; padding:0 12px; border:0; pointer-events:none }
-      :host(.full-width-popup-surface) .timeline-shell.calendar-week-navigation > .week-navigation { height:44px }
-      :host(.full-width-popup-surface) .timeline-shell > .week-navigation .week-navigation-label { display:none }
-      :host(.full-width-popup-surface) .timeline-shell > .week-navigation::before,:host(.full-width-popup-surface) .timeline-shell > .week-navigation::after { content:""; position:absolute; inset-block:0; width:90px; pointer-events:none }
-      :host(.full-width-popup-surface) .timeline-shell > .week-navigation::before { left:0; background:linear-gradient(90deg,color-mix(in srgb,var(--bgColor-muted,var(--ck-bg-muted)) 90%,var(--fgColor-muted,var(--ck-fg-muted))),transparent) }
-      :host(.full-width-popup-surface) .timeline-shell > .week-navigation::after { right:0; background:linear-gradient(270deg,color-mix(in srgb,var(--bgColor-muted,var(--ck-bg-muted)) 90%,var(--fgColor-muted,var(--ck-fg-muted))),transparent) }
-      :host(.full-width-popup-surface) .timeline-shell > .week-navigation .week-navigation-button { position:relative; z-index:1; border-radius:6px; pointer-events:auto }
-      :host(.full-width-popup-surface) .popup-list-toolbar { box-sizing:border-box; display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:8px; width:calc(100% - 2 * var(--clockoli-gutter)); margin:16px auto }
-      :host(.full-width-popup-surface) .popup-list-toolbar .times-filter { position:relative; min-width:0; margin:0 }
-      :host(.full-width-popup-surface) .popup-list-toolbar .times-filter svg { position:absolute; top:50%; left:8px; transform:translateY(-50%); color:var(--fgColor-muted,var(--ck-fg-muted)); pointer-events:none }
-      :host(.full-width-popup-surface) .popup-list-toolbar .times-filter input { box-sizing:border-box; min-height:32px; margin:0; padding-left:32px; font:400 14px/20px var(--fontStack-sansSerif); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
-      :host(.full-width-popup-surface) .popup-list-toolbar .week-navigation { grid-template-columns:32px auto 32px; gap:8px; width:auto; min-height:0; margin:0; padding:0; border:0 }
-      :host(.full-width-popup-surface) .popup-list-toolbar .week-navigation-label { padding:5px 12px; line-height:20px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; font-size:14px }
-      :host(.full-width-popup-surface) .popup-list-toolbar .week-navigation-button { width:32px; height:32px; border-radius:6px}
-      :host(.full-width-popup-surface) .popup-list-toolbar .times-refresh { display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; padding:0; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
-      :host(.full-width-popup-surface) .today-list { padding-bottom:16px }
-      :host(.full-width-popup-surface) .activity-list .entry { margin-bottom:12px; border:0; background:transparent }
-      :host(.full-width-popup-surface) .activity-list .entry-record,:host(.full-width-popup-surface) .activity-list .entry-record.entry-overlap { margin:8px 8px 0; padding:8px 110px 8px 16px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
-      :host(.full-width-popup-surface) .activity-list .entry-record + .entry-record { margin-top:8px }
-      :host(.full-width-popup-surface) .activity-list .entry-record:last-child { border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px}
-      @media(max-width:900px) { :host(.full-width-popup-surface) .popup-overview-layout,:host(.full-width-popup-surface[data-clockoli-width="full"]) .popup-overview-layout { grid-template-columns:minmax(0,1fr) } :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip:not(.is-active) { min-height:110px } :host(.full-width-popup-surface) .tracker-toolbar { grid-template-areas:"brand end" "nav nav"; grid-template-columns:minmax(0,1fr) auto } :host(.full-width-popup-surface) .timeline-brand { grid-area:brand } :host(.full-width-popup-surface) .header-actions { grid-area:nav; justify-self:stretch } :host(.full-width-popup-surface) .timeline-toolbar-end { grid-area:end } }
-      @media(max-width:900px) {
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active { display:grid; grid-template-columns:minmax(0,1fr) max-content; grid-template-rows:auto auto auto; align-items:start; gap:8px 12px }
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active .running-status-live { grid-column:1; grid-row:1; justify-self:start }
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-task-copy { grid-column:1; grid-row:2; min-width:0 }
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-description-field { grid-column:1; grid-row:3; width:100%; min-width:0; max-width:none }
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active .running-status-stats { grid-column:2; grid-row:1/span 2; justify-self:end; margin:0 }
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active > .danger { box-sizing:border-box; grid-column:2; grid-row:3; justify-self:stretch; width:100%; margin:0 }
-      }
-      @media(max-width:359px) {
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-task-copy,
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-description-field { grid-column:1/-1 }
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active .running-status-stats { grid-row:4 }
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active > .danger { grid-row:5 }
-      }
-      @media(max-width:700px) { :host(.full-width-popup-surface) .popup-list-toolbar { grid-template-columns:minmax(0,1fr) auto; gap:10px } :host(.full-width-popup-surface) .popup-list-toolbar .times-filter { grid-column:1/-1 } :host(.full-width-popup-surface) .popup-list-toolbar .week-navigation { grid-column:1; justify-self:start; gap:8px } :host(.full-width-popup-surface) .popup-list-toolbar .times-refresh { grid-column:2 } :host(.full-width-popup-surface) .activity-list .entry-record,:host(.full-width-popup-surface) .activity-list .entry-record.entry-overlap { padding-right:14px } :host(.full-width-popup-surface) .activity-list .entry-actions { position:static; margin:8px 0 0 24px; opacity:1; transform:none; pointer-events:auto } }
     `;
-    if (timesMode || popupMode || fullWidthPopupOpen) style.textContent += `
+    if (timesMode || popupMode) style.textContent += `
       :host .timeline-shell.calendar-week-navigation > .week-navigation { display:flex; align-items:center; justify-content:center; gap:0; right:auto; width:62px }
       :host .timeline-shell.calendar-week-navigation > .week-navigation::before,:host .timeline-shell.calendar-week-navigation > .week-navigation::after { display:none }
       :host .timeline-shell.calendar-week-navigation > .week-navigation .week-navigation-button { min-width:28px; min-height:28px; width:28px; height:28px; border-radius:6px 0 0 6px }
       :host .timeline-shell.calendar-week-navigation > .week-navigation .week-navigation-button:last-child { margin-left:-1px; border-radius:0 6px 6px 0 }
     `;
-    if (fullWidthPopupOpen) {
-      if (preserveFullWidthTimeline) refreshMountedTimeline();
-      else renderFullWidthPopup(style);
-    }
-    if (fullWidthPopupOpen) startPanelClock();
     if (!shadow || !root?.isConnected) return;
     if (timesMode) {
       shadow.append(style, renderTimesPage(preservedActivityTimeline));
@@ -5103,6 +4848,7 @@
         refreshMountedTimeline();
         timelineInstance.restoreCalendarScroll?.(preservedActivityCalendarScroll);
       }
+      renderActionSourceContext();
       return;
     }
     if (popupMode) { shadow.append(style, renderMenu()); updateActivityWeekSummary(); restoreMenuScroll(preservedMenuScrollTop); return; }
@@ -5110,11 +4856,10 @@
     const currentRunning = sameTask(taskFromLocation(), pageState.active);
     const main = el('button', undefined, `trigger trigger-main${pageState.active ? ' running' : ''}${currentRunning ? ' running-current' : ''}`); main.type = 'button';
     main.setAttribute('aria-label', pageState.active ? `Time tracker running: ${formatElapsed(pageState.active.startedAt)}` : 'Time tracker');
-    main.setAttribute('aria-haspopup', 'dialog'); main.setAttribute('aria-expanded', String(fullWidthPopupOpen));
-    main.title = pageState.active ? 'Time tracker is running' : 'Open time tracker'; main.append(clockoliMark(20));
+    main.title = pageState.active ? 'Open Clockoli Activity (timer running)' : 'Open Clockoli Activity'; main.append(clockoliMark(20));
     main.addEventListener('click', async event => {
       if (!event.isTrusted) return;
-      await toggleFullWidthPopup();
+      await send({ type: 'OPEN_TIMES' });
     });
     shadow.append(style, main);
     restoreMenuScroll(preservedMenuScrollTop);
@@ -5128,7 +4873,7 @@
     catch (error) { errorText = error.message; errorCode = error.code || 'error'; }
     actionAnimationReady = true;
     renderUi();
-    if ((menuOpen || fullWidthPopupOpen) && pageState.configured) {
+    if (menuOpen && pageState.configured) {
       try { await refreshRecent(); }
       catch (error) { setError(error); }
     }
@@ -5164,24 +4909,34 @@
     return true;
   }
 
-  function handleDocumentClick(event) {
-    const path = event.composedPath();
-    if (fullWidthPopupOpen && !path.includes(fullWidthPopupRoot) && !path.includes(root) && !path.includes(timeEntryFormHost)) {
-      closeFullWidthPopup({ restoreFocus: false });
-    }
-    if (menuOpen && !path.includes(root)) closeMenu();
-  }
-
   if (!extensionPageMode) globalThis.ClockoliInstantTooltips?.attach(document, { selector: '.clockoli-participant-time' });
   if (!popupMode && !timesMode) document.addEventListener('visibilitychange', () => {
-    if (document.hidden && fullWidthPopupOpen) closeFullWidthPopup({ restoreFocus: false });
-    if (!actionSurfaceMode) updateTaskAnimation();
-  });
-  if (!popupMode && !timesMode) globalThis.addEventListener?.('blur', () => {
-    if (fullWidthPopupOpen) closeFullWidthPopup({ restoreFocus: false });
+    updateTaskAnimation();
   });
 
   if (timesMode) {
+    const sourceBanner = document.getElementById?.('activity-source-context');
+    if (sourceBanner) {
+      chrome.runtime.onMessage?.addListener?.(message => {
+        if (message?.type === 'TOOLBAR_CONTEXT_UPDATED') {
+          void refreshActionSourceContext().catch(setError);
+        }
+      });
+      void refreshActionSourceContext().catch(setError);
+      document.getElementById('activity-source-track')?.addEventListener('click', async event => {
+        if (!event.isTrusted || !actionSourceTask) return;
+        const task = actionSourceTask;
+        if (sameTask(task, pageState.active)) return;
+        try { await trackCurrentTimelineTask({ sourceTask: task, preserveSavedDescription: true }); }
+        catch { /* trackCurrentTimelineTask displays the error. */ }
+        finally { renderActionSourceContext(); }
+      });
+      document.getElementById('activity-source-dismiss')?.addEventListener('click', event => {
+        if (!event.isTrusted) return;
+        actionSourceTask = null;
+        renderActionSourceContext();
+      });
+    }
     document.addEventListener('clockoli:local-tracking-changed', event => {
       const detail = event.detail ?? {};
       if (detail.type === 'STOP' && detail.completion?.entry?.id) {
@@ -5243,38 +4998,8 @@
       }
       if (pageState.configured) await loadActivityCalendarWeek(weekWindow());
     }).catch(setError);
-  } else if (actionSurfaceMode) {
-    if (chrome.runtime.onMessage?.addListener) chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-      if (handleLocalPreferencesChanged(message)) return undefined;
-      if (message?.type === 'DISMISS_FULL_WIDTH_POPUP') {
-        if (fullWidthPopupOpen) closeFullWidthPopup({ restoreFocus: false });
-        return undefined;
-      }
-      if (message?.type !== 'TOGGLE_FULL_WIDTH_POPUP') return undefined;
-      void toggleFullWidthPopup().then(opened => sendResponse({ ok: true, opened })).catch(error => sendResponse({ ok: false, error: error.message }));
-      return true;
-    });
-    document.addEventListener('click', handleDocumentClick);
-    document.addEventListener('keydown', event => {
-      if (fullWidthPopupOpen && event.key === 'Escape' && !event.defaultPrevented && !timeEntryFormDialog?.open) closeFullWidthPopup();
-    });
-    void toggleFullWidthPopup();
   } else {
-    if (chrome.runtime.onMessage?.addListener) chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-      if (handleLocalPreferencesChanged(message)) return undefined;
-      if (message?.type === 'DISMISS_FULL_WIDTH_POPUP') {
-        if (fullWidthPopupOpen) closeFullWidthPopup({ restoreFocus: false });
-        return undefined;
-      }
-      if (message?.type !== 'TOGGLE_FULL_WIDTH_POPUP') return undefined;
-      void toggleFullWidthPopup().then(opened => sendResponse({ ok: true, opened })).catch(error => sendResponse({ ok: false, error: error.message }));
-      return true;
-    });
-    document.addEventListener('click', handleDocumentClick);
-    document.addEventListener('keydown', event => {
-      if (fullWidthPopupOpen && event.key === 'Escape' && !event.defaultPrevented && !timeEntryFormDialog?.open) { closeFullWidthPopup(); return; }
-      if (menuOpen && event.key === 'Escape' && !event.defaultPrevented) closeMenu();
-    });
+    chrome.runtime.onMessage?.addListener?.(message => { handleLocalPreferencesChanged(message); });
     motionPreference?.addEventListener?.('change', updateTaskAnimation);
     watchClockoliTimeline();
     navigationCheck();

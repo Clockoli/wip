@@ -25,7 +25,7 @@ test('tracker panel omits the redundant Clockoli Time tracker Synced heading', (
   const menu = renderer('renderMenu()', 'renderUi()');
   assert.doesNotMatch(menu, /el\('strong', 'Clockoli'\)|'Time tracker', 'muted'|const syncText/);
   assert.doesNotMatch(menu, /heading\.append/);
-  assert.match(content, /:host\(\.full-width-popup-surface\) \.full-width-popup \{[^}]*width:100vw[^}]*max-width:none/s);
+  assert.doesNotMatch(content, /full-width-popup/);
 });
 
 test('Activity groups List search, week navigation, and Refresh below view controls without a period selector', () => {
@@ -39,10 +39,10 @@ test('Activity groups List search, week navigation, and Refresh below view contr
 
 test('GitHub header has no separate navigation dropdown', () => {
   assert.doesNotMatch(content, /renderNavigationMenu|navigation-menu|trigger-menu|TRIANGLE_PATH/);
-  assert.match(content, /main\.addEventListener\('click', async event => \{[\s\S]*?await toggleFullWidthPopup\(\)/);
+  assert.match(content, /main\.addEventListener\('click', async event => \{[\s\S]*?await send\(\{ type: 'OPEN_TIMES' \}\)/);
 });
 
-test('shared tracking navigation fits all actions at 320px without a hidden horizontal scroller', () => {
-  assert.match(content, /@media\(max-width:520px\)[\s\S]*?\.header-navigation \{[^}]*display:grid[^}]*grid-template-columns:repeat\(4,minmax\(0,1fr\)\)[^}]*overflow:visible/s);
-  assert.match(content, /@media\(max-width:520px\)[\s\S]*?\.header-navigation \.reports-button \{[^}]*min-width:0[^}]*justify-content:center[^}]*font-size:12px[^}]*white-space:nowrap/s);
+test('GitHub launcher leaves navigation to standalone Activity', () => {
+  assert.match(content, /main\.addEventListener\('click', async event => \{[\s\S]*?await send\(\{ type: 'OPEN_TIMES' \}\)/);
+  assert.doesNotMatch(content, /fullWidthPopupOpen|renderFullWidthPopup|toggleFullWidthPopup/);
 });

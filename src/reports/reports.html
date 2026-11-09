@@ -199,8 +199,9 @@
           <section id="analytics-card" class="card analytics-card" aria-label="Analytics chart">
             <div id="chart-options" class="chart-options" aria-label="Chart configuration">
               <div class="chart-top-controls">
-                  <label class="axis-select metric-select"><span class="visually-hidden">Vertical axis</span>
-                    <select id="metric" aria-label="Vertical axis">
+                  <label class="axis-select axis-chip metric-select" title="Y axis: measured value">
+                    <span class="axis-chip-direction" aria-hidden="true">↑</span><span class="axis-chip-prefix" aria-hidden="true">Y:</span>
+                    <select id="metric" aria-label="Y axis: measured value">
                       <option value="total-time" selected>Total time</option>
                       <option value="avg-time">Avg time</option>
                       <option value="billable-amount">Billable amount</option>
@@ -224,8 +225,9 @@
               </div>
             </div>
             <div id="analytics-chart" class="chart" aria-live="polite"></div>
-            <label class="axis-select horizontal-axis-select"><span class="visually-hidden">Horizontal axis</span>
-              <select id="horizontal-axis" aria-label="Horizontal axis">
+            <label class="axis-select axis-chip horizontal-axis-select" title="X axis: group by">
+              <span class="axis-chip-direction" aria-hidden="true">→</span><span class="axis-chip-prefix" aria-hidden="true">X:</span>
+              <select id="horizontal-axis" aria-label="X axis: group by">
                 <option value="day" selected>Day</option>
                 <option value="week">Week</option>
                 <option value="month">Month</option>

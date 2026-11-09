@@ -30,6 +30,16 @@
       </div>
     </nav>
   </div>
+  <section id="activity-source-context" class="activity-source-context" aria-label="Task from current browser page" hidden>
+    <span class="activity-source-icon" aria-hidden="true">↗</span>
+    <div class="activity-source-copy">
+      <span class="activity-source-eyebrow">From current page</span>
+      <a id="activity-source-link" href="#" target="_blank" rel="noopener noreferrer"></a>
+      <div id="activity-source-url" class="activity-source-url"></div>
+    </div>
+    <button id="activity-source-track" class="activity-source-track" type="button"><span aria-hidden="true">▶</span> <span id="activity-source-track-label">Track this task</span></button>
+    <button id="activity-source-dismiss" class="activity-source-dismiss" type="button" title="Dismiss current page" aria-label="Dismiss current page">×</button>
+  </section>
   <div class="activity-overview-layout">
     <div id="activity-summary" aria-busy="true"><div class="activity-initial-summary" aria-hidden="true"><strong>This week</strong><span>Loading totals…</span></div></div>
     <div id="activity-running-status" class="running-status is-loading" aria-label="Running status"><div class="running-status-row">Loading tracking status…</div></div>

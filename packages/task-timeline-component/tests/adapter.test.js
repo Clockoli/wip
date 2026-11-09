@@ -133,11 +133,13 @@ test('adapter keeps atomic Clockoli switching and action permissions', () => {
   assert.match(source, /props\.onStart\(item, event\)/);
 });
 
-test('completed current task keeps the static Stop and save action', () => {
-  assert.match(source, /stop: \(running \|\| item\?\.isCurrentTask\) && !item\?\.isStopDisabled/);
-  assert.match(source, /const mode = item\.isCurrentTask \? 'current'/);
-  assert.match(source, /item\.isRunning \|\| item\.endedAt == null \|\| item\.isCurrentTask\) && typeof props\.onStop/);
+test('only a genuinely running entry offers Stop and save', () => {
+  assert.match(source, /stop: running && !item\?\.isStopDisabled/);
+  assert.match(source, /const mode = item\.isRunning \|\| item\.endedAt == null \? 'running' : 'completed'/);
+  assert.match(source, /if \(mode === 'running' && typeof props\.onStop === 'function'\)/);
   assert.match(source, /button\.textContent = 'Stop and save'/);
+  assert.match(source, /button\.textContent = 'Track again'/);
+  assert.doesNotMatch(source, /item\?\.isCurrentTask/);
   assert.doesNotMatch(source, /formatClockDuration|updateActionClock|actionClock/);
 });
 
@@ -161,4 +163,23 @@ test('adapter supports external Timeline and Calendar controls without applying 
   assert.match(source, /if \(timeline\.getViewMode\(\) === 'calendar'\)[\s\S]*?return;[\s\S]*?timeline\.setVisibleDays/);
   assert.match(source, /props = \{ \.\.\.props, view \}/);
   assert.match(source, /applyExternalView: Object\.hasOwn\(next, 'view'\)/);
+});
+
+
+test('compact activity entry details always offer description editing and visible time actions', () => {
+  assert.match(source, /width:min\(360px,calc\(100vw - 16px\)\)/);
+  assert.match(source, /if \(typeof props\.onDescriptionCommit === 'function'\) \{/);
+  assert.match(source, /description\.placeholder = 'Add description\.\.\.'/);
+  assert.match(source, /description\.addEventListener\('blur'/);
+  assert.match(source, /event\.key === 'Escape'/);
+  assert.match(source, /event\.key === 'Enter' && !event\.shiftKey/);
+  assert.match(source, /button\.textContent = 'Track again'/);
+  assert.match(source, /button\.title = 'Edit time entry'/);
+  assert.match(source, /button\.title = 'Delete time entry'/);
+  assert.match(source, /details\.contains\(timeline\.shadow\.activeElement\)\) return/);
+});
+
+
+test('timeline entry details no longer depend on a GitHub overlay container', () => {
+  assert.doesNotMatch(source, /full-width-popup/);
 });

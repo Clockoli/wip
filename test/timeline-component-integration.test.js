@@ -124,7 +124,7 @@ test('Activity can restart an imported task identity without inventing a URL', (
   assert.match(content, /function trackableTaskIdentityOf\(value\)/);
   assert.match(content, /isStartDisabled: !trackableTaskIdentityOf\(entry\)/);
   assert.match(content, /taskUrl: trackableTaskIdentityOf\(entry\)/);
-  assert.match(content, /if \(\(timesMode \|\| popupMode \|\| fullWidthPopupOpen\) && trackableTaskIdentityOf\(entry\)\)/);
+  assert.match(content, /if \(\(timesMode \|\| popupMode\) && trackableTaskIdentityOf\(entry\)\)/);
   assert.match(content, /else await restartTimelineEntry\(entry\)/);
 });
 
@@ -268,7 +268,7 @@ test('accepted start invalidates older recent loads before rendering and can mou
 test('same-task starts and STOP during start acceptance are blocked defensively', () => {
   const content = read('src/content/github.js');
   assert.match(content, /isStartDisabled: !trackableTaskIdentityOf\(entry\) \|\| timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight \|\| sameTask\(entry, pageState\.active\)/);
-  assert.match(content, /isStopDisabled: Boolean\(\(entry\._active \|\| sameTask\(entry, pageState\.active\)\) && \(timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight/);
+  assert.match(content, /isStopDisabled: Boolean\(entry\._active && \(timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight/);
   assert.match(content, /if \(!entry \|\| !trackableTaskIdentityOf\(entry\) \|\| entry\._active \|\| timelineStartInFlight \|\| timelineStopInFlight \|\| timelineDeleteInFlight \|\| sameTask\(entry, pageState\.active\)\) return/);
   assert.match(content, /if \(timelineAcceptedActive && sameTask\(timelineAcceptedActive, activeEntry\)\) timelineAcceptedActive = null;[\s\S]*?pageState = \{ \.\.\.pageState, active: null \}/);
   const panelStopStart = content.indexOf("const stop = button(switchToCurrent ? 'Save and switch to this task' : 'Stop and save'");
@@ -454,13 +454,12 @@ test('a locally edited completion is never replaced by an older optimistic Stop 
     'the List and Timeline must display the latest locally accepted edit before GitHub sync');
 });
 
-test('routine full-width UI updates never destroy the mounted timeline', () => {
+test('Activity updates preserve the mounted timeline without rebuilding it', () => {
   const content = read('src/content/github.js');
-
-  assert.match(content, /const preserveFullWidthTimeline = Boolean\(fullWidthPopupOpen && pageState\.configured && timelineInstance && timelineWindow\)/);
-  assert.match(content, /if \(!preserveFullWidthTimeline && !preservedActivityTimeline\) \{\s*timelineInstance\?\.destroy\(\)/);
-  assert.match(content, /if \(fullWidthPopupOpen\) \{\s*if \(preserveFullWidthTimeline\) refreshMountedTimeline\(\);\s*else renderFullWidthPopup\(style\);/);
-  assert.doesNotMatch(content, /if \(fullWidthPopupOpen\) renderFullWidthPopup\(style\)/);
+  assert.match(content, /const preservedActivityTimeline = timesMode && pageState\.configured && timelineInstance && timelineWindow/);
+  assert.match(content, /if \(!preservedActivityTimeline\) \{\s*timelineInstance\?\.destroy\(\)/);
+  assert.match(content, /if \(preservedActivityTimeline\) \{\s*refreshMountedTimeline\(\)/);
+  assert.doesNotMatch(content, /fullWidthPopupOpen|renderFullWidthPopup|toggleFullWidthPopup/);
 });
 
 test('timeline STOP keeps the completed block and its connectors visible through queue sync', () => {
@@ -478,39 +477,13 @@ test('timeline STOP keeps the completed block and its connectors visible through
   assert.doesNotMatch(handler, /recentLoaded = false/);
 });
 
-test('full-width timeline places branded navigation above the editor and Stop inside running task details', () => {
+test('running entry actions remain in Activity rather than a GitHub overlay', () => {
   const content = read('src/content/github.js');
-  const worker = read('src/background/service-worker.js');
   const timeline = read('src/content/task-timeline-component.js');
-
-  assert.match(content, /timeline-brand/);
-  assert.match(content, /timeline-view-modes/);
-  assert.match(content, /modeButton\('timeline', 'Timeline'\)/);
-  assert.match(content, /modeButton\('calendar', 'Calendar'\)/);
-  assert.match(content, /modeButton\('list', 'List'\)/);
-  assert.match(content, /timelineInstance\?\.setViewMode\(mode\)/);
-  assert.match(content, /compactSurface\.today\.hidden = !list/);
-  assert.match(content, /'Not tracking', 'strip-idle'/);
-  assert.match(content, /popup-timeline-track/);
-  assert.match(content, /button\('Track this task', 'primary popup-timeline-track'/);
-  assert.match(content, /\.timeline-toolbar-end \{ justify-self:end; display:flex; align-items:center; gap:12px \}/);
-  assert.match(content, /idle\.append\(el\('span', 'Not tracking', 'strip-idle'\), el\('span', 'Start a task to begin', 'strip-idle-caption'\)\)/);
-  assert.match(content, /strip\.append\(idle, quickStart\)/);
-  assert.match(content, /overview\.append\(summary, strip\)/);
-  assert.match(content, /timelineToolbarEnd\.insertBefore\(switchAction, closeButton\)/);
-  assert.match(content, /header\.append\(brand, headerActions, timelineToolbarEnd\)/);
-  assert.doesNotMatch(content, /summaryActionLabel: 'Track this task'/);
-  assert.match(worker, /timelineTask\s*\?\s*taskUrlForTimelineSwitch/);
-  assert.match(content, /onStop: item => \{[\s\S]*?sameTask\(entry, pageState\.active\) \? pageState\.active : entry/);
-  assert.match(content, /type: 'STOP', description: activeDescriptionValue\(activeEntry\)/);
+  assert.match(content, /onStop: item => \{[\s\S]*?entry\?\._active \? stopTimelineEntry\(entry\) : false/);
   assert.match(timeline, /button\.textContent = 'Stop and save'/);
-  assert.doesNotMatch(timeline, /STOP /);
-  assert.doesNotMatch(content, /button\('STOP', 'danger timeline-stop'/);
-  assert.doesNotMatch(content, /\.timeline-stop \{/);
-  assert.doesNotMatch(content, /timeline-queue-spinner/);
-  assert.match(content, /timelineInstance = createTimeline[\s\S]*?timelineInstance\.scrollToEnd\(\)/);
-  assert.doesNotMatch(content, /trailingActionGutterPx/);
-  assert.doesNotMatch(content, /renderItemTrailingAction/);
+  assert.match(content, /main\.addEventListener\('click', async event => \{[\s\S]*?await send\(\{ type: 'OPEN_TIMES' \}\)/);
+  assert.doesNotMatch(content, /full-width-popup/);
 });
 
 test('timeline exposes Delete and current-page tracking through durable handlers', () => {

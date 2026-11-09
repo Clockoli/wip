@@ -12,6 +12,7 @@ const CLOCKIFY_MESSAGES = new Set([
   'CLOCKIFY_CAPTURED_REPORT', 'CLOCKIFY_CAPTURED_CSV', 'CLOCKIFY_YEAR_OBSERVED', 'CLOCKIFY_CSV_EMAIL_OFFER',
 ]);
 const EXTENSION_MESSAGES = new Set([
+  'CONSUME_TOOLBAR_TASK_CONTEXT',
   'GET_STATE', 'GET_PAGE_STATE', 'START', 'SWITCH_TASK', 'STOP', 'DISCARD_ACTIVE', 'LOAD_RECENT', 'LOAD_WEEK', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRY_DELETE', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT',
   'DELETE_ENTRY', 'RESOLVE_PENDING', 'GET_STOPPED_OVERLAP', 'RESOLVE_STOPPED_OVERLAP', 'DELETE_STOPPED_OVERLAP', 'SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'SET_QUEUE_DIAGNOSTICS', 'SET_INTERFACE_WIDTH', 'GET_LOCAL_PREFERENCES',
   'GET_ACTIVITY_VIEW_MODE', 'SET_ACTIVITY_VIEW_MODE',
@@ -54,8 +55,7 @@ export function assertMessageAllowed(type, sender, extensionOrigin) {
 }
 
 export function weekRangeForSender(payload, sender, extensionOrigin) {
-  // The toolbar can inject its tracking panel on any HTTP(S) page, not just GitHub.
-  // The sender allowlist and the bounded one-week payload validation still apply.
+  // Validate the one-week request from allowed extension or page senders.
   assertMessageAllowed('LOAD_WEEK', sender, extensionOrigin);
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)
       || Object.keys(payload).sort().join(',') !== 'endDate,startDate') throw new Error('Invalid week range');

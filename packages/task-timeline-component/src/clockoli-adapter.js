@@ -254,7 +254,7 @@
       resizeEnd: editable && !running,
       edit: editable || running,
       start: !item?.isStartDisabled,
-      stop: (running || item?.isCurrentTask) && !item?.isStopDisabled,
+      stop: running && !item?.isStopDisabled,
       delete: !item?.isDeleteDisabled,
     };
   }
@@ -310,7 +310,7 @@
           .clockoli-calendar-empty { font-size:12px }
           .clockoli-calendar-empty-help { font-size:12px;max-width:none }
           .details.clockoli-compact-entry-details {
-            box-sizing:border-box;width:min(360px,calc(100vw - 16px));gap:12px;padding:12px;
+            box-sizing:border-box;width:min(360px,calc(100vw - 16px));gap:10px;padding:12px;
             border:1px solid var(--tt-border) !important;border-radius:12px;
             background:var(--tt-panel);backdrop-filter:none;-webkit-backdrop-filter:none;
             box-shadow:0 8px 24px rgba(16,24,40,.12)
@@ -679,17 +679,16 @@
       if (timeline.detailsKey !== key) timeline._showTaskDetails(task);
       details.hidden = false;
       const rect = anchor.getBoundingClientRect();
-      const panel = host.getRootNode()?.querySelector?.('.full-width-popup')?.getBoundingClientRect();
       const margin = 8;
-      details.style.maxHeight = panel ? `${Math.max(0, panel.height - margin * 2)}px` : '';
-      details.style.maxWidth = panel ? `${Math.max(0, panel.width - margin * 2)}px` : '';
+      details.style.maxHeight = '';
+      details.style.maxWidth = '';
       const width = details.offsetWidth;
       const height = details.offsetHeight;
-      const leftEdge = panel ? panel.left + margin : margin;
-      const rightEdge = panel ? panel.right - margin : global.innerWidth - margin;
-      const topEdge = panel ? panel.top + margin : margin;
-      const bottomEdge = panel ? panel.bottom - margin : global.innerHeight - margin;
-      const calendarSide = timeline.getViewMode() === 'calendar' && (props.activityDashboard || props.toolbarPopup || panel);
+      const leftEdge = margin;
+      const rightEdge = global.innerWidth - margin;
+      const topEdge = margin;
+      const bottomEdge = global.innerHeight - margin;
+      const calendarSide = timeline.getViewMode() === 'calendar' && (props.activityDashboard || props.toolbarPopup);
       const rightOfTask = rect.right + margin;
       const leftOfTask = rect.left - width - margin;
       const sideTop = Math.max(topEdge, Math.min(rect.top + rect.height / 2 - height / 2, bottomEdge - height));
@@ -788,9 +787,17 @@
       // window-level composedPath(), even while the pointer is on the card.
       const target = timeline.shadow.elementFromPoint(event.clientX, event.clientY);
       if (isActivityDetails() && event.pointerType === 'mouse') {
+        if (details.contains(timeline.shadow.activeElement)) return;
         if ((target && (details.contains(target) || target.closest('.calendar-task[data-task-key], .task[data-task-key]')))
-          || crossingToDetails(event)) return;
-        clearHover();
+          || crossingToDetails(event)) {
+          clearTimeout(hoverExitTimer);
+          hoverExitTimer = null;
+          return;
+        }
+        // A brief detour across a gap or another element must not close the
+        // details card while the pointer is still moving toward its actions.
+        clearTimeout(hoverExitTimer);
+        hoverExitTimer = setTimeout(clearHover, 200);
       } else if (!target || !timeline.shadow.contains(target)) clearHover();
     };
     const onDetailsScroll = () => scheduleDetails();
@@ -1024,7 +1031,7 @@
       if (!item) { existing?.remove(); return; }
       renderCompactDetails(item);
       const permissions = permissionsFor(item);
-      const mode = item.isCurrentTask ? 'current' : item.isRunning || item.endedAt == null ? 'running' : 'completed';
+      const mode = item.isRunning || item.endedAt == null ? 'running' : 'completed';
       const savedDescription = item.savedDescription ?? item.description ?? '';
       if (existing?.dataset.itemId === String(key) && existing.dataset.mode === mode) {
         const description = existing.querySelector('.clockoli-timeline-description');
@@ -1048,12 +1055,12 @@
       actions.className = 'clockoli-timeline-actions';
       actions.dataset.itemId = String(key);
       actions.dataset.mode = mode;
-      if (typeof props.onDescriptionCommit === 'function' && (String(item.description || '').trim() || String(savedDescription).trim())) {
+      if (typeof props.onDescriptionCommit === 'function') {
         const field = document.createElement('div');
         field.className = 'clockoli-description-field';
         const description = document.createElement('textarea');
         description.rows = 1; description.maxLength = 2000; description.className = 'clockoli-timeline-description';
-        description.placeholder = 'Add description'; description.value = item.description || '';
+        description.placeholder = 'Add description...'; description.value = item.description || '';
         description.dataset.savedDescription = savedDescription;
         description.setAttribute('aria-label', 'Task description');
         for (const type of ['keydown', 'keypress', 'keyup']) description.addEventListener(type, event => event.stopPropagation());
@@ -1095,10 +1102,24 @@
         description.addEventListener('input', () => {
           resizeDescription(description); props.onDescriptionInput?.(sourceItem(key), description.value); updateDirty();
         });
-        description.addEventListener('blur', commit);
+        let cancelledOnBlur = false;
+        description.addEventListener('blur', () => {
+          if (cancelledOnBlur) { cancelledOnBlur = false; return; }
+          void commit();
+        });
         description.addEventListener('keydown', event => {
-          if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229 || !event.isTrusted) return;
-          event.preventDefault(); void commit();
+          if (event.isComposing || event.keyCode === 229 || !event.isTrusted) return;
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            cancelledOnBlur = true;
+            description.value = description.dataset.savedDescription || '';
+            resizeDescription(description);
+            props.onDescriptionInput?.(sourceItem(key), description.value);
+            updateDirty();
+            description.blur();
+          } else if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault(); void commit();
+          }
         });
         save.addEventListener('pointerdown', event => event.preventDefault());
         save.addEventListener('click', commit);
@@ -1107,19 +1128,19 @@
       }
       if (typeof props.onDelete === 'function') {
         const button = document.createElement('button');
-        button.type = 'button'; button.className = 'clockoli-timeline-action danger'; button.textContent = 'Delete'; button.prepend(actionIcon('delete'));
+        button.type = 'button'; button.className = 'clockoli-timeline-action danger'; button.textContent = 'Delete'; button.title = 'Delete time entry'; button.setAttribute('aria-label', 'Delete time entry'); button.prepend(actionIcon('delete'));
         button.disabled = !permissions.delete;
         button.addEventListener('click', () => runAction(button, 'delete', () => props.onDelete(sourceItem(key))));
         actions.append(button);
       }
       if (typeof props.onEntryEdit === 'function') {
         const button = document.createElement('button');
-        button.type = 'button'; button.className = 'clockoli-timeline-action clockoli-entry-edit'; button.textContent = 'Edit'; button.prepend(actionIcon('edit'));
+        button.type = 'button'; button.className = 'clockoli-timeline-action clockoli-entry-edit'; button.textContent = 'Edit'; button.title = 'Edit time entry'; button.setAttribute('aria-label', 'Edit time entry'); button.prepend(actionIcon('edit'));
         button.disabled = !permissions.edit;
         button.addEventListener('click', () => runAction(button, 'edit-form', () => props.onEntryEdit(sourceItem(key), button)));
         actions.append(button);
       }
-      if ((item.isRunning || item.endedAt == null || item.isCurrentTask) && typeof props.onStop === 'function') {
+      if (mode === 'running' && typeof props.onStop === 'function') {
         const button = document.createElement('button');
         button.type = 'button'; button.className = 'clockoli-timeline-action primary';
         button.textContent = 'Stop and save'; button.prepend(actionIcon('stop'));
@@ -1128,7 +1149,7 @@
         actions.append(button);
       } else if (typeof props.onStart === 'function') {
         const button = document.createElement('button');
-        button.type = 'button'; button.className = 'clockoli-timeline-action primary'; button.textContent = 'Track time'; button.prepend(actionIcon('play'));
+        button.type = 'button'; button.className = 'clockoli-timeline-action primary'; button.textContent = 'Track again'; button.prepend(actionIcon('play'));
         button.disabled = !permissions.start;
         button.addEventListener('click', () => runAction(button, 'start', () => props.onStart(sourceItem(key))));
         actions.append(button);

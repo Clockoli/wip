@@ -6,7 +6,7 @@ import {
 } from '../config/github-app.js';
 import { activeRecordPath } from '../domain/work-records.js';
 import { createUlid } from '../domain/ulid.js';
-import { normalizeTaskUrl, taskUrlOf } from '../domain/values.js';
+import { normalizeTaskUrl, parseGitHubProjectPaneIssueUrl, taskUrlOf } from '../domain/values.js';
 import { aggregateTaskParticipants, aggregateTrackedTasks } from '../domain/tasks.js';
 import { ChromeStore } from '../storage/chrome-store.js';
 import { IndexedDbBackend } from '../storage/chrome-store.js';
@@ -54,6 +54,9 @@ let directCompletedWrites = 0;
 const destinationValidationCache = new Map();
 const STATIC_ACTION_ICON = { 16: 'src/assets/clockoli-16.png', 32: 'src/assets/clockoli-32.png' };
 const ACTION_ICON_FRAMES = 8;
+const ACTION_CONTEXT_KEY = 'clockoli-toolbar-task-context';
+// Reuse Clockoli's privileged IndexedDB; do not expand extension permissions.
+const actionContextBackend = new IndexedDbBackend();
 const currentCredentialProvider = new CredentialBroker({ clientId: GITHUB_APP_CLIENT_ID, store });
 const configuration = new ConfigurationService({
   store,
@@ -968,6 +971,18 @@ async function handle(message, sender) {
   if (!message || typeof message.type !== 'string') throw new Error('Invalid extension message');
   const extensionOrigin = chrome.runtime.getURL('');
   assertMessageAllowed(message.type, sender, extensionOrigin);
+  if (message.type === 'CONSUME_TOOLBAR_TASK_CONTEXT') {
+    if (sender?.url !== chrome.runtime.getURL('src/times/times.html')) {
+      throw new Error('Only Activity can consume the toolbar task context');
+    }
+    return actionContextBackend.mutateMany([ACTION_CONTEXT_KEY], current => {
+      const present = Object.hasOwn(current, ACTION_CONTEXT_KEY);
+      return {
+        delete: present ? [ACTION_CONTEXT_KEY] : [],
+        result: { present, value: present ? current[ACTION_CONTEXT_KEY] : null },
+      };
+    });
+  }
   if (message.type === 'SET_ACTION_ICON_FRAME') {
     if (!Number.isInteger(sender?.tab?.id)) throw new Error('Action icon updates require a browser tab');
     const frame = message.frame;
@@ -987,7 +1002,13 @@ async function handle(message, sender) {
     await chrome.tabs.create({ url: chrome.runtime.getURL('src/tasks/tasks.html') }); return { ok: true };
   }
   if (message.type === 'OPEN_TIMES') {
-    await openTimesPage(); return { ok: true };
+    // The GitHub-injected button and the browser toolbar have identical tab behavior.
+    // Only use the browser-provided tab URL and title, never message-supplied task data.
+    const githubPage = sender?.tab && /^https:\/\/github\.com(?:\/|$)/.test(sender.url || '')
+      && /^https:\/\/github\.com(?:\/|$)/.test(sender.tab.url || '');
+    if (githubPage) await openActivityFromTab(sender.tab);
+    else await openTimesPage();
+    return { ok: true };
   }
   if (message.type === 'GET_ONBOARDING_STATE') return onboardingState();
   if (message.type === 'START_DEVICE_FLOW') return deviceFlow().start();
@@ -1650,7 +1671,7 @@ async function handle(message, sender) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type === 'LOCAL_PREFERENCES_CHANGED') return undefined;
+  if (message?.type === 'LOCAL_PREFERENCES_CHANGED' || message?.type === 'TOOLBAR_CONTEXT_UPDATED') return undefined;
   const reportReadOnly = ['LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'CANCEL_REPORT', 'GET_EXCHANGE_RATES'].includes(message?.type);
   const localStateRead = ['GET_STATE', 'GET_PAGE_STATE'].includes(message?.type) && !message?.refresh;
   const readOnly = reportReadOnly || localStateRead || ['LOAD_TASKS', 'LOAD_TIMES', 'GET_STOPPED_OVERLAP', 'SEARCH_TASKS', 'SEARCH_ENTRY_TASKS', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES', 'GET_ADDON_SETTINGS', 'GET_CLOCKIFY_MIGRATION_PREVIEW', 'SEARCH_INVITEE_USERS', 'SEARCH_CLOCKIFY_GITHUB_USERS', 'LOAD_REPOSITORY_COLLABORATORS'].includes(message?.type);
@@ -1663,7 +1684,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     } catch (error) { operation = Promise.reject(error); }
   } else {
     const direct = readOnly || DIRECT_DEVICE_FLOW_MESSAGES.has(message?.type) || message?.type === 'CONFIRM_CLOCKIFY_MIGRATION'
-      || ['OPEN_OPTIONS', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES'].includes(message?.type)
+      || ['OPEN_OPTIONS', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'CONSUME_TOOLBAR_TASK_CONTEXT'].includes(message?.type)
       || ['CLOCKIFY_ARM_CAPTURE', 'CLOCKIFY_ARM_CSV_CAPTURE', 'CLOCKIFY_IS_CAPTURE_ARMED', 'CLOCKIFY_DISARM_CAPTURE', 'CLOCKIFY_YEAR_OBSERVED', 'CLOCKIFY_CAPTURED_CSV', 'CLOCKIFY_CAPTURED_REPORT', 'CLOCKIFY_CSV_EMAIL_OFFER'].includes(message?.type);
     const acceptsLocally = [
       'START', 'STOP', 'SWITCH_TASK', 'DISCARD_ACTIVE', 'ADD_TIME', 'ADD_DAY_RANGE', 'BULK_ADD_TIMES',
@@ -1910,35 +1931,28 @@ async function shouldOpenOnboarding() {
   }
 }
 
-async function toggleActionSurface(tab) {
-  if (await shouldOpenOnboarding()) return chrome.runtime.openOptionsPage();
-  if (!Number.isInteger(tab?.id)) return openTimesPage();
+function toolbarTaskContext(tab) {
   try {
-    try {
-      await chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_FULL_WIDTH_POPUP' });
-      return;
-    } catch {
-      const url = new URL(tab.url || '');
-      if (!['http:', 'https:'].includes(url.protocol)) return openTimesPage();
-    }
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: () => { globalThis.__CLOCKOLI_ACTION_SURFACE__ = true; },
-    });
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ['src/domain/recovery-actions.js', 'src/ui/tracking-card.js', 'src/ui/task-search.js', 'src/content/task-timeline-component.js', 'src/content/github.js'],
-    });
+    const url = new URL(tab?.url || '');
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return null;
+    // A Projects issue pane points to an issue, not a generic project-view task.
+    const taskUrl = normalizeTaskUrl(parseGitHubProjectPaneIssueUrl(url.href) || url.href);
+    return { taskUrl, taskTitle: String(tab.title || '').trim().slice(0, 300), openedAt: Date.now() };
   } catch {
-    return openTimesPage();
+    return null;
   }
 }
 
-async function dismissInactivePanels({ windowId }) {
-  const tabs = await chrome.tabs.query({ windowId });
-  await Promise.allSettled(tabs
-    .filter(tab => Number.isInteger(tab.id) && !tab.active)
-    .map(tab => chrome.tabs.sendMessage(tab.id, { type: 'DISMISS_FULL_WIDTH_POPUP' })));
+async function openActivityFromTab(tab) {
+  if (await shouldOpenOnboarding()) return chrome.runtime.openOptionsPage();
+  // A page click carries the same one-use validated context as a toolbar click.
+  await actionContextBackend.setMany({ [ACTION_CONTEXT_KEY]: toolbarTaskContext(tab) });
+  await openTimesPage();
+  await chrome.runtime.sendMessage({ type: 'TOOLBAR_CONTEXT_UPDATED' }).catch(() => {});
+}
+
+async function toggleActionSurface(tab) {
+  return openActivityFromTab(tab);
 }
 
 void chrome.action.setPopup({ popup: '' }).catch(() => console.warn('Could not restore toolbar panel.'));
@@ -1948,9 +1962,6 @@ chrome.runtime.onInstalled.addListener(details => {
 });
 chrome.action.onClicked.addListener(tab => {
   void toggleActionSurface(tab).catch(() => {});
-});
-chrome.tabs.onActivated.addListener(info => {
-  void dismissInactivePanels(info).catch(() => {});
 });
 chrome.runtime.onStartup.addListener(() => { scheduleSync(); });
 chrome.alarms.onAlarm.addListener(alarm => {
