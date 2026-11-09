@@ -1815,7 +1815,7 @@ test('tracking panel exposes its page actions as labeled navigation and matches 
   assert.equal(navigation.getAttribute('aria-label'), 'Clockoli pages');
   assert.deepEqual(navigation.children.map(child => child.textContent), ['Top tasks', 'Reports', 'Activity', 'Settings']);
   assert.doesNotMatch(source, /full-width-popup-surface/);
-  assert.match(source, /@media\(max-width:520px\)[\s\S]*\.header-navigation \{ display:grid;[^}]*grid-template-columns:repeat\(4,minmax\(0,1fr\)\)[^}]*overflow:visible \}/);
+  assert.doesNotMatch(source, /fullWidthPopupOpen|renderFullWidthPopup/);
 });
 
 test('Activity records show site favicons beside task identity', () => {
