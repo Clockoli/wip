@@ -27,7 +27,7 @@ const result = (records = [record('alice'), record('bob', 'other.com')], rates =
   billing: { clientRates: { 'client-1': rates }, invoicing: invoicingSettings, otherProjectName: 'General', projects: [{ name: 'Main', substrings: ['https://example.com/'], client: 'client-1' }, { name: 'Other', substrings: ['https://other.com/'], client: 'client-1' }] },
 });
 
-function harness(preferences = {}, { delayInitialPreferences = false } = {}) {
+function harness(preferences = {}, { delayInitialPreferences = false, cached = null } = {}) {
   const classList = owner => ({
     toggle(name, force) { const classes = new Set(owner.className.split(' ').filter(Boolean)); if (force) classes.add(name); else classes.delete(name); owner.className = [...classes].join(' '); },
     contains: name => owner.className.split(' ').includes(name),
@@ -99,6 +99,7 @@ function harness(preferences = {}, { delayInitialPreferences = false } = {}) {
         ? { ok: false, error: { message: 'Cannot verify current local changes' } }
         : { ok: true, data: { configured: stateConfigured, pendingWrites } }); return; }
       if (message.type === 'GET_LOCAL_PREFERENCES' && !requests.length && !delayInitialPreferences) { callback({ ok: true, data: preferences }); return; }
+      if (message.type === 'GET_CACHED_VIEW') { callback({ ok: true, data: cached }); return; }
       requests.push({ message, callback });
     } } },
   });
@@ -158,6 +159,32 @@ test('initial progress is visible before preferences resolve and while reports l
   assert.equal(page.nodes.get('loading-progress').value, 10);
   await page.reply(result());
   assert.equal(page.nodes.get('loading').hidden, true);
+});
+
+test('cached report stays visible and non-exportable while refresh is pending or fails', async () => {
+  const page = harness({}, { cached: result([]) });
+  await page.settle();
+  assert.equal(page.requests.at(-1).message.type, 'LOAD_REPORT');
+  assert.equal(page.nodes.get('report-content').hidden, false);
+  assert.equal(page.nodes.get('loading').hidden, false);
+  assert.match(page.nodes.get('partial-status').textContent, /Previously loaded report/);
+  assert.equal(page.nodes.get('download-csv').attributes['aria-disabled'], 'true');
+  await page.reply(new Error('Offline'));
+  assert.equal(page.nodes.get('report-content').hidden, false);
+  assert.equal(page.nodes.get('download-csv').attributes['aria-disabled'], 'true');
+  const fresh = page.load(oldRange); await page.reply(result()); await fresh;
+  assert.equal(page.nodes.get('partial-status').hidden, true);
+  assert.equal(page.nodes.get('download-csv').attributes['aria-disabled'], 'false');
+});
+
+test('returning to a custom cached period refreshes that period, not the default week', async () => {
+  const page = harness({}, { cached: { ...result([]), cachedRange: oldRange } });
+  await page.settle();
+  assert.equal(page.requests.at(-1).message.payload.startDate, oldRange.startDate);
+  assert.equal(page.requests.at(-1).message.payload.endDate, oldRange.endDate);
+  assert.equal(page.nodes.get('start-date').value, oldRange.startDate);
+  assert.equal(page.nodes.get('end-date').value, oldRange.endDate);
+  assert.equal(page.nodes.get('period-label').textContent, 'Aug 17, 2026 – Aug 23, 2026');
 });
 
 test('initial preference failures hide the loading indicator and show the error', async () => {

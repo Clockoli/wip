@@ -356,14 +356,57 @@ test('toolbar normalizes Projects issue links and clears context on restricted p
   assert.equal(harness.calls.filter(([kind]) => kind === 'context').at(-1)[1]['clockoli-toolbar-task-context'], null);
 });
 
-test('GitHub page icon opens Activity through the same source-context handoff, never an overlay', () => {
-  assert.match(content, /main\.addEventListener\('click',[\s\S]*?send\(\{ type: 'OPEN_TIMES' \}\)/);
+test('GitHub page icon uses the toolbar click preference without an in-page overlay', () => {
+  assert.match(content, /main\.addEventListener\('click',[\s\S]*?send\(\{ type: 'OPEN_PREFERRED_SURFACE' \}\)/);
   assert.match(worker, /if \(githubPage\) await openActivityFromTab\(sender\.tab\)/);
   assert.doesNotMatch(content, /toggleFullWidthPopup|renderFullWidthPopup|fullWidthPopupOpen|full-width-popup-surface/);
   assert.doesNotMatch(worker, /DISMISS_FULL_WIDTH_POPUP|TOGGLE_FULL_WIDTH_POPUP/);
   const origin = 'chrome-extension://clockoli/';
-  assert.doesNotThrow(() => assertMessageAllowed('OPEN_TIMES', { url: 'https://github.com/acme/repo/issues/7', tab: { id: 9 } }, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('OPEN_PREFERRED_SURFACE',
+    { url: 'https://github.com/acme/repo/issues/7', tab: { id: 9 } }, origin));
+  assert.throws(() => assertMessageAllowed('OPEN_PREFERRED_SURFACE', { url: origin + 'src/times/times.html' }, origin));
   assert.throws(() => assertMessageAllowed('CONSUME_TOOLBAR_TASK_CONTEXT', { url: 'https://github.com/acme/repo/issues/7', tab: { id: 9 } }, origin));
+});
+
+
+test('GitHub page button opens preferred popup and falls back safely', async () => {
+  const helper = worker.match(/async function openPreferredSurfaceFromGitHub\(sender\) \{[\s\S]*?\n\}/)?.[0];
+  assert.ok(helper, 'worker exposes the GitHub button routing helper');
+  const sender = { url: 'https://github.com/acme/project/issues/42',
+    tab: { id: 42, windowId: 9, url: 'https://github.com/acme/project/issues/42' } };
+  async function run(mode, { popupAvailable = true, popupFails = false, onboarding = false, requestSender = sender } = {}) {
+    const calls = [];
+    const chrome = {
+      runtime: { openOptionsPage: async () => calls.push('onboarding') },
+      action: { ...(popupAvailable ? {
+        openPopup: async options => {
+          calls.push(['popup', options.windowId]);
+          if (popupFails) throw new Error('popup unavailable');
+        },
+      } : {}) },
+    };
+    const context = vm.createContext({
+      chrome, console: { warn: () => {} },
+      store: { getToolbarClickMode: async () => mode },
+      shouldOpenOnboarding: async () => onboarding,
+      openActivityFromTab: async tab => { calls.push(['activity', tab.id]); },
+      applyToolbarClickMode: async value => { calls.push(['setPopup', value]); },
+    });
+    vm.runInContext(helper, context);
+    await context.openPreferredSurfaceFromGitHub(requestSender);
+    return calls;
+  }
+  assert.deepEqual(await run('tab'), [['activity', 42]]);
+  assert.deepEqual(await run('popup'), [['setPopup', 'popup'], ['popup', 9]]);
+  assert.deepEqual(await run('popup', { onboarding: true }), ['onboarding']);
+  assert.deepEqual(await run('popup', { popupAvailable: false }), [['setPopup', 'popup'], ['activity', 42]]);
+  assert.deepEqual(await run('popup', { popupFails: true }), [['setPopup', 'popup'], ['popup', 9], ['activity', 42]]);
+  await assert.rejects(() => run('popup', {
+    requestSender: { url: 'https://evil.example/', tab: sender.tab },
+  }), /GitHub page/);
+  await assert.rejects(() => run('popup', {
+    requestSender: { url: sender.url, tab: { ...sender.tab, url: 'https://evil.example/' } },
+  }), /GitHub page/);
 });
 
 test('shadow chrome defines local light and dark tokens without bare theme colors in selectors', () => {

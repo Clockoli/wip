@@ -14,13 +14,13 @@ The connection card handles GitHub sign-in and the first time repository; see [G
 
 ## Time repositories
 
-Each connected repository has a card with its status, a **Default** badge for the default destination, collaborator avatars, and these actions:
+Each connected repository has a card with its status, a **Default** badge for the default destination, an **Invite teammate** button where supported, and a **Team** section showing GitHub collaborators, pending invitations, and verified Clockoli storage readiness. Inviting checks GitHub administrator and App permissions before opening user search. The card also has these actions:
 
 - **Check access** rechecks the repository's access and storage.
 - **Open repository** opens it on GitHub.
 - **Manage GitHub access** opens the App installation or repository access settings.
 - **Make default** makes it the destination for tasks that match no project.
-- **Remove from Clockoli** removes the repository from this browser. Repository data, GitHub App access, and Git history are not deleted. Removal is blocked while it would strand active or pending work.
+- **Disconnect repository** removes this repository's connection from Clockoli in the current browser. Tracked time and the GitHub repository are not deleted, and other team members are unaffected. You can reconnect later. Clockoli asks for confirmation and blocks disconnection if it would strand active or pending work.
 
 **Add time repository** opens the connection form and scrolls **Connect time repositories** to the top of the page. It adds another destination regardless of who owns it; adding never deletes records in existing repositories. See [Time repositories](time-data-repository.md) for requirements and [Work as a team](teams.md) for invitations and avatars.
 

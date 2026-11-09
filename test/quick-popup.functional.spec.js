@@ -124,6 +124,12 @@ test('toolbar quick popup stays minimal and uses the shared tracker commands', a
     const stop = (await worker.evaluate(() => globalThis.quickCalls)).find(call => call.type === 'STOP');
     expect(stop).toEqual({ type: 'STOP', description: 'Saved with the button' });
     expect(await worker.evaluate(() => recent[0].description)).toBe('Saved with the button');
+    await page.setViewportSize({ width: 390, height: 320 });
+    const listScroll = root.locator('.quick-body');
+    await expect(root.getByRole('button', { name: 'Open Activity in a new tab' })).toBeInViewport();
+    await expect.poll(() => listScroll.evaluate(node => node.scrollHeight > node.clientHeight)).toBe(true);
+    await listScroll.evaluate(node => { node.scrollTop = node.scrollHeight; });
+    await expect(root.getByRole('button', { name: 'Open Activity in a new tab' })).toBeInViewport();
     await page.screenshot({ path: testInfo.outputPath('quick-popup.png') });
 
     await root.getByRole('button', { name: 'Open Activity in a new tab' }).click();

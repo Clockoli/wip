@@ -6,6 +6,8 @@ Reports combines tracked time from selected or all time repositories, including 
 
 Reports includes records whose Start date falls in the selected inclusive range.
 
+On a return visit, Reports shows the last locally saved result for the same local/UTC basis and restores its date range while refreshing it from GitHub. A compact progress indicator appears at the right side of the top navigation; the previous report remains visible. Cached totals may be out of date; exports and invoices stay unavailable until a successful fresh read. If refresh fails, the previous result remains visible for reference, with export and invoicing still blocked. Changing the period or basis loads the requested data rather than presenting a different period as current.
+
 ## Choose a period
 
 Open the date-range button beneath Reporting period to choose a preset or custom dates. The button shows the selected date range, including when a preset is selected.

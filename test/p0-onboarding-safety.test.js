@@ -59,10 +59,12 @@ test('repository creation remains a secondary handoff without a required owner s
   assert.doesNotMatch(create, /SELECT_REPOSITORY|confirmRepositoryAction\(|discoverRepositories\(/);
 });
 
-test('every initialized shared repository can expose teammate instructions regardless of owner type', () => {
+test('every initialized shared repository can expose the invitation message regardless of owner type', () => {
   assert.match(optionsJs, /function renderTeammateInstructions/);
   assert.match(optionsJs, /destination\.initialized !== false/);
-  assert.match(optionsJs, /Copy instructions/);
+  assert.match(optionsJs, /Copy Clockoli invitation message/);
+  assert.match(optionsJs, /function clockoliInvitationMessage/);
+  assert.doesNotMatch(optionsJs, /Copy instructions/);
 });
 
 test('all setup gates and initial report loading use the shared product language', () => {
@@ -71,7 +73,7 @@ test('all setup gates and initial report loading use the shared product language
     assert.match(source, /Set up Clockoli/);
   }
   assert.match(reportsHtml, /Loading time data…/);
-  assert.match(reportsJs, /showProgress\('Loading time data…'/);
+  assert.match(reportsJs, /showProgress\(state\.range \? 'Refreshing time data…' : 'Loading time data…'/);
 });
 
 test('README directs installation to Settings and the full getting-started guide', () => {

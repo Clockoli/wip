@@ -113,6 +113,27 @@ test('report cache is repository-scoped, persisted separately, and cleared with 
   assert.equal(await store.getReportCache('acme/time@main'), null);
 });
 
+test('page snapshots survive worker restart but are scoped to period, basis, auth and configuration', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  const scope = { generation: 0, authGeneration: 0, startDate: '2026-09-01', endDate: '2026-09-07', reportingUtc: false };
+  const view = { configured: true, records: [{ id: 'one' }] };
+  assert.equal(await store.savePageSnapshot('reports', scope, view), true);
+  assert.deepEqual(await new ChromeStore(backend).getPageSnapshot('reports', scope), view);
+  assert.equal(await store.savePageSnapshot('reports', scope, { configured: true, records: [] }, 0), false,
+    'an older read must not replace a newer snapshot');
+  assert.equal(await store.getPageSnapshot('tasks', scope), null);
+  assert.equal(await store.getPageSnapshot('reports', { ...scope, reportingUtc: true }), null);
+  assert.equal(await store.getPageSnapshot('reports', { ...scope, startDate: '2026-09-02' }), null);
+  assert.deepEqual(await store.getPageSnapshot('reports', { ...scope, startDate: '2026-09-02' }, { allowDifferentRange: true }),
+    { ...view, cachedRange: { startDate: scope.startDate, endDate: scope.endDate } });
+  assert.equal(await store.getPageSnapshot('reports', { ...scope, reportingUtc: true }, { allowDifferentRange: true }), null);
+  backend.values.set('authGeneration', 1);
+  assert.equal(await store.getPageSnapshot('reports', scope), null);
+  assert.equal(await store.savePageSnapshot('reports', scope, view), false);
+  await store.clearConfig();
+  assert.equal(backend.values.has('pageSnapshots'), false);
+});
+
 test('unified task search cache survives restart but never crosses auth or configuration changes', async () => {
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   const scope = { generation: 0, authGeneration: 0, repositories: ['github:1@acme/time'] };

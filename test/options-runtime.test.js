@@ -2490,6 +2490,53 @@ test('backup reminder appears once per page load and stays dismissed after an ex
   assert.equal(reopened.nodes.get('settings-export-reminder').hidden, false);
 });
 
+test('Disconnect repository clearly explains local-only removal and requires explicit confirmation', async () => {
+  const destination = { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 };
+  const page = harness({ reply: request => request.type === 'REMOVE_DESTINATION'
+    ? new Error('Pending time writes must synchronize before disconnecting') : {} });
+  page.render({ ...connectedState, destinations: [destination] });
+  const row = page.nodes.get('time-repository-list').children[0];
+  const action = row.querySelector('.remove-destination');
+  const panel = row.querySelector('.repository-removal');
+  assert.equal(action.textContent, 'Disconnect repository');
+  assert.equal(panel.hidden, true);
+  action.listeners.click();
+  assert.equal(panel.hidden, false);
+  assert.equal(panel.querySelector('h4').textContent, 'Disconnect time repository?');
+  assert.equal(panel.querySelector('.repository-removal-name').children[0].textContent, 'acme/time-data');
+  assert.ok(panel.children.some(child => child.textContent === 'This will remove the repository from Clockoli in this browser.'));
+  assert.ok(panel.children.some(child => child.textContent === "Your tracked time and GitHub repository will not be deleted. Other team members won't be affected."));
+  assert.ok(panel.children.some(child => child.textContent === 'You can reconnect this repository later.'));
+  const confirm = panel.querySelector('.danger'), cancel = panel.querySelector('.secondary');
+  assert.equal(confirm.textContent, 'Disconnect repository');
+  assert.equal(cancel.textContent, 'Cancel');
+  assert.equal(page.requests.some(request => request.type === 'REMOVE_DESTINATION'), false);
+  cancel.listeners.click();
+  assert.equal(panel.hidden, true);
+  assert.equal(page.requests.some(request => request.type === 'REMOVE_DESTINATION'), false);
+  action.listeners.click();
+  await confirm.listeners.click();
+  assert.deepEqual(JSON.parse(JSON.stringify(page.requests.find(request => request.type === 'REMOVE_DESTINATION'))),
+    { type: 'REMOVE_DESTINATION', destinationId: 'github:20' });
+  assert.match(panel.querySelector('.error').textContent, /Pending time writes must synchronize/);
+  assert.equal(confirm.disabled, false);
+  assert.equal(cancel.disabled, false);
+});
+
+test('Disconnect repository still blocks removal when active or pending work would be lost', () => {
+  const destination = { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10,
+    removalBlockers: ['Stop the running timer before disconnecting.'] };
+  const page = harness();
+  page.render({ ...connectedState, destinations: [destination] });
+  const row = page.nodes.get('time-repository-list').children[0];
+  row.querySelector('.remove-destination').listeners.click();
+  const panel = row.querySelector('.repository-removal');
+  assert.match(panel.querySelector('.error').textContent, /Stop the running timer/);
+  assert.equal(panel.querySelector('.danger').hidden, true);
+  assert.equal(panel.querySelector('.secondary').textContent, 'Cancel');
+  assert.equal(page.requests.some(request => request.type === 'REMOVE_DESTINATION'), false);
+});
+
 test('destructive confirmations name their button scope and cancellation makes no request', async () => {
   const prompts = [];
   const page = harness({ confirm: text => { prompts.push(text); return false; } });
@@ -2547,34 +2594,42 @@ test('repository-first empty discovery asks for a concrete target before offerin
   assert.equal(page.requests.filter(request => request.type === 'SELECT_REPOSITORY').length, 0);
 });
 
-test('connected sharing instructions use the owner-neutral path for user and organization repositories', () => {
+test('Clockoli invitation message includes repository name and setup URL for personal and organization repositories', () => {
   const page = harness();
   for (const destination of [
     { owner: 'alice', repo: 'clockoli-data', ownerType: 'User' },
     { owner: 'acme', repo: 'team-time', ownerType: 'Organization' },
   ]) {
     page.context.testDestination = destination;
-    const text = vm.runInContext('teammateInstructions(testDestination)', page.context);
-    assert.match(text, /Install Clockoli and sign in with GitHub\./);
-    assert.match(text, /Connect .* in Time repositories/);
-    assert.match(text, new RegExp(`grant the Clockoli GitHub App access to ${destination.owner}\/${destination.repo}`));
-    assert.doesNotMatch(text, /Connect GitHub|Join an organization repository/);
+    const message = vm.runInContext('clockoliInvitationMessage(testDestination)', page.context);
+    assert.match(message, /^Hi! You're invited to track time with our team using Clockoli\./);
+    assert.ok(message.includes('Accept the GitHub invitation to ' + destination.owner + '/' + destination.repo));
+    assert.ok(message.includes('https://clockoli.com/join/?repo=' + destination.owner + '%2F' + destination.repo));
+    assert.match(message, /Keep the page open while you install the Clockoli extension/);
+    assert.match(message, /That's it! You're ready to track time with the team\.$/);
   }
+  page.context.testDestination = { owner: 'invalid space', repo: 'repo' };
+  assert.equal(vm.runInContext('clockoliInvitationMessage(testDestination)', page.context), '');
 });
 
 test('teammate picker selects a searched GitHub user and requires confirmation before inviting', async () => {
   const destination = { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 };
-  let invited = false;
+  let invited = false, cancelled = false;
   const page = harness({ confirm: () => true, collaboratorReplies: true, reply: request => {
     if (request.type === 'SEARCH_INVITEE_USERS') return { users: [{ id: 42, login: 'Bob', name: 'Bob Example', avatarUrl: 'https://avatars.githubusercontent.com/u/42?v=4' }] };
     if (request.type === 'LOAD_REPOSITORY_COLLABORATORS') return { users: [], hasMore: false,
-      pendingUsers: invited ? [{ id: 42, login: 'Bob', avatarUrl: 'https://avatars.githubusercontent.com/u/42?v=4' }] : [], pendingHasMore: false };
-    invited = true; return { status: 'invited', login: 'Bob' };
+      pendingUsers: invited && !cancelled ? [{ id: 42, login: 'Bob', avatarUrl: 'https://avatars.githubusercontent.com/u/42?v=4' }] : [], pendingHasMore: false };
+    if (request.type === 'INVITE_REPOSITORY_USER') { invited = true; return { status: 'invited', login: 'Bob' }; }
+    if (request.type === 'REMOVE_REPOSITORY_USER') { cancelled = true; return { status: 'cancelled', login: 'Bob' }; }
+    return {};
   } });
   page.render({ ...connectedState, destinations: [destination] });
   const picker = page.nodes.get('time-repository-list').querySelector('.teammate-picker');
   assert.ok(picker);
   const input = picker.querySelector('.teammate-search'), invite = picker.querySelector('.invite-teammate');
+  const feedback = picker.querySelector('.teammate-feedback');
+  assert.ok(picker.children.indexOf(feedback) < picker.children.indexOf(invite),
+    'selected account and search status must appear before Send invitation, not between action buttons');
   assert.equal(invite.disabled, true);
   input.value = 'Bo'; input.listeners.input();
   await page.timers.find(timer => timer.delay === 250).callback();
@@ -2595,6 +2650,37 @@ test('teammate picker selects a searched GitHub user and requires confirmation b
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(page.nodes.get('time-repository-list').querySelector('.repository-invitation').dataset.login, '@Bob · pending invitation');
   assert.equal(page.nodes.get('time-repository-list').querySelector('.repository-collaborators').textContent, '');
+  assert.equal(invite.disabled, true, 'completed invitations must not offer a duplicate send');
+  const row = page.nodes.get('time-repository-list').children[0];
+  await row.querySelector('.repository-member-actions-button').listeners.click({ preventDefault() {}, stopPropagation() {} });
+  const cancel = row.querySelector('.remove-repository-user');
+  assert.match(cancel.textContent, /Cancel invitation for @Bob/);
+  await cancel.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  assert.equal(cancelled, true, 'the newly created row must still target the outer repository card');
+  assert.match(row.querySelector('.repository-manage-feedback').textContent, /cancelled/i);
+  assert.equal(row.querySelector('.repository-invitation'), null);
+});
+
+test('Team shows GitHub invitation, granted access, and verified Clockoli storage as distinct states', async () => {
+  const page = harness({ collaboratorReplies: true, reply: request => request.type === 'LOAD_REPOSITORY_COLLABORATORS'
+    ? { users: [{ id: 7, login: 'Ready' }, { id: 8, login: 'HasAccess' }], readyUserIds: [7],
+      pendingUsers: [{ id: 9, login: 'Invited' }], hasMore: false } : {} });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const team = page.nodes.get('time-repository-list').querySelector('.repository-team');
+  assert.deepEqual(team.querySelectorAll('.repository-team-member-status').map(node => node.textContent),
+    ['Clockoli storage ready', 'GitHub access granted', 'GitHub invitation pending']);
+});
+
+test('invite permission denial is shown before search and sends no GitHub mutation', async () => {
+  const page = harness({ reply: request => request.type === 'CHECK_REPOSITORY_INVITE_ACCESS'
+    ? new Error('GitHub repository admin access is required') : {} });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  const row = page.nodes.get('time-repository-list').children[0];
+  await row.querySelector('.repository-add-teammate').listeners.click({ preventDefault() {}, stopPropagation() {} });
+  assert.match(row.querySelector('.repository-invite-feedback').textContent, /admin access is required/);
+  assert.equal(row.querySelector('.teammate-instructions').hidden, true);
+  assert.equal(page.requests.some(request => request.type === 'INVITE_REPOSITORY_USER'), false);
 });
 
 test('teammate picker does not invite when confirmation is cancelled', async () => {
@@ -2608,6 +2694,44 @@ test('teammate picker does not invite when confirmation is cancelled', async () 
   await picker.querySelector('.teammate-choice').listeners.click();
   await picker.querySelector('.invite-teammate').listeners.click();
   assert.equal(page.requests.some(request => request.type === 'INVITE_REPOSITORY_USER'), false);
+});
+
+test('read-only collaborator can be rechecked after write access is granted on GitHub', async () => {
+  let upgraded = false;
+  const page = harness({ confirm: () => true, reply: request => request.type === 'SEARCH_INVITEE_USERS'
+    ? { users: [{ id: 42, login: 'Bob' }] }
+    : request.type === 'INVITE_REPOSITORY_USER'
+      ? { status: upgraded ? 'already_has_access' : 'read_only_access', login: 'Bob' } : {} });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  const picker = page.nodes.get('time-repository-list').querySelector('.teammate-picker');
+  const input = picker.querySelector('.teammate-search'), invite = picker.querySelector('.invite-teammate');
+  input.value = 'Bo'; input.listeners.input();
+  await page.timers.filter(timer => timer.delay === 250).at(-1).callback();
+  await picker.querySelector('.teammate-choice').listeners.click();
+  await invite.listeners.click();
+  assert.match(picker.querySelector('.teammate-feedback').textContent, /read-only access/i);
+  assert.match(picker.querySelector('.teammate-feedback').className, /error/);
+  assert.equal(invite.disabled, false, 'read-only access must be retryable after an external GitHub upgrade');
+  upgraded = true;
+  await invite.listeners.click();
+  assert.match(picker.querySelector('.teammate-feedback').textContent, /already has repository access/i);
+  assert.equal(invite.disabled, true, 'completed access must not offer unnecessary repeat invitations');
+});
+
+test('a failed GitHub teammate search does not leave later searches styled as an error', async () => {
+  let attempts = 0;
+  const page = harness({ reply: request => request.type === 'SEARCH_INVITEE_USERS'
+    ? ++attempts === 1 ? new Error('GitHub temporarily unavailable') : { users: [] } : {} });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  const picker = page.nodes.get('time-repository-list').querySelector('.teammate-picker');
+  const input = picker.querySelector('.teammate-search'), feedback = picker.querySelector('.teammate-feedback');
+  input.value = 'Bo'; input.listeners.input();
+  await page.timers.filter(timer => timer.delay === 250).at(-1).callback();
+  assert.match(feedback.className, /error/);
+  input.value = 'Al'; input.listeners.input();
+  assert.doesNotMatch(feedback.className, /error/);
+  await page.timers.filter(timer => timer.delay === 250).at(-1).callback();
+  assert.equal(feedback.textContent, 'No matching GitHub users.');
 });
 
 test('an earlier teammate search cannot reopen suggestions after a user is selected', async () => {
@@ -2783,7 +2907,7 @@ test('repository avatar refresh removes an old empty state and ignores a late ol
   assert.equal(display.querySelector('.repository-collaborator').dataset.login, '@New');
 });
 
-test('repository add circle opens only its own teammate form and focuses GitHub search', () => {
+test('labeled invite action checks permissions before revealing the repository-specific form', async () => {
   const destinations = [
     { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 },
     { id: 'github:21', owner: 'acme', repo: 'other', installationId: 10 },
@@ -2794,13 +2918,16 @@ test('repository add circle opens only its own teammate form and focuses GitHub 
   const second = rows.find(row => row.dataset.destinationId === 'github:21');
   const add = second.querySelector('.repository-add-teammate');
   assert.equal(add.tagName, 'button');
-  assert.match(add.attributes['aria-label'], /add.*acme\/other/i);
+  assert.match(add.attributes['aria-label'], /invite.*acme\/other/i);
   let prevented = false, stopped = false;
-  add.listeners.click({ preventDefault() { prevented = true; }, stopPropagation() { stopped = true; } });
+  await add.listeners.click({ preventDefault() { prevented = true; }, stopPropagation() { stopped = true; } });
   assert.equal(prevented, true); assert.equal(stopped, true);
   assert.equal(first.open, false);
   assert.equal(second.open, true);
   assert.equal(second.querySelector('.teammate-instructions').open, true);
+  assert.equal(second.querySelector('.teammate-instructions').hidden, false);
+  assert.deepEqual(JSON.parse(JSON.stringify(page.requests.find(request => request.type === 'CHECK_REPOSITORY_INVITE_ACCESS'))),
+    { type: 'CHECK_REPOSITORY_INVITE_ACCESS', destinationId: 'github:21' });
   assert.equal(second.querySelector('.teammate-search').focused, true);
   assert.equal(page.requests.some(request => request.type === 'INVITE_REPOSITORY_USER'), false);
   const pat = harness(); pat.render({ ...connectedState, auth: { mode: 'pat' }, destinations });
@@ -2825,16 +2952,16 @@ test('managing repository access requires confirmation and removes only the chos
   const rows = page.nodes.get('time-repository-list').children;
   const first = rows.find(row => row.dataset.destinationId === 'github:20');
   const second = rows.find(row => row.dataset.destinationId === 'github:21');
-  const avatar = first.querySelector('.repository-collaborator');
+  const menuTrigger = first.querySelector('.repository-member-actions-button');
   const menu = first.querySelector('.repository-avatar-actions');
-  assert.equal(avatar.tagName, 'button');
-  assert.equal(avatar.attributes['aria-expanded'], 'false');
+  assert.equal(menuTrigger.tagName, 'button');
+  assert.equal(menuTrigger.attributes['aria-expanded'], 'false');
   assert.equal(menu.hidden, true);
   assert.equal(first.querySelector('.repository-manage-teammates'), null);
-  await avatar.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  await menuTrigger.listeners.click({ preventDefault() {}, stopPropagation() {} });
   assert.equal(first.open, false);
   assert.equal(menu.hidden, false);
-  assert.equal(avatar.attributes['aria-expanded'], 'true');
+  assert.equal(menuTrigger.attributes['aria-expanded'], 'true');
   const button = menu.querySelector('.remove-repository-user');
   assert.match(button.textContent, /Remove @Bob/);
   await button.listeners.click({ preventDefault() {}, stopPropagation() {} });
@@ -2849,6 +2976,54 @@ test('managing repository access requires confirmation and removes only the chos
   assert.equal(second.querySelector('.remove-repository-user'), null);
 });
 
+test('removing inherited GitHub access reports that the member still has access', async () => {
+  const page = harness({ collaboratorReplies: true, confirm: () => true, reply: request => {
+    if (request.type === 'LOAD_REPOSITORY_COLLABORATORS') return {
+      users: [{ id: 42, login: 'Bob', avatarUrl: null }], hasMore: false,
+    };
+    if (request.type === 'REMOVE_REPOSITORY_USER') return { status: 'removed', login: 'Bob' };
+    return {};
+  } });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const row = page.nodes.get('time-repository-list').children[0];
+  await row.querySelector('.repository-member-actions-button').listeners.click({ preventDefault() {}, stopPropagation() {} });
+  await row.querySelector('.remove-repository-user').listeners.click({ preventDefault() {}, stopPropagation() {} });
+  const feedback = row.querySelector('.repository-manage-feedback');
+  assert.equal(feedback.parentNode, row.querySelector('.repository-team'),
+    'result must be visible alongside the team, not beneath the entire repository card');
+  assert.match(feedback.textContent, /still have repository access/i);
+  assert.match(feedback.textContent, /team or organization/i);
+  assert.match(feedback.className, /warning/);
+  assert.equal(feedback.querySelector('a').href, 'https://github.com/acme/time-data/settings/access');
+  assert.equal(feedback.querySelector('a').target, '_blank');
+  assert.equal(feedback.focused, true);
+  assert.ok(row.querySelector('.repository-team-member'), 'inherited collaborator should still appear');
+});
+
+test('GitHub remove failure is immediately visible in Team and leaves the action retryable', async () => {
+  const page = harness({ collaboratorReplies: true, confirm: () => true, reply: request => {
+    if (request.type === 'LOAD_REPOSITORY_COLLABORATORS') return {
+      users: [{ id: 42, login: 'Bob', avatarUrl: null }], hasMore: false,
+    };
+    if (request.type === 'REMOVE_REPOSITORY_USER') return new Error('GitHub denied removing this collaborator');
+    return {};
+  } });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const row = page.nodes.get('time-repository-list').children[0];
+  await row.querySelector('.repository-member-actions-button').listeners.click({ preventDefault() {}, stopPropagation() {} });
+  const remove = row.querySelector('.remove-repository-user');
+  await remove.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  const feedback = row.querySelector('.repository-manage-feedback');
+  assert.equal(feedback.parentNode, row.querySelector('.repository-team'));
+  assert.match(feedback.textContent, /GitHub denied removing/);
+  assert.match(feedback.className, /error/);
+  assert.equal(feedback.querySelector('a').href, 'https://github.com/acme/time-data/settings/access');
+  assert.equal(feedback.focused, true);
+  assert.equal(remove.disabled, false);
+});
+
 test('pending account invitation can be cancelled but a failed removal retains its action', async () => {
   let fail = true;
   const page = harness({ collaboratorReplies: true, confirm: () => true, reply: request => {
@@ -2860,9 +3035,11 @@ test('pending account invitation can be cancelled but a failed removal retains i
   page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
   await new Promise(resolve => setImmediate(resolve));
   const row = page.nodes.get('time-repository-list').children[0];
-  const avatar = row.querySelector('.repository-invitation');
+  const pendingAvatar = row.querySelector('.repository-invitation');
+  assert.equal(pendingAvatar.tagName, 'span');
+  const menuTrigger = row.querySelector('.repository-member-actions-button');
   const menu = row.querySelector('.repository-avatar-actions');
-  await avatar.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  await menuTrigger.listeners.click({ preventDefault() {}, stopPropagation() {} });
   const cancel = menu.querySelector('.remove-repository-user');
   assert.match(cancel.textContent, /Cancel invitation for @Alice/);
   await cancel.listeners.click({ preventDefault() {}, stopPropagation() {} });
@@ -2876,14 +3053,14 @@ test('pending account invitation can be cancelled but a failed removal retains i
   assert.match(row.querySelector('.repository-manage-feedback').textContent, /cancelled/i);
 });
 
-test('avatar menu closes on Escape and does not open the repository or send a mutation', async () => {
+test('team member action menu closes on Escape and does not open the repository or send a mutation', async () => {
   const page = harness({ collaboratorReplies: true, reply: () => ({ users: [
     { id: 7, login: 'Member' }, { id: 8, login: 'Teammate' },
   ], hasMore: false }) });
   page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
   await new Promise(resolve => setImmediate(resolve));
   const row = page.nodes.get('time-repository-list').children[0];
-  const [first, second] = row.querySelectorAll('.repository-collaborator');
+  const [first, second] = row.querySelectorAll('.repository-member-actions-button');
   await first.listeners.click({ preventDefault() {}, stopPropagation() {} });
   assert.equal(row.querySelectorAll('.repository-avatar-actions').filter(menu => !menu.hidden).length, 1);
   await second.listeners.click({ preventDefault() {}, stopPropagation() {} });
@@ -2905,8 +3082,23 @@ test('signed-in account avatar is not offered a self-removal action', async () =
   const avatars = page.nodes.get('time-repository-list').querySelectorAll('.repository-collaborator');
   assert.equal(avatars[0].tagName, 'span');
   assert.equal(avatars[0].attributes.role, 'img');
-  assert.equal(avatars[1].tagName, 'button');
+  assert.equal(avatars[1].tagName, 'span');
+  assert.equal(page.nodes.get('time-repository-list').querySelectorAll('.repository-member-actions-button').length, 1);
   assert.equal(page.nodes.get('time-repository-list').querySelectorAll('.remove-repository-user').length, 1);
+});
+
+test('a renamed signed-in GitHub user is never offered their own removal action', async () => {
+  const page = harness({ collaboratorReplies: true, reply: request => request.type === 'LOAD_REPOSITORY_COLLABORATORS'
+    ? { users: [{ id: 42, login: 'NewLogin' }, { id: 43, login: 'Other' }], hasMore: false } : {} });
+  page.render({ ...connectedState,
+    auth: { mode: 'github_app', githubLogin: 'OldLogin', githubUserId: 42 },
+    destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const row = page.nodes.get('time-repository-list').children[0];
+  const members = row.querySelectorAll('.repository-team-member');
+  assert.match(members[0].querySelector('.repository-team-member-identity').textContent || members[0].querySelector('.repository-team-member-identity').children[0].textContent, /you/);
+  assert.equal(members[0].querySelector('.repository-member-actions-button'), null);
+  assert.ok(members[1].querySelector('.repository-member-actions-button'));
 });
 
 test('repository avatar hover uses the GitHub login and overflow does not impersonate add', async () => {
@@ -2919,10 +3111,72 @@ test('repository avatar hover uses the GitHub login and overflow does not impers
   const avatar = row.querySelector('.repository-collaborator');
   assert.equal(avatar.dataset.login, '@New');
   assert.equal(avatar.dataset.clockoliTooltip, '@New');
-  assert.equal(row.querySelector('.repository-collaborator-more').textContent, '…');
+  const more = row.querySelector('.repository-collaborator-more');
+  assert.equal(more.tagName, 'details');
+  assert.equal(more.title, undefined, 'More collaborators should not show a redundant hover tooltip');
+  assert.match(more.querySelector('summary').textContent, /More collaborators/i);
+  assert.match(more.querySelector('.repository-view-all').href, /github.com\/acme\/time-data\/settings\/access/);
   assert.equal(row.querySelectorAll('.repository-add-teammate').length, 1);
   const css = await readFile(new URL('../src/options/options.css', import.meta.url), 'utf8');
   assert.doesNotMatch(css, /\.repository-collaborator\[data-login\]:hover::after/);
+});
+
+test('More collaborators and pending invitations expand into verified full member rows', async () => {
+  const users = Array.from({ length: 5 }, (_, index) => ({ id: 20 + index, login: `member${index}`, avatarUrl: null }));
+  const invites = Array.from({ length: 5 }, (_, index) => ({ id: 30 + index, login: `invitee${index}`, avatarUrl: null }));
+  const destination = { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 };
+  const page = harness({ collaboratorReplies: true, reply: request => request.type === 'LOAD_REPOSITORY_COLLABORATORS'
+    ? { users: users.slice(0, 4), moreUsers: users.slice(4), hasMore: true,
+      pendingUsers: invites.slice(0, 4), pendingMoreUsers: invites.slice(4), pendingHasMore: true } : {} });
+  page.render({ ...connectedState, destinations: [destination] });
+  await new Promise(resolve => setImmediate(resolve));
+  const article = page.nodes.get('time-repository-list').children[0];
+  const more = article.querySelector('.repository-collaborator-more');
+  const pending = article.querySelector('.repository-invitation-more');
+  assert.equal(more.tagName, 'details');
+  assert.match(more.querySelector('summary').textContent, /More collaborators \(1\)/);
+  assert.equal(more.querySelector('.repository-team-member-identity').children[0].textContent, '@member4');
+  assert.match(pending.querySelector('summary').textContent, /More pending invitations \(1\)/);
+  assert.equal(pending.querySelector('.repository-team-member-identity').children[0].textContent, '@invitee4');
+  assert.equal(more.querySelectorAll('.remove-repository-user').length, 1);
+  more.open = true; pending.open = true;
+  page.render({ ...connectedState, destinations: [destination] });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(page.nodes.get('time-repository-list').children[0], article);
+  assert.equal(article.querySelector('.repository-collaborator-more'), more);
+  assert.equal(more.open, true);
+  assert.equal(pending.open, true);
+});
+
+test('Settings refresh preserves open Time repositories, invitation controls and copy feedback', async () => {
+  const destination = { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 };
+  const current = { ...connectedState, destinations: [destination] };
+  const page = harness();
+  page.render(current);
+  const article = page.nodes.get('time-repository-list').children[0];
+  article.open = true;
+  const instructions = article.querySelector('.teammate-instructions');
+  instructions.open = true; instructions.hidden = false;
+  const setup = article.querySelector('.teammate-setup');
+  setup.open = true;
+  const input = article.querySelector('.teammate-search'); input.value = 'Someone';
+  const copy = article.querySelector('.teammate-invitation-link').querySelector('button');
+  page.context.navigator = { clipboard: { async writeText() { page.render(current); } } };
+  await copy.listeners.click();
+  assert.equal(page.nodes.get('time-repository-list').children[0], article);
+  assert.equal(article.open, true);
+  assert.equal(instructions.open, true);
+  assert.equal(instructions.hidden, false);
+  assert.equal(setup.open, true);
+  assert.equal(input.value, 'Someone');
+  assert.match(article.querySelector('.teammate-invitation-link').querySelector('.form-feedback').textContent, /copied/i);
+  page.render({ ...current, destinations: [{ ...destination, verificationStatus: 'access_checked' }] });
+  assert.equal(page.nodes.get('time-repository-list').children[0], article);
+  assert.equal(article.open, true);
+  assert.equal(instructions.open, true);
+  page.render({ ...current, auth: { mode: 'github_app', githubLogin: 'other' } });
+  assert.notEqual(page.nodes.get('time-repository-list').children[0], article,
+    'a different GitHub identity must not inherit the previous account’s invitation form');
 });
 
 test('pending GitHub invitations show distinct noninteractive avatars and accessible status', async () => {
@@ -2938,7 +3192,7 @@ test('pending GitHub invitations show distinct noninteractive avatars and access
   assert.match(pending.attributes['aria-label'], /@Invitee.*pending invitation/i);
   assert.equal(pending.children.find(child => child.tagName === 'img').src, 'https://avatars.githubusercontent.com/u/8?v=4');
   assert.match(row.querySelector('.repository-collaborators').attributes['aria-label'], /pending invitation/i);
-  assert.match(row.querySelector('.repository-invitation-more').title, /pending invitation/i);
+  assert.equal(row.querySelector('.repository-invitation-more').title, undefined, 'overflow panels should not show redundant hover tooltips');
   assert.equal(row.querySelectorAll('.repository-add-teammate').length, 1);
   const css = await readFile(new URL('../src/options/options.css', import.meta.url), 'utf8');
   assert.match(css, /\.repository-invitation\{[^}]*border-style:dashed/);
@@ -2976,47 +3230,75 @@ test('invite section leads with search and keeps teammate setup steps behind a d
   page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
   const row = page.nodes.get('time-repository-list').children[0];
   const invite = row.querySelector('.teammate-instructions');
-  assert.equal(invite.children[0].textContent, 'Invite teammates');
-  assert.match(invite.querySelector('.teammate-intro').textContent, /acme\/time-data/);
+  assert.equal(invite.children[0].textContent, 'Invite teammate');
+  assert.equal(invite.hidden, true);
+  assert.match(invite.querySelector('.teammate-intro').textContent, /Choose a GitHub user/);
   const picker = invite.querySelector('.teammate-picker');
   const setup = invite.querySelector('.teammate-setup');
   assert.ok(invite.children.indexOf(picker) < invite.children.indexOf(setup));
   assert.equal(setup.open, false);
   assert.equal(setup.querySelector('.teammate-steps').tagName, 'ol');
   assert.equal(invite.children.some(child => child.tagName === 'pre'), false);
-  assert.equal(picker.querySelector('.teammate-search').placeholder, 'Search by GitHub username');
-  assert.match(picker.querySelector('.help').textContent, /repository admin/i);
+  assert.equal(picker.querySelector('.teammate-search').placeholder, 'Search GitHub users');
+  assert.equal(picker.querySelector('.invite-teammate').textContent, 'Send invitation to the repository');
+  assert.equal(picker.querySelector('.teammate-permissions'), null);
 });
 
-test('add teammate control has a hover title and a compact icon next to avatars', async () => {
+test('invite control is labeled and team members are displayed in a separate section', async () => {
   const page = harness({ collaboratorReplies: true, reply: () => ({ users: [{ id: 7, login: 'New' }], hasMore: false }) });
   page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
   await new Promise(resolve => setImmediate(resolve));
   const people = page.nodes.get('time-repository-list').querySelector('.repository-people');
   const add = people.querySelector('.repository-add-teammate');
-  assert.equal(add.title, 'Add teammate');
+  assert.equal(add.title, 'Invite teammate');
+  assert.equal(add.children[1].textContent, 'Invite teammate');
   assert.equal(add.children[0].tagName, 'svg');
-  assert.equal(people.children[0].className, 'repository-collaborators');
-  assert.equal(people.children[1], add);
+  assert.equal(people.children[0], add);
+  const row = page.nodes.get('time-repository-list').children[0];
+  assert.equal(row.querySelector('.repository-card-heading').querySelector('.repository-add-teammate'), null,
+    'the invitation button must not be nested inside the disclosure summary');
+  const team = row.querySelector('.repository-team');
+  assert.equal(team.querySelector('.repository-add-teammate'), add);
+  assert.equal(team.querySelector('.repository-collaborators').querySelector('.repository-team-member-status').textContent, 'GitHub access granted');
   const css = await readFile(new URL('../src/options/options.css', import.meta.url), 'utf8');
-  assert.match(css, /\.repository-people\{[^}]*gap:3px/);
-  assert.match(css, /\.repository-add-teammate\{[^}]*width:24px;height:24px/);
+  assert.match(css, /\.repository-people\{[^}]*gap:8px/);
+  assert.match(css, /\.repository-add-teammate\{[^}]*min-height:32px/);
 });
 
-test('shareable teammate steps copy the rewritten guide and expose a readable fallback', async () => {
+test('Copy Clockoli invitation message shares the approved text and offers a multiline fallback', async () => {
   const page = harness();
   page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
-  const setup = page.nodes.get('time-repository-list').querySelector('.teammate-setup');
-  const copy = setup.children.find(child => child.textContent === 'Copy instructions');
-  const feedback = setup.querySelector('.form-feedback');
+  const invite = page.nodes.get('time-repository-list').querySelector('.teammate-instructions');
+  const actions = invite.querySelector('.teammate-invitation-link');
+  const copy = actions.querySelector('button'), feedback = actions.querySelector('.form-feedback');
+  const fallback = actions.querySelector('textarea');
+  const setup = invite.querySelector('.teammate-setup');
+  assert.equal(copy.textContent, 'Copy Clockoli invitation message');
+  assert.equal(setup.querySelector('button'), null, 'How invitations work must not duplicate the copy action');
+  assert.equal(fallback.hidden, true);
   let copied = '';
   page.context.navigator = { clipboard: { async writeText(text) { copied = text; } } };
   await copy.listeners.click();
-  assert.match(copied, /Join acme\/time-data in Clockoli/);
-  assert.match(copied, /Do not create clockoli\/users/);
-  assert.match(feedback.textContent, /copied/);
+  assert.equal(copied, [
+    "Hi! You're invited to track time with our team using Clockoli.",
+    '',
+    "1. Accept the GitHub invitation to acme/time-data (if you haven't already).",
+    '2. Open this link to set up Clockoli:',
+    '   https://clockoli.com/join/?repo=acme%2Ftime-data',
+    '3. Keep the page open while you install the Clockoli extension and connect your GitHub account. Follow the steps to join the shared time repository.',
+    '',
+    "That's it! You're ready to track time with the team.",
+  ].join('\n'));
+  assert.equal(fallback.value, copied);
+  assert.match(feedback.textContent, /Invitation message copied/);
+  assert.equal(fallback.hidden, true);
+  assert.equal(copy.disabled, false);
   page.context.navigator.clipboard.writeText = async () => { throw new Error('Clipboard denied'); };
   await copy.listeners.click();
-  assert.equal(setup.open, true);
-  assert.match(feedback.textContent, /Select the steps above/);
+  assert.equal(fallback.hidden, false);
+  assert.equal(fallback.focused, true);
+  assert.match(feedback.textContent, /Select and copy the invitation message/);
+  assert.match(feedback.className, /error/);
+  assert.equal(copy.disabled, false);
 });
+

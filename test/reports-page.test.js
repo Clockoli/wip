@@ -91,7 +91,8 @@ test('recoverable queued edit conflicts are handled by the periodic background s
 });
 
 
-test('reports mounts the shared running status directly below the tabs', () => {
+test('reports mounts the loading indicator beside the header actions', () => {
+  assert.match(html, /<div class="page-tab-actions">\s*<div id="loading"/);
   assert.match(html, /<\/nav>\s*<\/div>\s*<div id="running-status"/);
   assert.match(html, /href="\.\.\/styles\/running-status\.css"/);
   assert.match(js, /import \{ mountRunningStatus \} from '\.\.\/ui\/running-status\.js'/);

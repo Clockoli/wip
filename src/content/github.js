@@ -4856,10 +4856,10 @@
     const currentRunning = sameTask(taskFromLocation(), pageState.active);
     const main = el('button', undefined, `trigger trigger-main${pageState.active ? ' running' : ''}${currentRunning ? ' running-current' : ''}`); main.type = 'button';
     main.setAttribute('aria-label', pageState.active ? `Time tracker running: ${formatElapsed(pageState.active.startedAt)}` : 'Time tracker');
-    main.title = pageState.active ? 'Open Clockoli Activity (timer running)' : 'Open Clockoli Activity'; main.append(clockoliMark(20));
+    main.title = pageState.active ? 'Open Clockoli (timer running)' : 'Open Clockoli'; main.append(clockoliMark(20));
     main.addEventListener('click', async event => {
       if (!event.isTrusted) return;
-      await send({ type: 'OPEN_TIMES' });
+      await send({ type: 'OPEN_PREFERRED_SURFACE' });
     });
     shadow.append(style, main);
     restoreMenuScroll(preservedMenuScrollTop);

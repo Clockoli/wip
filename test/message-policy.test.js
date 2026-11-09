@@ -2,12 +2,26 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
-import { assertMessageAllowed, addTimeForSender, dayRangeForSender, issueForStart, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch,
+import { assertMessageAllowed, addTimeForSender, cachedViewRequest, dayRangeForSender, issueForStart, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch,
   requestedStartDestinationId, weekRangeForSender } from '../src/background/message-policy.js';
 
 const origin = 'chrome-extension://abc/';
 const content = { url: 'https://github.com/acme/frontend/issues/123', tab: { id: 1 } };
 const extension = { url: `${origin}src/popup/popup.html` };
+
+test('cached report and task views are limited to their extension pages and exact date scopes', () => {
+  const range = { startDate: '2026-09-01', endDate: '2026-09-07', reportingUtc: false };
+  const request = { type: 'GET_CACHED_VIEW', kind: 'reports', range };
+  assert.deepEqual(cachedViewRequest(request, { url: `${origin}src/reports/reports.html` }, origin), { kind: 'reports', range });
+  for (const sender of [content, extension, { url: `${origin}src/tasks/tasks.html` }])
+    assert.throws(() => cachedViewRequest(request, sender, origin));
+  for (const invalid of [{ ...request, extra: true }, { ...request, range: { ...range, startDate: '2026-02-30' } },
+    { ...request, range: { ...range, reportingUtc: 'false' } }, { ...request, range: { ...range, endDate: '2026-08-01' } }])
+    assert.throws(() => cachedViewRequest(invalid, { url: `${origin}src/reports/reports.html` }, origin));
+  const tasks = { type: 'GET_CACHED_VIEW', kind: 'tasks', range: { startDate: range.startDate, endDate: range.endDate } };
+  assert.equal(cachedViewRequest(tasks, { url: `${origin}src/tasks/tasks.html` }, origin).kind, 'tasks');
+  assert.throws(() => cachedViewRequest({ ...tasks, range }, { url: `${origin}src/tasks/tasks.html` }, origin));
+});
 const issue = { type: 'issue', owner: 'acme', repo: 'frontend', number: 123, url: 'https://github.com/acme/frontend/issues/123' };
 
 test('Add time accepts only the two extension pages and a bounded canonical URL payload', () => {
@@ -362,7 +376,7 @@ test('GitHub App onboarding and credential operations are extension-page only', 
   const privileged = [
     'GET_ONBOARDING_STATE', 'START_DEVICE_FLOW', 'OPEN_DEVICE_FLOW_PAGE', 'RESUME_DEVICE_FLOW', 'POLL_DEVICE_FLOW',
     'CANCEL_DEVICE_FLOW', 'CANCEL_GITHUB_APP_SETUP', 'DISCOVER_REPOSITORIES', 'CHECK_REPOSITORY_ACCESS',
-    'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION', 'SEARCH_INVITEE_USERS', 'INVITE_REPOSITORY_USER', 'REMOVE_REPOSITORY_USER', 'LOAD_REPOSITORY_COLLABORATORS',
+    'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION', 'CHECK_REPOSITORY_INVITE_ACCESS', 'SEARCH_INVITEE_USERS', 'INVITE_REPOSITORY_USER', 'REMOVE_REPOSITORY_USER', 'LOAD_REPOSITORY_COLLABORATORS',
     'MERGE_TASKS',
   ];
   for (const type of privileged) {
@@ -372,16 +386,68 @@ test('GitHub App onboarding and credential operations are extension-page only', 
 });
 
 
+test('invitation preflight and user search obtain configuration without provisioning storage', async () => {
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  const calls = [];
+  const context = vm.createContext({
+    store: {},
+    requireConfiguredDestinationId: async (_store, id) => id,
+    configuredSnapshot: async options => {
+      calls.push(['snapshot', options]);
+      return { config: { repoId: 20, installationId: 88 }, auth: { mode: 'github_app' } };
+    },
+    githubForConfig: config => {
+      calls.push(['github', config.repoId]);
+      return {};
+    },
+    RepositoryInvitationService: class {
+      constructor({ installationId }) { assert.equal(installationId, 88); }
+      async assertAdminAccess() { calls.push(['checked permissions']); }
+    },
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function repositoryInvitationService('),
+    worker.indexOf('async function contextForDestination(')), context);
+  const invitation = await context.repositoryInvitationService('github:20', { localOnly: true });
+  await invitation.assertAdminAccess();
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
+    ['snapshot', { destinationId: 'github:20', measureMigration: false, localOnly: true }],
+    ['github', 20], ['checked permissions'],
+  ]);
+
+  const handler = vm.createContext({ assertMessageAllowed,
+    chrome: { runtime: { getURL: () => origin } },
+    repositoryInvitationService: async (id, options) => {
+      assert.equal(id, 'github:20');
+      calls.push(['route', options]);
+      return { assertAdminAccess: async () => {}, search: async query => {
+        assert.equal(query, 'bob'); return [];
+      } };
+    },
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('),
+    worker.indexOf('chrome.runtime.onMessage.addListener')), handler);
+  assert.deepEqual(JSON.parse(JSON.stringify(await handler.handle(
+    { type: 'CHECK_REPOSITORY_INVITE_ACCESS', destinationId: 'github:20' }, extension))), { canInvite: true });
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.at(-1))), ['route', { localOnly: true }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(await handler.handle(
+    { type: 'SEARCH_INVITEE_USERS', payload: { destinationId: 'github:20', query: 'bob' } }, extension))),
+    { users: [] });
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.at(-1))), ['route', { localOnly: true }]);
+  await assert.rejects(handler.handle({ type: 'CHECK_REPOSITORY_INVITE_ACCESS', destinationId: 'github:20' }, content), /not allowed/i);
+});
+
 test('repository collaborator read checks sender and configured destination before GitHub access', async () => {
   const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
   const calls = [];
   let pendingFails = false, pendingIncomplete = false;
   const context = vm.createContext({ assertMessageAllowed, chrome: { runtime: { getURL: () => origin } },
+    readyRepositoryMemberIds: async () => [],
     store: {}, requireConfiguredDestinationId: async (_store, id) => {
       calls.push(['destination', id]);
       if (id !== 'github:20') throw new Error('The requested destination is not configured.');
       return id;
-    }, configuredSnapshot: async ({ destinationId }) => {
+    }, configuredSnapshot: async ({ destinationId, localOnly }) => {
+      assert.equal(localOnly, true, 'viewing team members must not provision storage');
       calls.push(['snapshot', destinationId]); return { config: { repoId: 20 }, auth: { mode: 'github_app' } };
     }, githubForConfig: () => ({
       assertDestinationReachable: async () => { calls.push(['verified']); },
@@ -402,15 +468,15 @@ test('repository collaborator read checks sender and configured destination befo
   assert.deepEqual(calls, [['destination', 'github:21']]);
   assert.deepEqual(JSON.parse(JSON.stringify(await context.handle(request, extension))),
     { users: [{ id: 42, login: 'bob', avatarUrl: null }], hasMore: false,
-      pendingUsers: [{ id: 43, login: 'alice', avatarUrl: null }], pendingHasMore: false });
+      readyUserIds: [], pendingUsers: [{ id: 43, login: 'alice', avatarUrl: null }], pendingHasMore: false });
   assert.deepEqual(calls.slice(1), [['destination', 'github:20'], ['snapshot', 'github:20'], ['verified'], ['listed'], ['pending']]);
   pendingIncomplete = true;
   assert.deepEqual(JSON.parse(JSON.stringify(await context.handle(request, extension))),
     { users: [{ id: 42, login: 'bob', avatarUrl: null }], hasMore: false,
-      pendingUsers: [{ id: 43, login: 'alice', avatarUrl: null }], pendingHasMore: false, pendingUnavailable: true });
+      readyUserIds: [], pendingUsers: [{ id: 43, login: 'alice', avatarUrl: null }], pendingHasMore: false, pendingUnavailable: true });
   pendingFails = true;
   assert.deepEqual(JSON.parse(JSON.stringify(await context.handle(request, extension))),
-    { users: [{ id: 42, login: 'bob', avatarUrl: null }], hasMore: false, pendingUnavailable: true });
+    { users: [{ id: 42, login: 'bob', avatarUrl: null }], hasMore: false, readyUserIds: [], pendingUnavailable: true });
 });
 
 test('repository access removal validates payload and sender before loading a destination or mutating', async () => {

@@ -11,7 +11,7 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const FACET_KEYS = ['people', 'projects', 'repositories', 'timeRepositories'];
 const $ = id => document.getElementById(id);
 const state = {
-  records: [], range: null, pendingRange: null, sourceRepository: '', branch: '', sourceRepositories: [], billing: { clientRates: {}, invoicing: invoicingSettings() }, loading: false, requestId: 0, analytics: null, partial: false, readStatus: [], pendingCount: 0,
+  records: [], range: null, pendingRange: null, sourceRepository: '', branch: '', sourceRepositories: [], billing: { clientRates: {}, invoicing: invoicingSettings() }, loading: false, stale: false, requestId: 0, analytics: null, partial: false, readStatus: [], pendingCount: 0,
   people: new Set(), projects: new Set(), repositories: new Set(), timeRepositories: new Set(), projectDefinitions: [], peopleSearch: '', projectsSearch: '', repositoriesSearch: '', timeRepositoriesSearch: '',
   allSelected: { people: false, projects: true, repositories: true, timeRepositories: true }, otherProjectName: 'Other', otherProjectClient: '', rateClientId: '__project__', clientIdFilter: '',
   exchangeRates: null, exchangeKey: '', analyticsRequestId: 0, progressRequestId: null, progressValue: 0,
@@ -258,7 +258,7 @@ function formatMetricValue(value, metric, { tooltip = false } = {}) {
 }
 
 function setDownloadsAvailable(available) {
-  available = available && !state.loading && !state.partial && !state.pendingCount;
+  available = available && !state.loading && !state.stale && !state.partial && !state.pendingCount;
   for (const id of ['download-csv', 'download-json', 'download-pdf']) {
     $(id).classList.toggle('disabled', !available);
     $(id).setAttribute('aria-disabled', String(!available));
@@ -315,7 +315,7 @@ function setInvoiceAvailable(filtered) {
   if (state.pendingCount) reason = 'Local changes are not included. Wait for GitHub sync before invoicing.';
   else if (!filtered.length) reason = 'No entries in this period to invoice';
   else if (!filtered.some(record => state.billing.invoicing.clients.some(client => rateForClient(client.id, state.billing, record.user, recordDate(record))))) reason = 'No client rate covers these entries. Add rates in Settings.';
-  else if (state.loading) reason = 'Report is loading';
+  else if (state.loading || state.stale) reason = 'Report is refreshing; wait for current data before invoicing';
   control.classList.toggle('disabled', Boolean(reason)); control.setAttribute('aria-disabled', String(Boolean(reason)));
   if (reason) control.setAttribute('data-clockoli-tooltip', reason); else control.removeAttribute('data-clockoli-tooltip');
 }
@@ -333,7 +333,7 @@ function updateInvoiceExtraHint() {
 }
 
 function setInvoiceActionsAvailable(available) {
-  for (const id of ['invoice-print', 'invoice-save-pdf']) $(id).disabled = !available || hasIncompleteInvoiceExtraLines() || state.invoiceOutputInFlight || state.loading || state.partial || Boolean(state.pendingCount);
+  for (const id of ['invoice-print', 'invoice-save-pdf']) $(id).disabled = !available || hasIncompleteInvoiceExtraLines() || state.invoiceOutputInFlight || state.loading || state.stale || state.partial || Boolean(state.pendingCount);
 }
 
 function renderPendingStatus(pendingWrites, pendingCount = 0) {
@@ -346,7 +346,7 @@ function renderPendingStatus(pendingWrites, pendingCount = 0) {
 }
 
 async function pendingSafeForAction() {
-  if (state.pendingCount) return false;
+  if (state.stale || state.loading || state.pendingCount) return false;
   try {
     const snapshot = await send({ type: 'GET_STATE' });
     if (snapshot?.configured !== true || !Array.isArray(snapshot.pendingWrites)) throw new Error('Could not verify current local changes. Try again.');
@@ -524,7 +524,7 @@ function showInvoiceError(error) {
 }
 
 async function rebuildInvoicePreview() {
-  if (!state.range || state.loading || state.pendingCount) return false;
+  if (!state.range || state.loading || state.stale || state.pendingCount) return false;
   $('invoice-billing-period').textContent = `Billing ${state.range.startDate} to ${state.range.endDate}`;
   const requestId = ++state.invoiceRequestId, filtered = invoiceFilteredRecords();
   updateInvoiceExtraHint();
@@ -559,7 +559,7 @@ function prepareInvoiceControls(filtered) {
 
 async function ensureReservedInvoice() {
   if (hasIncompleteInvoiceExtraLines()) throw new Error('Complete or remove unfinished additional lines before printing or saving.');
-  if (!state.invoice || state.loading || state.partial || state.pendingCount) throw new Error('Invoice preview is not ready.');
+  if (!state.invoice || state.loading || state.stale || state.partial || state.pendingCount) throw new Error('Invoice preview is not ready.');
   if (state.invoiceReservedSequence === null) {
     const requestId = state.invoiceRequestId, compositionKey = state.invoiceCompositionKey;
     const result = await send({ type: 'RESERVE_INVOICE_NUMBER' });
@@ -916,22 +916,10 @@ function render() {
   if (!state.loading) hideProgress();
 }
 
-async function loadRange(range) {
-  const requestId = ++state.requestId, reportingUtc = state.reportingUtc;
-  resetInvoiceReservation(); state.invoiceCompositionKey = '';
-  state.progressRequestId = requestId; state.progressValue = 0; state.pendingRange = range; state.loading = true; state.analyticsRequestId += 1; setError();
-  setDownloadsAvailable(false); setInvoiceActionsAvailable(false); setInvoiceAvailable(currentFilteredRecords()); renderRangeContext();
-  showProgress('Loading time data…', 10); $('setup').hidden = true;
-  try {
-    const result = await send({ type: 'LOAD_REPORT', payload: { startDate: range.startDate, endDate: range.endDate, reportingUtc, requestId } });
-    if (requestId !== state.requestId) return;
-    if (!result.configured) {
-      $('setup').hidden = false; $('period-card').hidden = true; $('report-content').hidden = true;
-      state.range = null; state.records = []; state.pendingCount = 0; $('pending-status').hidden = true; return;
-    }
-    showProgress('Preparing report…', 80);
+function applyReportResult(result, range, reportingUtc, { cached = false } = {}) {
     const firstLoad = !state.range;
-    state.range = range; state.pendingRange = null; state.loading = false; state.exchangeRates = null; state.exchangeKey = '';
+    state.range = range; state.pendingRange = null; state.loading = false; state.stale = cached;
+    state.exchangeRates = null; state.exchangeKey = '';
     // Project the reporting date once so billing and invoice consumers share the report basis.
     state.records = result.records.map(record => ({ ...record, entryDate: recordDate(record, reportingUtc) }));
     state.sourceRepository = result.sourceRepository; state.branch = result.branch;
@@ -961,7 +949,29 @@ async function loadRange(range) {
     }
     $('period-card').hidden = false;
     $('report-content').hidden = false; render();
-  } catch (error) { if (requestId === state.requestId) setError(error); }
+    if (cached) {
+      $('partial-status').hidden = false;
+      $('partial-status').textContent = `${$('partial-status').textContent} Previously loaded report; refreshing. Exports and invoices are unavailable until the refresh finishes.`.trim();
+      setDownloadsAvailable(false); setInvoiceAvailable(currentFilteredRecords()); setInvoiceActionsAvailable(false);
+    }
+}
+
+async function loadRange(range) {
+  const requestId = ++state.requestId, reportingUtc = state.reportingUtc;
+  resetInvoiceReservation(); state.invoiceCompositionKey = '';
+  state.progressRequestId = requestId; state.progressValue = 0; state.pendingRange = range; state.loading = true; state.stale = Boolean(state.range); state.analyticsRequestId += 1; setError();
+  setDownloadsAvailable(false); setInvoiceActionsAvailable(false); setInvoiceAvailable(currentFilteredRecords()); renderRangeContext();
+  showProgress(state.range ? 'Refreshing time data…' : 'Loading time data…', 10); $('setup').hidden = true;
+  try {
+    const result = await send({ type: 'LOAD_REPORT', payload: { startDate: range.startDate, endDate: range.endDate, reportingUtc, requestId } });
+    if (requestId !== state.requestId) return;
+    if (!result.configured) {
+      $('setup').hidden = false; $('period-card').hidden = true; $('report-content').hidden = true;
+      state.range = null; state.records = []; state.pendingCount = 0; state.stale = false; $('pending-status').hidden = true; return;
+    }
+    showProgress('Preparing report…', 80);
+    applyReportResult(result, range, reportingUtc);
+  } catch (error) { if (requestId === state.requestId) { setError(error); state.stale = Boolean(state.range); } }
   finally {
     if (requestId === state.requestId) {
       state.loading = false; state.pendingRange = null; renderRangeContext();
@@ -1058,11 +1068,11 @@ $('reset-filters').addEventListener('click', () => {
 $('setup-settings').addEventListener('click', () => send({ type: 'OPEN_OPTIONS' }));
 async function downloadTimesheet(format, event) {
   event.preventDefault();
-  if (state.loading || state.partial || state.pendingCount || !state.range) return;
+  if (state.loading || state.stale || state.partial || state.pendingCount || !state.range) return;
   const requestId = state.requestId;
   if (!(await pendingSafeForAction()) || requestId !== state.requestId) return;
   const filtered = filterReportRecords(state.records, selectedFilters());
-  if (state.loading || state.partial || state.pendingCount || !state.range || !filtered.length) return;
+  if (state.loading || state.stale || state.partial || state.pendingCount || !state.range || !filtered.length) return;
   const content = exportTimesheet(filtered, {
     format, startDate: state.range.startDate, endDate: state.range.endDate,
     clientRates: state.billing.clientRates, invoicing: state.billing.invoicing, rateClientId: state.rateClientId,
@@ -1079,10 +1089,10 @@ function pdfDocumentTitle() { return reportPdfTitle(state.range, state.people); 
 
 $('download-pdf').addEventListener('click', async event => {
   event.preventDefault();
-  if (state.loading || state.partial || state.pendingCount || $('download-pdf').classList.contains('disabled')) return;
+  if (state.loading || state.stale || state.partial || state.pendingCount || $('download-pdf').classList.contains('disabled')) return;
   const requestId = state.requestId;
   if (!(await pendingSafeForAction()) || requestId !== state.requestId
-      || state.loading || state.partial || state.pendingCount) return;
+      || state.loading || state.stale || state.partial || state.pendingCount) return;
   const previousTitle = document.title;
   document.title = pdfDocumentTitle();
   addEventListener('afterprint', () => { document.title = previousTitle; }, { once: true });
@@ -1091,10 +1101,10 @@ $('download-pdf').addEventListener('click', async event => {
 
 $('create-invoice').addEventListener('click', async event => {
   event.preventDefault();
-  if (state.loading || state.pendingCount || $('create-invoice').classList.contains('disabled')) return;
+  if (state.loading || state.stale || state.pendingCount || $('create-invoice').classList.contains('disabled')) return;
   const requestId = state.requestId;
   if (!(await pendingSafeForAction()) || requestId !== state.requestId
-      || state.loading || state.pendingCount || $('create-invoice').classList.contains('disabled')) return;
+      || state.loading || state.stale || state.pendingCount || $('create-invoice').classList.contains('disabled')) return;
   const filtered = currentFilteredRecords(); prepareInvoiceControls(filtered); $('print-invoice').replaceChildren(); $('invoice-dialog').showModal(); void rebuildInvoicePreview();
 });
 $('invoice-add-line').addEventListener('click', () => {
@@ -1184,8 +1194,22 @@ async function initializePeriod() {
     if (Number.isSafeInteger(preferences.revision) && preferences.revision >= 0) state.settingsRevision = preferences.revision;
     state.reportingUtc = preferences.reportingUtc === true; renderReportingBasis();
     const initial = { ...periodRange('last-week', reportToday()), preset: 'last-week' };
+    let range = initial;
     $('start-date').value = initial.startDate; $('end-date').value = initial.endDate;
-    await loadRange(initial);
+    try {
+      const cached = await send({ type: 'GET_CACHED_VIEW', kind: 'reports', range: {
+        startDate: initial.startDate, endDate: initial.endDate, reportingUtc: state.reportingUtc,
+      } });
+      if (cached?.configured && Array.isArray(cached.records)) {
+        if (cached.cachedRange) {
+          range = { ...cached.cachedRange, preset: 'custom' }; state.preset = 'custom';
+          $('start-date').value = range.startDate; $('end-date').value = range.endDate;
+        }
+        applyReportResult(cached, range, state.reportingUtc, { cached: true });
+        renderRangeContext();
+      }
+    } catch { /* a missing or unreadable snapshot must not block the live read */ }
+    await loadRange(range);
   } catch (error) { setError(error); hideProgress(); }
 }
 void initializePeriod();

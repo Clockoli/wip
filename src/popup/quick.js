@@ -136,6 +136,7 @@ function applyState(data, { replaceRecent = true } = {}) {
   };
 }
 function render() {
+  const scrollTop = root.querySelector('.quick-body')?.scrollTop || 0;
   const oldDescription = root.querySelector('.quick-description');
   const refocusDescription = document.activeElement === oldDescription;
   const selection = refocusDescription ? [oldDescription.selectionStart, oldDescription.selectionEnd] : null;
@@ -148,11 +149,12 @@ function render() {
   logo.alt = 'Clockoli';
   header.append(logo);
   root.append(header);
+  const content = el('div', null, 'quick-body');
 
   if (state.configured === null) {
-    root.append(el('p', 'Loading tracker…', 'quick-muted'));
+    content.append(el('p', 'Loading tracker…', 'quick-muted'));
   } else if (!state.configured) {
-    root.append(el('div', 'Connect a time repository to start tracking.', 'quick-muted'),
+    content.append(el('div', 'Connect a time repository to start tracking.', 'quick-muted'),
       button('Set up Clockoli', 'quick-button quick-button-primary quick-button-wide', () => send({ type: 'OPEN_OPTIONS' }).catch(showError)));
   } else {
     const active = state.active;
@@ -229,7 +231,7 @@ function render() {
       start.disabled = blocked() || !currentPage;
       card.append(start);
     }
-    root.append(card);
+    content.append(card);
     updateDescriptionControls();
 
     const section = el('section');
@@ -257,14 +259,16 @@ function render() {
       list.append(row);
     }
     section.append(list);
-    root.append(section);
+    content.append(section);
   }
 
   if (message) {
     const notice = el('div', message, 'quick-error');
     notice.setAttribute('role', 'alert');
-    root.append(notice);
+    content.append(notice);
   }
+  root.append(content);
+  content.scrollTop = scrollTop;
   const footer = el('footer', null, 'quick-footer');
   footer.append(button('Open Activity in a new tab ↗', 'quick-button', () => send({ type: 'OPEN_TIMES' }).catch(showError)));
   root.append(footer);

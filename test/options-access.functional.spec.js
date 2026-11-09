@@ -18,6 +18,8 @@ globalThis.expired = false;
 globalThis.reauthorizedExternally = false;
 globalThis.accessStillRejected = false;
 globalThis.silentPromotion = false;
+globalThis.removalMode = 'denied';
+globalThis.removedCollaborator = false;
 const originalAccessExpiry = Date.now() - 60_000;
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   globalThis.requests.push(message.type);
@@ -33,6 +35,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'POLL_DEVICE_FLOW' && globalThis.rejectNextPoll) {
     globalThis.deviceAttempt = null;
     sendResponse({ ok: false, error: { code: 'invalid_device_flow', message: 'GitHub rejected this Clockoli authorization attempt. Start again.' } });
+    return;
+  }
+  if (message.type === 'REMOVE_REPOSITORY_USER') {
+    if (globalThis.removalMode === 'denied') {
+      sendResponse({ ok: false, error: { message: 'GitHub denied removing this collaborator' } });
+    } else {
+      globalThis.removedCollaborator = globalThis.removalMode === 'removed';
+      sendResponse({ ok: true, data: { status: 'removed', login: 'Member' } });
+    }
     return;
   }
   if (message.type === 'GET_ONBOARDING_STATE' && globalThis.failNextOnboardingRead) {
@@ -78,8 +89,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         { taskUrl: 'https://github.com/acme/app/issues/6', title: 'Tracked issue', destinationIds: ['github:20'] },
       ], currentUsers: { 'github:20': 'octocat' }, availableUsers: ['octocat'],
     },
+    CHECK_REPOSITORY_INVITE_ACCESS: { canInvite: true },
     LOAD_REPOSITORY_COLLABORATORS: {
-      users: [{ id: 42, login: 'Member', avatarUrl: null }], hasMore: true,
+      users: globalThis.removedCollaborator ? [] : [{ id: 42, login: 'Member', avatarUrl: null }],
+      hasMore: !globalThis.removedCollaborator,
+      moreUsers: globalThis.removedCollaborator ? [] : [{ id: 44, login: 'OtherMember', avatarUrl: null }],
       avatarUsers: [{ login: 'Member', avatarUrl: null },
         { login: 'octocat', avatarUrl: 'https://avatars.githubusercontent.com/u/43?v=4' }],
       pendingUsers: [], pendingHasMore: false,
@@ -336,6 +350,29 @@ async function expectReadOnlyRequests(worker) {
   ].includes(type)), `Unexpected request types: ${requests.join(', ')}`).toBe(true);
 }
 
+test('Disconnect repository clearly explains browser-local effects and Cancel leaves the connection intact', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, worker } = fixture;
+    const repository = page.locator('.time-repository').first();
+    await repository.locator(':scope > summary').click();
+    const repositoryName = await repository.locator('.repository-card-heading h3').textContent();
+    await repository.locator('.remove-destination').click();
+    const confirmation = repository.locator('.repository-removal');
+    await expect(confirmation).toBeVisible();
+    await expect(confirmation.locator('h4')).toHaveText('Disconnect time repository?');
+    await expect(confirmation.locator('.repository-removal-name strong')).toHaveText(repositoryName);
+    await expect(confirmation).toContainText('This will remove the repository from Clockoli in this browser.');
+    await expect(confirmation).toContainText("Your tracked time and GitHub repository will not be deleted. Other team members won't be affected.");
+    await expect(confirmation).toContainText('You can reconnect this repository later.');
+    await expect(confirmation.getByRole('button', { name: 'Disconnect repository' })).toBeVisible();
+    await confirmation.getByRole('button', { name: 'Cancel' }).click();
+    await expect(confirmation).toBeHidden();
+    await expect(repository).toHaveAttribute('open', '');
+    expect(await worker.evaluate(() => globalThis.requests)).not.toContain('REMOVE_DESTINATION');
+  } finally { await closeOptions(fixture); }
+});
+
 test('repository disclosures rotate in Chromium and remain usable at narrow widths', async () => {
   const fixture = await openOptions();
   try {
@@ -432,21 +469,99 @@ test('repository field checks only on explicit Check or Enter, with visible acti
   } finally { await closeOptions(fixture); }
 });
 
-test('repository avatar menu closes on outside click without requesting access removal', async () => {
+test('Copy invitation link and switching browser tabs preserve the expanded repository and teammate controls', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, context } = fixture;
+    const repository = page.locator('.time-repository').first();
+    await repository.locator(':scope > summary').click();
+    await repository.locator('.repository-add-teammate').click();
+    const invitation = repository.locator('.teammate-instructions');
+    await expect(invitation.getByRole('button', { name: 'Send invitation to the repository' })).toBeVisible();
+    await expect(invitation).toBeVisible();
+    await expect(invitation).toHaveAttribute('open', '');
+    await invitation.locator('.teammate-setup > summary').click();
+    const copy = invitation.getByRole('button', { name: 'Copy Clockoli invitation message' });
+    await expect(copy).toBeVisible();
+    await expect(invitation.getByRole('button', { name: 'Copy instructions' })).toHaveCount(0);
+    await copy.click();
+    await expect(invitation.locator('.teammate-invitation-link .form-feedback')).not.toBeEmpty();
+    await expect(repository).toHaveAttribute('open', '');
+    await expect(invitation).toHaveAttribute('open', '');
+    const other = await context.newPage();
+    await other.goto('about:blank');
+    await page.bringToFront();
+    await expect(repository).toHaveAttribute('open', '');
+    await expect(invitation).toBeVisible();
+    await expect(invitation.locator('.teammate-setup')).toHaveAttribute('open', '');
+    await other.close();
+  } finally { await closeOptions(fixture); }
+});
+
+test('More collaborators expands the additional GitHub accounts in Settings', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page } = fixture;
+    const repository = page.locator('.time-repository').first();
+    await repository.locator(':scope > summary').click();
+    const more = repository.locator('.repository-collaborator-more');
+    await expect(more.locator('summary')).toContainText('More collaborators');
+    await expect(more).not.toHaveAttribute('title');
+    await more.locator('summary').click();
+    await expect(more).toHaveAttribute('open', '');
+    await expect(more.locator('.repository-team-member-identity strong')).toHaveText('@OtherMember');
+    await expect(more.locator('.repository-member-actions-button')).toHaveCount(1);
+  } finally { await closeOptions(fixture); }
+});
+
+test('Team member menu closes on outside click without requesting access removal', async () => {
   const fixture = await openOptions();
   try {
     const { page } = fixture;
     const row = page.locator('.time-repository').first();
-    const avatar = row.locator('.repository-collaborator').first();
-    const menu = row.locator('.repository-avatar-actions');
-    await avatar.click();
-    await expect(avatar).toHaveAttribute('aria-expanded', 'true');
+    await row.locator('.repository-heading-title').click();
+    const trigger = row.locator('.repository-member-actions-button').first();
+    const menu = row.locator('.repository-collaborators > .repository-team-member .repository-avatar-actions');
+    await trigger.click();
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true');
     await expect(menu).toBeVisible();
     await page.locator('#connection-title').click();
     await expect(menu).toBeHidden();
-    await expect(avatar).toHaveAttribute('aria-expanded', 'false');
-    await expect(row).not.toHaveAttribute('open', '');
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    await expect(row).toHaveAttribute('open', '');
     await expectReadOnlyRequests(fixture.worker);
+  } finally { await closeOptions(fixture); }
+});
+
+test('Remove teammate reports GitHub failures and inherited access next to the team, then updates the roster', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, worker } = fixture;
+    const row = page.locator('.time-repository').first();
+    await row.locator(':scope > summary').click();
+    const menu = row.locator('.repository-collaborators > .repository-team-member .repository-member-actions-button');
+    const feedback = row.locator('.repository-team > .repository-manage-feedback');
+    await menu.click();
+    page.once('dialog', dialog => dialog.accept());
+    await row.getByRole('button', { name: 'Remove @Member' }).click();
+    await expect(feedback).toBeVisible();
+    await expect(feedback).toContainText('GitHub denied removing this collaborator');
+    await expect(row.locator('.repository-collaborators > .repository-team-member')).toHaveCount(1);
+
+    await worker.evaluate(() => { globalThis.removalMode = 'retained'; });
+    page.once('dialog', dialog => dialog.accept());
+    await row.getByRole('button', { name: 'Remove @Member' }).click();
+    await expect(feedback).toContainText('still have repository access');
+    await expect(feedback).toHaveClass(/warning/);
+    await expect(row.locator('.repository-collaborators > .repository-team-member')).toHaveCount(1);
+
+    await worker.evaluate(() => { globalThis.removalMode = 'removed'; });
+    await menu.click();
+    page.once('dialog', dialog => dialog.accept());
+    await row.getByRole('button', { name: 'Remove @Member' }).click();
+    await expect(feedback).toContainText('removed from the repository');
+    await expect(feedback).toHaveClass(/success/);
+    await expect(row.locator('.repository-collaborators > .repository-team-member')).toHaveCount(0);
   } finally { await closeOptions(fixture); }
 });
 

@@ -34,11 +34,12 @@ import { ExchangeRateService } from '../services/exchange-rates.js';
 import { TaskMetadataService } from '../services/task-metadata.js';
 import { mergeTaskCatalogIndexes, taskCandidates } from '../services/task-catalog.js';
 import { InstallationDiscoveryService, RepositoryInitializer } from '../services/github-app-onboarding.js';
+import { readyRepositoryMemberIds } from '../services/repository-team-status.js';
 import { OnboardingCoordinator } from '../services/onboarding-coordinator.js';
 import { RepositoryInvitationService } from '../services/repository-invitations.js';
 import { withRepositoryRecovery } from '../services/repository-operation-recovery.js';
 import { discoverUserStorageBranches } from '../services/user-storage-branch.js';
-import { addTimeForSender, assertMessageAllowed, dayRangeForSender, destinationIdForCompletedMutation, entryTaskSearchForSender, requestedStartDestinationId, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch, weekRangeForSender } from './message-policy.js';
+import { addTimeForSender, assertMessageAllowed, cachedViewRequest, dayRangeForSender, destinationIdForCompletedMutation, entryTaskSearchForSender, requestedStartDestinationId, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch, weekRangeForSender } from './message-policy.js';
 import { activeDestinationId, requireConfiguredDestinationId, resolveStartDestinationId, selectReadDestinations, syncPendingAll } from './destination-runtime.js';
 import { emitClockifyMigrationProgress, isClockifyProgressRequestId, registerClockifyMigrationProgressPort } from './clockify-migration-progress.js';
 import { SerialExecutor } from './serial-executor.js';
@@ -261,9 +262,9 @@ async function checkCurrentRepositoryAccess(destinationId = null) {
   };
 }
 
-async function repositoryInvitationService(destinationId, { measureMigration = false } = {}) {
+async function repositoryInvitationService(destinationId, { measureMigration = false, localOnly = false } = {}) {
   const id = await requireConfiguredDestinationId(store, destinationId);
-  const { config, auth } = await configuredSnapshot({ destinationId: id, measureMigration });
+  const { config, auth } = await configuredSnapshot({ destinationId: id, measureMigration, localOnly });
   if (!config || auth?.mode !== 'github_app' || !Number.isSafeInteger(config.repoId)) {
     throw new Error('Invite teammates only from a connected GitHub App time repository.');
   }
@@ -312,6 +313,33 @@ function emitReportProgress(requestId, progress) {
   try { chrome.runtime.sendMessage({ type: 'REPORT_PROGRESS', requestId, ...progress }, () => void chrome.runtime.lastError); } catch {}
 }
 
+function pageSnapshotScope(snapshot, range, kind) {
+  return { generation: snapshot.generation, authGeneration: snapshot.authGeneration,
+    startDate: range.startDate, endDate: range.endDate,
+    ...(kind === 'reports' ? { reportingUtc: range.reportingUtc === true } : {}) };
+}
+
+async function cachedPageView(message, sender, extensionOrigin) {
+  const { kind, range } = cachedViewRequest(message, sender, extensionOrigin);
+  const snapshot = await configuredSnapshot({ localOnly: true });
+  if (!snapshot.auth || !Object.keys(snapshot.registry?.destinations ?? {}).length) return null;
+  const view = await store.getPageSnapshot(kind, pageSnapshotScope(snapshot, range, kind), { allowDifferentRange: kind === 'reports' });
+  if (!view) return null;
+  if (kind === 'tasks') {
+    const local = await globalTrackerState();
+    return { ...view, active: local.active, pendingWrites: local.pendingWrites,
+      tasks: view.tasks.map(task => ({ ...task, activeStartedAt: task.taskUrl === local.active?.taskUrl
+        && (!task.destinationId || task.destinationId === local.active?.destinationId) ? local.active.startedAt : null })) };
+  }
+  const tracking = await store.getTrackingSnapshot();
+  const pendingWrites = Object.entries(tracking.destinationStates?.entries ?? {}).flatMap(([destinationId, entry]) =>
+    (entry.pendingWrites ?? []).map(({ operation, status, stage, conflictReason }) => ({
+      destinationId, operation, status, stage, ...(conflictReason ? { conflictReason } : {}),
+    })));
+  return { ...view, pendingWrites, pendingCount: pendingWrites.length,
+    partial: view.partial || pendingWrites.length > 0, billing: await store.getLocalPreferences() };
+}
+
 function broadcastLocalPreferencesChanged(revision) {
   try { chrome.runtime.sendMessage({ type: 'LOCAL_PREFERENCES_CHANGED', revision }, () => void chrome.runtime.lastError); }
   catch { /* no open extension surface */ }
@@ -330,6 +358,7 @@ async function loadExchangeRates(message) {
 }
 
 async function loadReport(message) {
+  const startedAt = Date.now();
   const loadEpoch = await loadCoordinator.beginLoad();
   await store.ensureDataVersion(5);
   loadCoordinator.assertCurrent(loadEpoch);
@@ -378,7 +407,12 @@ async function loadReport(message) {
     };
   })();
   reportLoads.set(loadKey, { controller, promise });
-  try { return await promise; }
+  try {
+    const result = await promise;
+    if (result.configured && !message.payload?.destinationIds) await store.savePageSnapshot('reports', pageSnapshotScope(snapshot, message.payload || {}, 'reports'), result, startedAt)
+      .catch(() => { /* caching is optional; never discard a completed read */ });
+    return result;
+  }
   finally { if (reportLoads.get(loadKey)?.promise === promise) reportLoads.delete(loadKey); }
 }
 
@@ -491,6 +525,7 @@ async function loadTimes(message, sender) {
 }
 
 async function loadTasks(message, sender) {
+  const startedAt = Date.now();
   const loadEpoch = await loadCoordinator.beginLoad();
   await store.ensureDataVersion(5);
   loadCoordinator.assertCurrent(loadEpoch);
@@ -563,7 +598,13 @@ async function loadTasks(message, sender) {
     };
   })();
   reportLoads.set(loadKey, { controller, promise });
-  try { return await promise; }
+  try {
+    const result = await promise;
+    if (result.configured && !message.payload?.destinationIds && !message.payload?.includeAllUsers && !message.payload?.selectedUsers)
+      await store.savePageSnapshot('tasks', pageSnapshotScope(snapshot, message.payload || {}, 'tasks'), result, startedAt)
+        .catch(() => { /* caching is optional; never discard a completed read */ });
+    return result;
+  }
   finally { if (reportLoads.get(loadKey)?.promise === promise) reportLoads.delete(loadKey); }
 }
 
@@ -1011,6 +1052,10 @@ async function handle(message, sender) {
     else await openTimesPage();
     return { ok: true };
   }
+  if (message.type === 'OPEN_PREFERRED_SURFACE') {
+    await openPreferredSurfaceFromGitHub(sender);
+    return { ok: true };
+  }
   if (message.type === 'GET_ONBOARDING_STATE') return onboardingState();
   if (message.type === 'START_DEVICE_FLOW') return deviceFlow().start();
   if (message.type === 'OPEN_DEVICE_FLOW_PAGE') {
@@ -1042,18 +1087,27 @@ async function handle(message, sender) {
   if (message.type === 'LOAD_REPOSITORY_COLLABORATORS') {
     if (Object.keys(message).length !== 2 || typeof message.destinationId !== 'string') throw new Error('Invalid collaborator request');
     const destinationId = await requireConfiguredDestinationId(store, message.destinationId);
-    const { config, auth } = await configuredSnapshot({ destinationId });
+    const { config, auth } = await configuredSnapshot({ destinationId, localOnly: true });
     if (!config || !auth) throw new Error('Connect a time repository before viewing collaborators.');
     const github = githubForConfig(config);
     await github.assertDestinationReachable();
     const collaborators = await github.listRepositoryCollaborators();
+    const readyUserIds = await readyRepositoryMemberIds(github, config.defaultBranch, collaborators.users);
     try {
       const pending = await github.listRepositoryPendingInvitations();
-      return { ...collaborators, pendingUsers: pending.users, pendingHasMore: pending.hasMore,
+      return { ...collaborators, readyUserIds, pendingUsers: pending.users, pendingHasMore: pending.hasMore,
+        ...(pending.moreUsers ? { pendingMoreUsers: pending.moreUsers } : {}),
+        ...(pending.truncated ? { pendingTruncated: true } : {}),
         ...(pending.incomplete ? { pendingUnavailable: true } : {}) };
     } catch {
-      return { ...collaborators, pendingUnavailable: true };
+      return { ...collaborators, readyUserIds, pendingUnavailable: true };
     }
+  }
+  if (message.type === 'CHECK_REPOSITORY_INVITE_ACCESS') {
+    if (Object.keys(message).length !== 2 || typeof message.destinationId !== 'string') throw new Error('Invalid invitation access check');
+    const invitation = await repositoryInvitationService(message.destinationId, { localOnly: true });
+    await invitation.assertAdminAccess();
+    return { canInvite: true };
   }
   if (message.type === 'SEARCH_INVITEE_USERS' || message.type === 'INVITE_REPOSITORY_USER') {
     const payload = message.payload;
@@ -1064,7 +1118,7 @@ async function handle(message, sender) {
         || (message.type === 'INVITE_REPOSITORY_USER' && (!Number.isSafeInteger(payload.userId) || payload.userId <= 0))) {
       throw new Error('Invalid teammate request');
     }
-    const invitation = await repositoryInvitationService(payload.destinationId);
+    const invitation = await repositoryInvitationService(payload.destinationId, { localOnly: message.type === 'SEARCH_INVITEE_USERS' });
     return message.type === 'SEARCH_INVITEE_USERS'
       ? { users: await invitation.search(payload.query) } : invitation.invite(payload.login, payload.userId);
   }
@@ -1350,6 +1404,7 @@ async function handle(message, sender) {
   }
   if (message.type === 'CANCEL_REPORT') { await cancelReports('reports'); return { cancelled: true }; }
   if (message.type === 'LOAD_REPORT') return loadReport(message);
+  if (message.type === 'GET_CACHED_VIEW') return cachedPageView(message, sender, extensionOrigin);
   if (message.type === 'LOAD_TASK_PARTICIPANTS') return loadTaskParticipants(message, sender, extensionOrigin);
   if (message.type === 'GET_EXCHANGE_RATES') return loadExchangeRates(message);
   if (message.type === 'LOAD_TASKS') return loadTasks(message, sender);
@@ -1683,7 +1738,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'LOCAL_PREFERENCES_CHANGED' || message?.type === 'TOOLBAR_CONTEXT_UPDATED') return undefined;
   const reportReadOnly = ['LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'CANCEL_REPORT', 'GET_EXCHANGE_RATES'].includes(message?.type);
   const localStateRead = ['GET_STATE', 'GET_PAGE_STATE'].includes(message?.type) && !message?.refresh;
-  const readOnly = reportReadOnly || localStateRead || ['LOAD_TASKS', 'LOAD_TIMES', 'GET_STOPPED_OVERLAP', 'SEARCH_TASKS', 'SEARCH_ENTRY_TASKS', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES', 'GET_ADDON_SETTINGS', 'GET_CLOCKIFY_MIGRATION_PREVIEW', 'SEARCH_INVITEE_USERS', 'SEARCH_CLOCKIFY_GITHUB_USERS', 'LOAD_REPOSITORY_COLLABORATORS'].includes(message?.type);
+  const readOnly = reportReadOnly || localStateRead || ['GET_CACHED_VIEW', 'LOAD_TASKS', 'LOAD_TIMES', 'GET_STOPPED_OVERLAP', 'SEARCH_TASKS', 'SEARCH_ENTRY_TASKS', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES', 'GET_ADDON_SETTINGS', 'GET_CLOCKIFY_MIGRATION_PREVIEW', 'SEARCH_INVITEE_USERS', 'SEARCH_CLOCKIFY_GITHUB_USERS', 'LOAD_REPOSITORY_COLLABORATORS'].includes(message?.type);
   const changesConfiguration = ['SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'IMPORT_SETTINGS', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION', 'INVITE_REPOSITORY_USER'].includes(message?.type);
   let operation;
   if (changesConfiguration) {
@@ -1693,7 +1748,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     } catch (error) { operation = Promise.reject(error); }
   } else {
     const direct = readOnly || DIRECT_DEVICE_FLOW_MESSAGES.has(message?.type) || message?.type === 'CONFIRM_CLOCKIFY_MIGRATION'
-      || ['OPEN_OPTIONS', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'CONSUME_TOOLBAR_TASK_CONTEXT'].includes(message?.type)
+      || ['OPEN_OPTIONS', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_PREFERRED_SURFACE', 'CONSUME_TOOLBAR_TASK_CONTEXT'].includes(message?.type)
       || ['CLOCKIFY_ARM_CAPTURE', 'CLOCKIFY_ARM_CSV_CAPTURE', 'CLOCKIFY_IS_CAPTURE_ARMED', 'CLOCKIFY_DISARM_CAPTURE', 'CLOCKIFY_YEAR_OBSERVED', 'CLOCKIFY_CAPTURED_CSV', 'CLOCKIFY_CAPTURED_REPORT', 'CLOCKIFY_CSV_EMAIL_OFFER'].includes(message?.type);
     const acceptsLocally = [
       'START', 'STOP', 'SWITCH_TASK', 'DISCARD_ACTIVE', 'ADD_TIME', 'ADD_DAY_RANGE', 'BULK_ADD_TIMES',
@@ -1961,6 +2016,29 @@ async function openActivityFromTab(tab) {
 }
 
 async function toggleActionSurface(tab) {
+  return openActivityFromTab(tab);
+}
+
+async function openPreferredSurfaceFromGitHub(sender) {
+  // Never trust request-supplied task URLs. Both sender URLs are browser-provided.
+  const tab = sender?.tab;
+  if (!tab || !/^https:\/\/github\.com(?:\/|$)/.test(sender.url || '')
+      || !/^https:\/\/github\.com(?:\/|$)/.test(tab.url || '')) {
+    throw new Error('The toolbar shortcut requires a GitHub page');
+  }
+  const mode = await store.getToolbarClickMode();
+  if (mode === 'popup') {
+    if (await shouldOpenOnboarding()) return chrome.runtime.openOptionsPage();
+    try {
+      // Chrome 127+ supports opening the action popup; older browsers use Activity.
+      await applyToolbarClickMode('popup');
+      if (typeof chrome.action.openPopup !== 'function') throw new Error('Action popup API unavailable');
+      await chrome.action.openPopup(Number.isInteger(tab.windowId) ? { windowId: tab.windowId } : {});
+      return;
+    } catch (error) {
+      console.warn('Could not open Clockoli quick popup; opening Activity instead.', error);
+    }
+  }
   return openActivityFromTab(tab);
 }
 

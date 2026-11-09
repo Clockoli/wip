@@ -3,7 +3,7 @@ import { normalizeIssue, normalizeStoredTaskIdentity, normalizeTaskUrl, parseGit
 const CONTENT_MESSAGES = new Set([
   'GET_PAGE_STATE', 'LOAD_TASK_PARTICIPANTS', 'START', 'SWITCH_TASK', 'STOP', 'DISCARD_ACTIVE', 'LOAD_RECENT', 'LOAD_WEEK', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRY_DELETE', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT',
   'SEARCH_ENTRY_TASKS',
-  'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_OPTIONS',
+  'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_PREFERRED_SURFACE', 'OPEN_OPTIONS',
   'SET_ACTION_ICON_FRAME',
   'GET_ACTIVITY_VIEW_MODE', 'SET_ACTIVITY_VIEW_MODE',
 ]);
@@ -16,10 +16,10 @@ const EXTENSION_MESSAGES = new Set([
   'GET_STATE', 'GET_PAGE_STATE', 'START', 'SWITCH_TASK', 'STOP', 'DISCARD_ACTIVE', 'LOAD_RECENT', 'LOAD_WEEK', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRY_DELETE', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT',
   'DELETE_ENTRY', 'RESOLVE_PENDING', 'GET_STOPPED_OVERLAP', 'RESOLVE_STOPPED_OVERLAP', 'DELETE_STOPPED_OVERLAP', 'SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'SET_QUEUE_DIAGNOSTICS', 'SET_INTERFACE_WIDTH', 'SET_TOOLBAR_CLICK_MODE', 'GET_LOCAL_PREFERENCES',
   'GET_ACTIVITY_VIEW_MODE', 'SET_ACTIVITY_VIEW_MODE',
-  'SAVE_BILLING_SETTINGS', 'RESERVE_INVOICE_NUMBER', 'EXPORT_SETTINGS', 'MARK_SETTINGS_EXPORTED', 'IMPORT_SETTINGS', 'LOAD_REPORT', 'GET_EXCHANGE_RATES',
+  'SAVE_BILLING_SETTINGS', 'RESERVE_INVOICE_NUMBER', 'EXPORT_SETTINGS', 'MARK_SETTINGS_EXPORTED', 'IMPORT_SETTINGS', 'LOAD_REPORT', 'GET_CACHED_VIEW', 'GET_EXCHANGE_RATES',
   'LOAD_TASKS', 'LOAD_TIMES', 'SEARCH_ACTIVITY', 'SEARCH_TASKS', 'BULK_ADD_TIMES', 'ADD_TIME', 'ADD_DAY_RANGE', 'CANCEL_REPORT', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_OPTIONS', 'GET_ONBOARDING_STATE',
   'START_DEVICE_FLOW', 'OPEN_DEVICE_FLOW_PAGE', 'RESUME_DEVICE_FLOW', 'POLL_DEVICE_FLOW', 'CANCEL_DEVICE_FLOW',
-  'CANCEL_GITHUB_APP_SETUP', 'DISCOVER_REPOSITORIES', 'INSPECT_REPOSITORY', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'SEARCH_INVITEE_USERS', 'INVITE_REPOSITORY_USER', 'REMOVE_REPOSITORY_USER', 'LOAD_REPOSITORY_COLLABORATORS',
+  'CANCEL_GITHUB_APP_SETUP', 'DISCOVER_REPOSITORIES', 'INSPECT_REPOSITORY', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'CHECK_REPOSITORY_INVITE_ACCESS', 'SEARCH_INVITEE_USERS', 'INVITE_REPOSITORY_USER', 'REMOVE_REPOSITORY_USER', 'LOAD_REPOSITORY_COLLABORATORS',
   'CLEAR_LOCAL_CONFIGURATION', 'MERGE_TASKS', 'GET_ADDON_SETTINGS', 'SET_ADDON_ENABLED',
   'GET_CLOCKIFY_MIGRATION_PREVIEW', 'GET_CLOCKIFY_MIGRATION_SUGGESTIONS', 'SEARCH_CLOCKIFY_GITHUB_USERS', 'CONFIRM_CLOCKIFY_MIGRATION', 'RESTORE_CLOCKIFY_MIGRATION_PREVIEW', 'INVITE_MIGRATED_USER',
   'CLEANUP_CLOCKIFY_TEST_IMPORTS', 'DELETE_ALL_CLOCKOLI_RECORDS',
@@ -52,6 +52,24 @@ export function assertMessageAllowed(type, sender, extensionOrigin) {
       : context.kind === 'clockify' ? CLOCKIFY_MESSAGES : new Set();
   if (!allowed.has(type)) throw new Error(`Message ${type} is not allowed from this sender`);
   return context.kind;
+}
+
+export function cachedViewRequest(message, sender, extensionOrigin) {
+  assertMessageAllowed('GET_CACHED_VIEW', sender, extensionOrigin);
+  const kind = message?.kind;
+  const page = kind === 'reports' ? 'reports' : kind === 'tasks' ? 'tasks' : '';
+  if (!page || sender?.url !== `${extensionOrigin}src/${page}/${page}.html`
+      || !message.range || typeof message.range !== 'object' || Array.isArray(message.range)
+      || Object.keys(message).sort().join(',') !== 'kind,range,type'
+      || Object.keys(message.range).sort().join(',') !== (kind === 'reports' ? 'endDate,reportingUtc,startDate' : 'endDate,startDate')
+      || (kind === 'reports' && typeof message.range.reportingUtc !== 'boolean')) throw new Error('Invalid cached view request');
+  for (const date of [message.range.startDate, message.range.endDate]) {
+    if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)
+        || !Number.isFinite(Date.parse(`${date}T00:00:00Z`))
+        || new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date) throw new Error('Invalid cached view date');
+  }
+  if (message.range.endDate < message.range.startDate) throw new Error('Invalid cached view range');
+  return { kind, range: message.range };
 }
 
 export function weekRangeForSender(payload, sender, extensionOrigin) {
