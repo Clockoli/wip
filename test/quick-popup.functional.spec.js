@@ -71,6 +71,9 @@ test('toolbar quick popup stays minimal and uses the shared tracker commands', a
     const root = page.locator('#quick-popup');
 
     await expect(root.locator('.quick-logo')).toBeVisible();
+    const initialSize = await root.evaluate(node => node.getBoundingClientRect().height);
+    expect(initialSize).toBeGreaterThanOrEqual(500);
+    await expect(root.getByRole('button', { name: 'Open Activity in a new tab' })).toBeInViewport();
     await expect(root.getByText('Quick tracker', { exact: true })).toHaveCount(0);
     await expect(root.getByText('Not tracking', { exact: true })).toHaveCount(0);
     await expect(root.getByRole('button', { name: 'Start tracking this page' })).toBeDisabled();
@@ -124,7 +127,10 @@ test('toolbar quick popup stays minimal and uses the shared tracker commands', a
     const stop = (await worker.evaluate(() => globalThis.quickCalls)).find(call => call.type === 'STOP');
     expect(stop).toEqual({ type: 'STOP', description: 'Saved with the button' });
     expect(await worker.evaluate(() => recent[0].description)).toBe('Saved with the button');
+    // Simulate a shorter container while keeping the real popup's explicit height
+    // (Chrome's action popup auto-sizes to that height at first open).
     await page.setViewportSize({ width: 390, height: 320 });
+    await page.addStyleTag({ content: '#quick-popup { height: 320px !important; }' });
     const listScroll = root.locator('.quick-body');
     await expect(root.getByRole('button', { name: 'Open Activity in a new tab' })).toBeInViewport();
     await expect.poll(() => listScroll.evaluate(node => node.scrollHeight > node.clientHeight)).toBe(true);
