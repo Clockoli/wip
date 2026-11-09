@@ -367,7 +367,7 @@ function renderTeammatePicker(details, destination, article) {
           : result.status === 'read_only_access' ? `@${result.login} has read-only access. Grant write access on GitHub before they join Clockoli.`
           : `@${result.login} already has repository access.`;
       feedback.className = result.status === 'read_only_access' ? 'teammate-feedback form-feedback error' : 'teammate-feedback form-feedback success';
-      completed = true;
+      completed = result.status !== 'read_only_access';
       if (result.status === 'invited' || result.status === 'already_invited') {
         await loadRepositoryCollaborators(article, destination, $('time-repository-list'));
       }
