@@ -114,3 +114,57 @@ test('user storage discovery reads independent branch metadata concurrently', as
   assert.equal(users.length, 3);
   assert.equal(maxActive, 2, 'metadata reads must be concurrent without exceeding the configured cap');
 });
+
+test('task catalog discovery skips unchanged verified users and pins changed metadata to the branch SHA', async () => {
+  let headSha = 'a'.repeat(40), storedHead = headSha, storedUser = { id: 1, login: 'alice' };
+  const reads = [];
+  const github = {
+    listBranchesWithSha: async () => [{ branch: 'clockoli/users/1', headSha }],
+    listBranches: async () => { throw new Error('The optimized path should list commit SHAs'); },
+    forBranch: branch => ({
+      repositoryKey: `acme/time@${branch}`,
+      getText: async (path, { ref } = {}) => {
+        reads.push({ path, ref });
+        return { text: userBranchMetadataText({ id: 1, login: 'alice' }) };
+      },
+    }),
+  };
+  const cache = { getReportCache: async () => ({
+    catalog: { headSha: storedHead, user: storedUser },
+  }) };
+  const first = await discoverUserStorageBranches(github, { cache });
+  assert.equal(first[0].headSha, headSha);
+  assert.equal(first[0].login, 'alice');
+  assert.equal(reads.length, 0, 'an unchanged verified branch must not reread user.json');
+
+  headSha = 'b'.repeat(40);
+  const changed = await discoverUserStorageBranches(github, { cache });
+  assert.equal(changed[0].login, 'alice');
+  assert.deepEqual(reads, [{ path: '.clockoli/user.json', ref: headSha }],
+    'changed branch metadata must be read from the discovered immutable commit');
+
+  storedHead = headSha;
+  storedUser = { id: 2, login: 'bob' };
+  await assert.rejects(() => discoverUserStorageBranches(github, { cache }),
+    /branch name does not match/i, 'a cached identity cannot impersonate a different personal branch');
+});
+
+test('unvalidated cached task catalog metadata cannot bypass branch ownership checks', async () => {
+  const headSha = 'a'.repeat(40);
+  let reads = 0;
+  const github = {
+    listBranchesWithSha: async () => [{ branch: 'clockoli/users/1', headSha }],
+    forBranch: () => ({
+      repositoryKey: 'acme/time@clockoli/users/1',
+      getText: async () => {
+        reads++;
+        return { text: userBranchMetadataText({ id: 1, login: 'alice' }) };
+      },
+    }),
+  };
+  const cache = { getReportCache: async () => ({
+    catalog: { headSha, user: { id: '1', login: 'alice' } },
+  }) };
+  assert.equal((await discoverUserStorageBranches(github, { cache }))[0].login, 'alice');
+  assert.equal(reads, 1, 'malformed cached metadata must be reverified against GitHub');
+});
