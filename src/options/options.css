@@ -128,3 +128,5 @@ select{appearance:none;padding-right:32px;background-image:url("data:image/svg+x
 .repository-team .repository-manage-feedback.success{border-left-color:var(--fgColor-open)}
 .repository-team .repository-manage-feedback.warning{border-left-color:var(--fgColor-attention,#9a6700)}
 .repository-team .repository-manage-feedback.error{border-left-color:var(--fgColor-danger)}
+
+.repository-team .repository-manage-feedback a{display:block;margin-top:6px}
