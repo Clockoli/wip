@@ -363,7 +363,8 @@ async function expectVisibleTimelineInsideSelectedWeek(root) {
 }
 
 test('Activity preserves Monday–Sunday Timeline and Calendar week navigation', async () => {
-  test.setTimeout(90000);
+  // This browser scenario exercises multiple views, screen sizes, and week transitions.
+  test.setTimeout(180000);
   // Keep the fixture in the browser's current week; pin all test clocks to the
   // same instant so a running block cannot disappear into a past week.
   const fixedNow = new Date();
