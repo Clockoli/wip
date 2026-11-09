@@ -804,7 +804,7 @@ test('query/hash churn cannot trigger authenticated GitHub refreshes', async () 
   assert.equal(actions.children.at(-1), avatarSlot);
   await trigger.onclick({ isTrusted: true });
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.ok(messages.some(message => message.type === 'OPEN_TIMES'), 'the GitHub icon opens Activity');
+  assert.ok(messages.some(message => message.type === 'OPEN_PREFERRED_SURFACE'), 'the GitHub icon follows the configured click behavior');
   assert.equal(document.getElementById('clockoli-full-width-popup-root'), null, 'no on-page panel is created');
   assert.equal(messages.some(message => message.type === 'START'), false, 'opening Activity does not start the timer');
 });
@@ -983,7 +983,7 @@ test('single GitHub header icon opens Activity in its own tab', async () => {
   assert.ok(main?.onclick); assert.equal(arrow, undefined);
   assert.equal(main.getAttribute('aria-haspopup'), null);
   await main.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  assert.deepEqual(messages.findLast(message => message.type === 'OPEN_TIMES'), { type: 'OPEN_TIMES' });
+  assert.deepEqual(messages.findLast(message => message.type === 'OPEN_PREFERRED_SURFACE'), { type: 'OPEN_PREFERRED_SURFACE' });
   assert.equal(document.getElementById('clockoli-full-width-popup-root'), null);
   assert.equal(messages.some(message => message.type === 'LOAD_RECENT'), false);
 });
@@ -1004,7 +1004,7 @@ test('GitHub header icon opens Activity after navigating to an issue', async () 
   const main = createdNodes.findLast(node => node.tag === 'button' && node.className.includes('trigger-main'));
   location.pathname = '/acme/app/issues/7'; location.href = 'https://github.com/acme/app/issues/7';
   await main.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  assert.deepEqual(messages.findLast(message => message.type === 'OPEN_TIMES'), { type: 'OPEN_TIMES' });
+  assert.deepEqual(messages.findLast(message => message.type === 'OPEN_PREFERRED_SURFACE'), { type: 'OPEN_PREFERRED_SURFACE' });
   assert.equal(document.getElementById('clockoli-full-width-popup-root'), null);
 });
 
@@ -1019,7 +1019,7 @@ test('GitHub header icon opens Activity after navigating away from an issue', as
   const main = createdNodes.findLast(node => node.tag === 'button' && node.className.includes('trigger-main'));
   location.pathname = '/issues/assigned'; location.href = 'https://github.com/issues/assigned';
   await main.onclick({ isTrusted: true }); await new Promise(resolve => setTimeout(resolve, 0));
-  assert.deepEqual(messages.findLast(message => message.type === 'OPEN_TIMES'), { type: 'OPEN_TIMES' });
+  assert.deepEqual(messages.findLast(message => message.type === 'OPEN_PREFERRED_SURFACE'), { type: 'OPEN_PREFERRED_SURFACE' });
   assert.equal(document.getElementById('clockoli-full-width-popup-root'), null);
 });
 
