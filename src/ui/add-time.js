@@ -1,4 +1,4 @@
-import { normalizeTaskUrl } from '../domain/values.js';
+import { isUrlTaskIdentity, normalizeTaskUrl } from '../domain/values.js';
 import { dateValue, timeValue, parseTime, localTimestamp } from './local-time.js';
 
 /** One extension-page time-entry form for creating and editing records. */
@@ -262,7 +262,8 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
         const data = await send({ type: 'SEARCH_TASKS', query });
         if (request !== generation || !dialog.open) return;
         if (!data?.configured) { lastSearch = ''; searchIncomplete = true; catalogLoaded = false; setError('Set up Clockoli before adding time.'); return; }
-        tasks = Array.isArray(data.tasks) ? data.tasks : [];
+        tasks = Array.isArray(data.tasks) ? data.tasks.filter(task =>
+          !searchIsCompleteCatalog || isUrlTaskIdentity(task.taskUrl)) : [];
         showRepository = Array.isArray(data.readStatus) ? data.readStatus.length > 1
           : new Set(tasks.map(task => task.timeRepository).filter(Boolean)).size > 1;
         searchIncomplete = Boolean(data.partial || data.conflicts?.length);
