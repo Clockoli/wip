@@ -2597,6 +2597,28 @@ test('teammate picker selects a searched GitHub user and requires confirmation b
   assert.equal(page.nodes.get('time-repository-list').querySelector('.repository-collaborators').textContent, '');
 });
 
+test('Team shows GitHub invitation, granted access, and verified Clockoli storage as distinct states', async () => {
+  const page = harness({ collaboratorReplies: true, reply: request => request.type === 'LOAD_REPOSITORY_COLLABORATORS'
+    ? { users: [{ id: 7, login: 'Ready' }, { id: 8, login: 'HasAccess' }], readyUserIds: [7],
+      pendingUsers: [{ id: 9, login: 'Invited' }], hasMore: false } : {} });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const team = page.nodes.get('time-repository-list').querySelector('.repository-team');
+  assert.deepEqual(team.querySelectorAll('.repository-team-member-status').map(node => node.textContent),
+    ['Clockoli storage ready', 'GitHub access granted', 'GitHub invitation pending']);
+});
+
+test('invite permission denial is shown before search and sends no GitHub mutation', async () => {
+  const page = harness({ reply: request => request.type === 'CHECK_REPOSITORY_INVITE_ACCESS'
+    ? new Error('GitHub repository admin access is required') : {} });
+  page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
+  const row = page.nodes.get('time-repository-list').children[0];
+  await row.querySelector('.repository-add-teammate').listeners.click({ preventDefault() {}, stopPropagation() {} });
+  assert.match(row.querySelector('.repository-invite-feedback').textContent, /admin access is required/);
+  assert.equal(row.querySelector('.teammate-instructions').hidden, true);
+  assert.equal(page.requests.some(request => request.type === 'INVITE_REPOSITORY_USER'), false);
+});
+
 test('teammate picker does not invite when confirmation is cancelled', async () => {
   const page = harness({ confirm: () => false, reply: request => request.type === 'SEARCH_INVITEE_USERS'
     ? { users: [{ id: 42, login: 'Bob' }] } : {} });
@@ -2783,7 +2805,7 @@ test('repository avatar refresh removes an old empty state and ignores a late ol
   assert.equal(display.querySelector('.repository-collaborator').dataset.login, '@New');
 });
 
-test('repository add circle opens only its own teammate form and focuses GitHub search', () => {
+test('labeled invite action checks permissions before revealing the repository-specific form', async () => {
   const destinations = [
     { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 },
     { id: 'github:21', owner: 'acme', repo: 'other', installationId: 10 },
@@ -2796,11 +2818,14 @@ test('repository add circle opens only its own teammate form and focuses GitHub 
   assert.equal(add.tagName, 'button');
   assert.match(add.attributes['aria-label'], /add.*acme\/other/i);
   let prevented = false, stopped = false;
-  add.listeners.click({ preventDefault() { prevented = true; }, stopPropagation() { stopped = true; } });
+  await add.listeners.click({ preventDefault() { prevented = true; }, stopPropagation() { stopped = true; } });
   assert.equal(prevented, true); assert.equal(stopped, true);
   assert.equal(first.open, false);
   assert.equal(second.open, true);
   assert.equal(second.querySelector('.teammate-instructions').open, true);
+  assert.equal(second.querySelector('.teammate-instructions').hidden, false);
+  assert.deepEqual(JSON.parse(JSON.stringify(page.requests.find(request => request.type === 'CHECK_REPOSITORY_INVITE_ACCESS'))),
+    { type: 'CHECK_REPOSITORY_INVITE_ACCESS', destinationId: 'github:21' });
   assert.equal(second.querySelector('.teammate-search').focused, true);
   assert.equal(page.requests.some(request => request.type === 'INVITE_REPOSITORY_USER'), false);
   const pat = harness(); pat.render({ ...connectedState, auth: { mode: 'pat' }, destinations });
@@ -2825,16 +2850,16 @@ test('managing repository access requires confirmation and removes only the chos
   const rows = page.nodes.get('time-repository-list').children;
   const first = rows.find(row => row.dataset.destinationId === 'github:20');
   const second = rows.find(row => row.dataset.destinationId === 'github:21');
-  const avatar = first.querySelector('.repository-collaborator');
+  const menuTrigger = first.querySelector('.repository-member-actions-button');
   const menu = first.querySelector('.repository-avatar-actions');
-  assert.equal(avatar.tagName, 'button');
-  assert.equal(avatar.attributes['aria-expanded'], 'false');
+  assert.equal(menuTrigger.tagName, 'button');
+  assert.equal(menuTrigger.attributes['aria-expanded'], 'false');
   assert.equal(menu.hidden, true);
   assert.equal(first.querySelector('.repository-manage-teammates'), null);
-  await avatar.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  await menuTrigger.listeners.click({ preventDefault() {}, stopPropagation() {} });
   assert.equal(first.open, false);
   assert.equal(menu.hidden, false);
-  assert.equal(avatar.attributes['aria-expanded'], 'true');
+  assert.equal(menuTrigger.attributes['aria-expanded'], 'true');
   const button = menu.querySelector('.remove-repository-user');
   assert.match(button.textContent, /Remove @Bob/);
   await button.listeners.click({ preventDefault() {}, stopPropagation() {} });
@@ -2860,9 +2885,11 @@ test('pending account invitation can be cancelled but a failed removal retains i
   page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
   await new Promise(resolve => setImmediate(resolve));
   const row = page.nodes.get('time-repository-list').children[0];
-  const avatar = row.querySelector('.repository-invitation');
+  const pendingAvatar = row.querySelector('.repository-invitation');
+  assert.equal(pendingAvatar.tagName, 'span');
+  const menuTrigger = row.querySelector('.repository-member-actions-button');
   const menu = row.querySelector('.repository-avatar-actions');
-  await avatar.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  await menuTrigger.listeners.click({ preventDefault() {}, stopPropagation() {} });
   const cancel = menu.querySelector('.remove-repository-user');
   assert.match(cancel.textContent, /Cancel invitation for @Alice/);
   await cancel.listeners.click({ preventDefault() {}, stopPropagation() {} });
@@ -2876,14 +2903,14 @@ test('pending account invitation can be cancelled but a failed removal retains i
   assert.match(row.querySelector('.repository-manage-feedback').textContent, /cancelled/i);
 });
 
-test('avatar menu closes on Escape and does not open the repository or send a mutation', async () => {
+test('team member action menu closes on Escape and does not open the repository or send a mutation', async () => {
   const page = harness({ collaboratorReplies: true, reply: () => ({ users: [
     { id: 7, login: 'Member' }, { id: 8, login: 'Teammate' },
   ], hasMore: false }) });
   page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
   await new Promise(resolve => setImmediate(resolve));
   const row = page.nodes.get('time-repository-list').children[0];
-  const [first, second] = row.querySelectorAll('.repository-collaborator');
+  const [first, second] = row.querySelectorAll('.repository-member-actions-button');
   await first.listeners.click({ preventDefault() {}, stopPropagation() {} });
   assert.equal(row.querySelectorAll('.repository-avatar-actions').filter(menu => !menu.hidden).length, 1);
   await second.listeners.click({ preventDefault() {}, stopPropagation() {} });
@@ -2905,7 +2932,8 @@ test('signed-in account avatar is not offered a self-removal action', async () =
   const avatars = page.nodes.get('time-repository-list').querySelectorAll('.repository-collaborator');
   assert.equal(avatars[0].tagName, 'span');
   assert.equal(avatars[0].attributes.role, 'img');
-  assert.equal(avatars[1].tagName, 'button');
+  assert.equal(avatars[1].tagName, 'span');
+  assert.equal(page.nodes.get('time-repository-list').querySelectorAll('.repository-member-actions-button').length, 1);
   assert.equal(page.nodes.get('time-repository-list').querySelectorAll('.remove-repository-user').length, 1);
 });
 
@@ -2976,31 +3004,36 @@ test('invite section leads with search and keeps teammate setup steps behind a d
   page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
   const row = page.nodes.get('time-repository-list').children[0];
   const invite = row.querySelector('.teammate-instructions');
-  assert.equal(invite.children[0].textContent, 'Invite teammates');
-  assert.match(invite.querySelector('.teammate-intro').textContent, /acme\/time-data/);
+  assert.equal(invite.children[0].textContent, 'Invite teammate');
+  assert.equal(invite.hidden, true);
+  assert.match(invite.querySelector('.teammate-intro').textContent, /Choose a GitHub user/);
   const picker = invite.querySelector('.teammate-picker');
   const setup = invite.querySelector('.teammate-setup');
   assert.ok(invite.children.indexOf(picker) < invite.children.indexOf(setup));
   assert.equal(setup.open, false);
   assert.equal(setup.querySelector('.teammate-steps').tagName, 'ol');
   assert.equal(invite.children.some(child => child.tagName === 'pre'), false);
-  assert.equal(picker.querySelector('.teammate-search').placeholder, 'Search by GitHub username');
-  assert.match(picker.querySelector('.help').textContent, /repository admin/i);
+  assert.equal(picker.querySelector('.teammate-search').placeholder, 'Search GitHub users');
+  assert.equal(picker.querySelector('.invite-teammate').textContent, 'Send invitation');
+  assert.equal(picker.querySelector('.teammate-permissions'), null);
 });
 
-test('add teammate control has a hover title and a compact icon next to avatars', async () => {
+test('invite control is labeled and team members are displayed in a separate section', async () => {
   const page = harness({ collaboratorReplies: true, reply: () => ({ users: [{ id: 7, login: 'New' }], hasMore: false }) });
   page.render({ ...connectedState, destinations: [{ id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 }] });
   await new Promise(resolve => setImmediate(resolve));
   const people = page.nodes.get('time-repository-list').querySelector('.repository-people');
   const add = people.querySelector('.repository-add-teammate');
-  assert.equal(add.title, 'Add teammate');
+  assert.equal(add.title, 'Invite teammate');
+  assert.equal(add.children[1].textContent, 'Invite teammate');
   assert.equal(add.children[0].tagName, 'svg');
-  assert.equal(people.children[0].className, 'repository-collaborators');
-  assert.equal(people.children[1], add);
+  assert.equal(people.children[0], add);
+  assert.equal(page.nodes.get('time-repository-list').querySelector('.repository-team h4'), null);
+  const team = page.nodes.get('time-repository-list').querySelector('.repository-team');
+  assert.equal(team.querySelector('.repository-collaborators').querySelector('.repository-team-member-status').textContent, 'GitHub access granted');
   const css = await readFile(new URL('../src/options/options.css', import.meta.url), 'utf8');
-  assert.match(css, /\.repository-people\{[^}]*gap:3px/);
-  assert.match(css, /\.repository-add-teammate\{[^}]*width:24px;height:24px/);
+  assert.match(css, /\.repository-people\{[^}]*gap:8px/);
+  assert.match(css, /\.repository-add-teammate\{[^}]*min-height:32px/);
 });
 
 test('shareable teammate steps copy the rewritten guide and expose a readable fallback', async () => {
