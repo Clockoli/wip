@@ -234,7 +234,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   };
   const startChanged = () => {
     if (editing && !editing.running && !editing.boundary) moveEditedRange();
-    else if (!end.value.trim()) endDate.value = date.value;
+    else if (!end.value.trim() && !endDateManuallyEdited) endDate.value = date.value;
     else syncEndDate();
     updateEndUI();
   };

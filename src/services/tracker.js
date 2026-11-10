@@ -2864,7 +2864,7 @@ export class TrackerService {
         startedMs = firstFree(preferredStartMs, limitMs);
       } else if (fixedStart) {
         startedMs = firstFree(preferredStartMs, dayEndMs);
-        if (startedMs === null) startedMs = firstFree(dayStartMs, preferredStartMs);
+        if (startedMs === null) startedMs = firstFree(dayStartMs, dayEndMs);
       } else {
         // Keep Bulk time adding's usual append-after-existing behavior, but
         // use an earlier free gap if there is insufficient room at the end.

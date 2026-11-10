@@ -4258,6 +4258,16 @@ test('Multiple days can reuse an earlier free slot when the rest of the day is o
   assert.deepEqual([added.startedAt.slice(11, 16), added.endedAt.slice(11, 16)], ['00:00', '04:00']);
 });
 
+test('Multiple days finds a free interval spanning 09:00 when there is no later slot', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const occupied = entry(localTimestamp(2026, 10, 2, 15), localTimestamp(2026, 10, 2, 16));
+  await store.patchState({ recentCache: [occupied] });
+  await service({ github, store, clock: () => new Date('2026-11-09T20:00:00Z'), timezone: 'UTC' })
+    .addDayRange({ taskUrl: issue.url, dates: ['2026-11-02'], durationSeconds: 10 * 3600 });
+  const [added] = (await store.getState()).pendingWrites[0].entries;
+  assert.deepEqual([added.startedAt.slice(11, 16), added.endedAt.slice(11, 16)], ['00:00', '10:00']);
+});
+
 test('multiple days use 09:00 even when a nonoverlapping evening entry already exists', async () => {
   const github = new FakeGitHub(), store = new MemoryStore();
   const existing = entry(localTimestamp(2026, 10, 2, 20), localTimestamp(2026, 10, 2, 23));

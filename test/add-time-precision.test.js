@@ -312,11 +312,14 @@ test('End date is available before End time and the chosen day is preserved on e
     ui.start.value = '22:00'; ui.start.fire('input');
     assert.equal(ui.endDate.disabled, false);
     ui.endDate.value = '2026-10-19'; ui.endDate.fire('input');
+    ui.start.value = '22:30'; ui.start.fire('input');
+    assert.equal(ui.endDate.value, '2026-10-19',
+      'editing Start before End time must not erase a manually chosen End date');
     assert.equal(ui.save.textContent, 'Start timer');
     ui.end.value = '01:00'; ui.end.fire('input');
     assert.equal(ui.endDate.value, '2026-10-19');
     assert.equal(ui.save.textContent, 'Add time');
-    assert.equal(ui.duration.textContent, 'Duration: 3h 0m');
+    assert.equal(ui.duration.textContent, 'Duration: 2h 30m');
     await ui.save.listeners.click[0]();
     assert.equal(sent[0].endedAt, new Date(2026, 9, 19, 1).toISOString());
   } finally { ui.restore(); }
