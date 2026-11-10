@@ -273,7 +273,7 @@ test('Add and Edit time accept separate dates, keyboard times and an overnight E
     const start = form.getByLabel('Start', { exact: true }), end = form.getByLabel('End (optional)');
     const date = form.getByLabel('Start date', { exact: true });
     const endDate = form.getByLabel('End date', { exact: true });
-    await expect(endDate).toBeDisabled();
+    await expect(endDate).toBeEnabled();
     await expect(dialog.locator('.add-time-times input')).toHaveCount(4);
     await expect(date).toHaveAttribute('type', 'date');
     expect(await dialog.locator('.add-time-times input').evaluateAll(inputs => inputs.map(input => input.id)))
@@ -316,9 +316,11 @@ test('Add and Edit time accept separate dates, keyboard times and an overnight E
     await dialog.getByRole('combobox', { name: 'Task' }).fill(taskUrl);
     await date.fill('2026-10-17');
     await start.fill('10:00');
-    await end.fill('10:00');
-    await expect(endDate).toHaveValue('2026-10-17');
+    await expect(endDate).toBeEnabled();
     await endDate.fill('2026-10-18');
+    await expect(end).toHaveValue('');
+    await end.fill('10:00');
+    await expect(endDate).toHaveValue('2026-10-18');
     await expect(dialog.locator('.add-time-duration')).toHaveText('Duration: 24h 0m');
     await dialog.locator('.add-time-submit').click();
     payload = (await worker.evaluate(() => globalThis.messages)).filter(message => message.type === 'ADD_TIME').at(-1);
@@ -613,7 +615,7 @@ test('shared Add time dialog on Activity and Top tasks searches safely and sends
       await expect(dialog.locator('input[type="datetime-local"]')).toHaveCount(0);
       await expect(dialog.locator('input[type="date"]:visible')).toHaveCount(2);
       await expect(dialog.locator('.add-time-times input[type="text"]')).toHaveCount(2);
-    await expect(dialog.getByLabel('End date', { exact: true })).toBeDisabled();
+    await expect(dialog.getByLabel('End date', { exact: true })).toBeEnabled();
     await expect(dialog.locator('.add-time-submit')).toHaveText('Start timer');
       await expect(dialog.locator('.add-time-progress, .add-time-status')).toHaveCount(0);
       const startTime = dialog.getByLabel('Start', { exact: true });

@@ -205,7 +205,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   };
   const updateEndUI = () => {
     const hasEnd = Boolean(end.value.trim());
-    endDate.disabled = !hasEnd || Boolean(editing?.running) || Boolean(editing?.boundary);
+    endDate.disabled = Boolean(editing?.running) || Boolean(editing?.boundary);
     if (!editing) add.textContent = dayRange.checked ? 'Add' : hasEnd ? 'Add time' : 'Start timer';
     duration.hidden = true;
     if (dayRange.checked || editing?.running || editing?.boundary || !hasEnd) return;

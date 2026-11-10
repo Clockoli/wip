@@ -275,7 +275,7 @@ test('new time infers overnight End date, previews duration, and respects a manu
   try {
     ui.button.fire('click');
     assert.equal(ui.save.textContent, 'Start timer');
-    assert.equal(ui.endDate.disabled, true);
+    assert.equal(ui.endDate.disabled, false);
     ui.search.value = 'https://example.com/task';
     ui.date.value = '2026-10-18'; ui.date.fire('input');
     ui.start.value = '23:00'; ui.start.fire('input');
@@ -302,6 +302,26 @@ test('new time infers overnight End date, previews duration, and respects a manu
   } finally { ui.restore(); }
 });
 
+test('End date is available before End time and the chosen day is preserved on entry', async () => {
+  const sent = [];
+  const ui = setup(async value => { sent.push(value); return { accepted: true }; });
+  try {
+    ui.button.fire('click');
+    ui.search.value = 'https://example.com/task';
+    ui.date.value = '2026-10-18'; ui.date.fire('input');
+    ui.start.value = '22:00'; ui.start.fire('input');
+    assert.equal(ui.endDate.disabled, false);
+    ui.endDate.value = '2026-10-19'; ui.endDate.fire('input');
+    assert.equal(ui.save.textContent, 'Start timer');
+    ui.end.value = '01:00'; ui.end.fire('input');
+    assert.equal(ui.endDate.value, '2026-10-19');
+    assert.equal(ui.save.textContent, 'Add time');
+    assert.equal(ui.duration.textContent, 'Duration: 3h 0m');
+    await ui.save.listeners.click[0]();
+    assert.equal(sent[0].endedAt, new Date(2026, 9, 19, 1).toISOString());
+  } finally { ui.restore(); }
+});
+
 test('new time keeps manual End date, resets it for an empty End, and retains Multiple days checkbox', () => {
   const ui = setup();
   try {
@@ -314,7 +334,7 @@ test('new time keeps manual End date, resets it for an empty End, and retains Mu
     assert.equal(ui.endDate.value, '2026-10-19');
     ui.end.value = ''; ui.end.fire('input');
     assert.equal(ui.endDate.value, '2026-10-18');
-    assert.equal(ui.endDate.disabled, true);
+    assert.equal(ui.endDate.disabled, false);
     assert.equal(ui.save.textContent, 'Start timer');
     assert.equal(ui.duration.hidden, true);
     ui.dayRange.checked = true; ui.dayRange.fire('change');
