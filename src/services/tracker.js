@@ -1814,7 +1814,10 @@ export class TrackerService {
             : [discarded.request?.original].filter(Boolean);
           const known = new Map((latest.dayRangeIntervals ?? []).map(entry => [entry.id, entry]));
           const restored = originals.filter(entry => known.has(entry.id));
-          return { pendingWrites, dayRangeIntervals: updateDayRangeIntervals(latest.dayRangeIntervals, restored) };
+          const updated = updateDayRangeIntervals(latest.dayRangeIntervals, restored);
+          const history = discarded.operation === 'deleteEntry' && discarded.wasInDayRangeIndex
+            ? rememberDayRangeIntervals(updated, originals) : updated;
+          return { pendingWrites, dayRangeIntervals: history };
         });
         return { resolved: true, discarded: true };
       }
@@ -2264,7 +2267,8 @@ export class TrackerService {
       const pendingWrites = [...(state.pendingWrites ?? [])];
       const operation = {
         operation: 'deleteEntry', id: createUlid(queuedAt.getTime() + pendingWrites.length), status: 'pending', retryCount: 0,
-        stage: 'deleteEntry', request: { path, originalSha: cached._sha, index: cached._index, original: stripInternal(cached) },
+        stage: 'deleteEntry', wasInDayRangeIndex: (state.dayRangeIntervals ?? []).some(entry => entry.id === cached.id),
+        request: { path, originalSha: cached._sha, index: cached._index, original: stripInternal(cached) },
         queuedAt: queuedAt.toISOString(), lastError: '',
       };
       pendingWrites.push(operation);

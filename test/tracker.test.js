@@ -4234,6 +4234,20 @@ test('editing and deleting an accepted Multiple days entry update its local inte
   assert.deepEqual(store.value.dayRangeIntervals, []);
 });
 
+test('discarding a conflicting local Multiple days batch clears its reserved intervals', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const tracker = service({ github, store, clock: () => new Date('2026-11-09T20:00:00Z'), timezone: 'UTC' });
+  await tracker.addDayRange({ taskUrl: issue.url, dates: ['2026-11-02'], durationSeconds: 4 * 3600 });
+  const pending = store.value.pendingWrites[0];
+  assert.equal(store.value.dayRangeIntervals.length, 1);
+  pending.status = 'conflict';
+  assert.deepEqual(await tracker.resolvePendingConflict(pending.id, 'discard_queued_addition'), {
+    resolved: true, discarded: true,
+  });
+  assert.deepEqual(store.value.dayRangeIntervals, []);
+  assert.equal(store.value.pendingWrites.length, 0);
+});
+
 test('Multiple days can reuse an earlier free slot when the rest of the day is occupied', async () => {
   const github = new FakeGitHub(), store = new MemoryStore();
   const existing = entry(localTimestamp(2026, 10, 2, 9), localTimestamp(2026, 10, 2, 23));
