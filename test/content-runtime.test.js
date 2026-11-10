@@ -3407,6 +3407,7 @@ async function runningStatusHarness(initial, onReconnect, { onAuthExpired, onAut
     failStart: () => { startError = new Error('Start rejected'); },
     failRead: value => { readError = value ? new Error('Worker restarting') : null; },
     failRefresh: value => { refreshError = value ? Object.assign(new Error('Clockoli could not renew GitHub access.'), { code: 'auth_expired' }) : null; },
+    setRefreshError: value => { refreshError = value; },
     cancelConfirmation: () => { confirmed = false; },
     holdNextRead: () => {
       let resolve;
@@ -3467,6 +3468,23 @@ test('local status polling preserves a failed GitHub renewal until a remote refr
   h.destroy();
 });
 
+test('running status shows the GitHub rate limit instead of a tracking failure and keeps the local timer', async () => {
+  const h = await runningStatusHarness(runningStatusState());
+  h.setRefreshError(Object.assign(new Error('GitHub API rate limit exceeded.'), {
+    code: 'rate_limit', retryAt: '2026-11-09T16:35:15.000Z',
+  }));
+  await h.events.get('visibilitychange')(); await h.settle();
+  assert.match(h.find('running-status-error').textContent, /GitHub rate limit reached/);
+  assert.doesNotMatch(h.find('running-status-error').textContent, /Could not load tracking status/);
+  assert.equal(h.container.classList.contains('is-active'), true);
+  h.timers.get(5_000)(); await h.settle();
+  assert.match(h.find('running-status-error').textContent, /GitHub rate limit reached/);
+  h.setRefreshError(null);
+  await h.events.get('visibilitychange')(); await h.settle();
+  assert.equal(h.find('running-status-error').hidden, true);
+  h.destroy();
+});
+
 test('a handled renewal failure opens sign-in without a second error and clears after recovery', async () => {
   let expired = 0, restored = 0;
   const h = await runningStatusHarness({ configured: true, active: null }, undefined, {
@@ -3496,10 +3514,11 @@ test('a remote summary error does not restore expired sign-in until a successful
     summaryError: { code: 'rate_limit', message: 'Try later' } });
   await h.destroy.refresh(); await h.settle();
   assert.equal(restored, 0);
-  assert.equal(h.find('running-status-error').textContent, 'Try later');
+  assert.equal(h.find('running-status-error').textContent, 'GitHub rate limit reached');
   h.setState({ configured: true, active: null, todayTrackedMs: 0 });
   await h.destroy.refresh(); await h.settle();
   assert.equal(restored, 1);
+  assert.equal(h.find('running-status-error').hidden, true);
   h.destroy();
 });
 

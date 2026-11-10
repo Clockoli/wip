@@ -140,7 +140,8 @@ test('period, exports, and chart controls use the compact always-visible layout'
   const chart = html.match(/<section id="analytics-card"[\s\S]*?<\/section>/)?.[0] || '';
   assert.ok(chart.indexOf('id="metric"') < chart.indexOf('id="analytics-chart"'));
   assert.ok(chart.indexOf('id="stack-by"') < chart.indexOf('id="analytics-chart"'));
-  assert.ok(chart.indexOf('id="horizontal-axis"') > chart.indexOf('id="analytics-chart"'));
+  assert.ok(chart.indexOf('id="horizontal-axis"') < chart.indexOf('id="metric"'));
+  assert.ok(chart.indexOf('id="metric"') < chart.indexOf('id="stack-by"'));
   assert.match(styles, /@media\(max-width:640px\)[\s\S]*\.chart-top-controls\{display:grid;grid-template-columns:minmax\(0,1fr\)/);
 });
 

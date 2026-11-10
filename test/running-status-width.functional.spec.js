@@ -84,7 +84,7 @@ test('Reports, Top tasks and Settings stretch the running description without ov
         await page.locator('.page-theme-toggle').click({ timeout: 5000 });
       }
     }
-    // Every page shares one frame: GitHub's 1280px container, or the window when Interface width is Full.
+    // Settings stays in the centered frame even when the other pages use Full width.
     for (const width of [1440, 2200]) for (const interfaceWidth of ['contained', 'full']) {
       const frames = [];
       for (const path of ['reports/reports.html', 'tasks/tasks.html', 'options/options.html']) {
@@ -92,7 +92,11 @@ test('Reports, Top tasks and Settings stretch the running description without ov
         await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/${path}`);
         const row = page.locator('#running-status.is-active .running-status-row');
         await expect(row.getByRole('textbox', { name: 'Description' })).toBeVisible();
-        await page.evaluate(value => { document.documentElement.dataset.clockoliWidth = value; }, interfaceWidth);
+        if (!path.startsWith('options')) {
+          await page.evaluate(value => { document.documentElement.dataset.clockoliWidth = value; }, interfaceWidth);
+        } else {
+          expect(await page.evaluate(() => document.documentElement.dataset.clockoliWidth)).toBeUndefined();
+        }
         frames.push(await page.evaluate(() => {
           const box = selector => document.querySelector(selector).getBoundingClientRect();
           const row = box('#running-status .running-status-row'), main = box('main');
@@ -107,9 +111,11 @@ test('Reports, Top tasks and Settings stretch the running description without ov
             controlCenters: controls.map(control => Math.round(control.top + control.height / 2)) };
         }));
       }
-      const expectedWidth = interfaceWidth === 'full' ? width - FRAME_GUTTER_PX * 2 : Math.min(GITHUB_CONTAINER_PX, width - FRAME_GUTTER_PX * 2);
-      for (const frame of frames) {
-        expect(frame).toMatchObject({ ...frames[0], mainLeft: frame.left, mainRight: frame.right, contentLeft: frame.left, contentRight: frame.right });
+      for (const [index, frame] of frames.entries()) {
+        const expectedWidth = index !== 2 && interfaceWidth === 'full'
+          ? width - FRAME_GUTTER_PX * 2 : Math.min(GITHUB_CONTAINER_PX, width - FRAME_GUTTER_PX * 2);
+        expect(frame).toMatchObject({ left: (width - expectedWidth) / 2,
+          mainLeft: frame.left, mainRight: frame.right, contentLeft: frame.left, contentRight: frame.right });
         expect(frame.right - frame.left).toBe(expectedWidth);
         expect(frame.controlHeights).toEqual([CONTROL_PX, CONTROL_PX, CONTROL_PX]);
         expect(new Set(frame.controlCenters).size).toBe(1);
@@ -128,6 +134,17 @@ test('Reports, Top tasks and Settings stretch the running description without ov
     expect(await page.evaluate(() => ({ atParse: window.widthAtParse,
       row: document.querySelector('#running-status .running-status-row').getBoundingClientRect().width })))
       .toEqual({ atParse: 'full', row: fullWidthViewport - FRAME_GUTTER_PX * 2 });
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/options/options.html`);
+    await expect(page.locator('#running-status.is-active .running-status-row')).toBeVisible();
+    expect(await page.evaluate(() => ({ atParse: window.widthAtParse,
+      mode: document.documentElement.dataset.clockoliWidth,
+      main: document.querySelector('main.settings-main').getBoundingClientRect().width,
+      row: document.querySelector('#running-status .running-status-row').getBoundingClientRect().width,
+      saved: localStorage.getItem('clockoli-interface-width') })))
+      .toEqual({ atParse: undefined, mode: undefined, main: GITHUB_CONTAINER_PX,
+        row: GITHUB_CONTAINER_PX, saved: 'full' });
+    await page.goto(tasksUrl);
+    await expect(page.locator('html')).toHaveAttribute('data-clockoli-width', 'full');
     await worker.evaluate(() => { globalThis.savedWidth = 'contained'; });
     await page.reload();
     await expect(page.locator('html')).toHaveAttribute('data-clockoli-width', 'contained');

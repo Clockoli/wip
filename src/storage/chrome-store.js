@@ -5,7 +5,7 @@ import {
 import { listAddons } from '../addons/registry.js';
 import { validateJoinRepository } from '../domain/join-invitation.js';
 const DEFAULT_STATE = Object.freeze({ activeCache: null, recentCache: [], summaryCache: null, pendingWrites: [], user: null, dataVersion: 0 });
-const DESTINATION_STATE_DEFAULT = Object.freeze({ user: null, recentCache: [], summaryCache: null, pendingWrites: [] });
+const DESTINATION_STATE_DEFAULT = Object.freeze({ user: null, recentCache: [], summaryCache: null, pendingWrites: [], dayRangeIntervals: [] });
 const CONFIGURATION_GENERATION = 'configurationGeneration';
 const AUTH = 'auth';
 const AUTH_GENERATION = 'authGeneration';

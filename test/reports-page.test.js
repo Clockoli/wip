@@ -169,10 +169,13 @@ test('date range picker replaces the old controls with one accessible trigger an
 });
 
 
-test('analytics axis controls are labeled as compact Y and X chips beside their axes', () => {
-  assert.match(html, /class="axis-select axis-chip metric-select"[^>]*>[\s\S]*?axis-chip-prefix"[^>]*>Y:<\/span>[\s\S]*?<select id="metric" aria-label="Y axis: measured value"/);
-  assert.match(html, /class="axis-select axis-chip horizontal-axis-select"[^>]*>[\s\S]*?axis-chip-prefix"[^>]*>X:<\/span>[\s\S]*?<select id="horizontal-axis" aria-label="X axis: group by"/);
-  assert.ok(html.indexOf('id="metric"') < html.indexOf('id="analytics-chart"'));
-  assert.ok(html.indexOf('id="horizontal-axis"') > html.indexOf('id="analytics-chart"'));
-  assert.match(styles, /\.axis-chip\{display:inline-flex/);
+test('chart configuration groups labeled dimensions and metric above the chart without changing defaults', () => {
+  const controls = html.match(/<div class="chart-top-controls">([\s\S]*?)<\/div>/)?.[1] || '';
+  assert.match(controls, /<label[^>]*>Group by\s*<select id="horizontal-axis"[^>]*>[\s\S]*?<option value="day" selected>/);
+  assert.match(controls, /<label[^>]*>Aggregate by\s*<select id="metric"[^>]*>[\s\S]*?<option value="total-time" selected>/);
+  assert.match(controls, /<label[^>]*>Stack by\s*<select id="stack-by"[^>]*>[\s\S]*?<option value="person" selected>/);
+  assert.ok(controls.indexOf('id="horizontal-axis"') < controls.indexOf('id="metric"'));
+  assert.ok(controls.indexOf('id="metric"') < controls.indexOf('id="stack-by"'));
+  assert.ok(html.indexOf('id="stack-by"') < html.indexOf('id="analytics-chart"'));
+  assert.match(styles, /\.chart-top-controls\{display:flex;align-items:end;justify-content:flex-start/);
 });

@@ -2553,6 +2553,7 @@
       // their stage. Keep their recovery actionable after an extension upgrade.
       const queuedEdit = ['editEntry', 'editEntries'].includes(item.operation ?? item.stage);
       const queuedAddition = ['addTime', 'bulkAddTimes'].includes(item.operation ?? item.stage);
+      const queuedMultipleTimes = (item.operation ?? item.stage) === 'bulkAddTimes';
       const rejectedWrite = item.conflictReason?.startsWith('queued_write_');
       const rejectedStart = rejectedWrite && item.stage === 'startNext';
       const box = el('div', undefined, 'conflict');
@@ -2569,14 +2570,18 @@
             : changedAddTime ? 'Clockoli could not save this timer start because it overlaps a completed entry on GitHub. The local change has not been deleted.'
             : rejectedStart ? 'GitHub rejected this timer start. Check the configured repository and access, then retry.'
               : rejectedWrite ? 'GitHub rejected this queued write. Check the configured repository and access, then retry.'
-                : queuedAddition ? 'GitHub could not safely save the locally added time. Retry after reviewing Activity, or discard this addition after verifying it was not already saved.'
+                : queuedMultipleTimes ? 'The time batch could not be saved in its original intervals. Retry will look for free intervals on each selected day; if none fit, the whole batch stays safely queued.'
+                  : queuedAddition ? 'GitHub could not safely save the locally added time. Retry after reviewing Activity, or discard this addition after verifying it was not already saved.'
                   : queuedEdit ? 'Activity changed after this edit was queued. Retry safely reloads the affected entry and reapplies your saved change.'
                     : 'Repair or remove the conflicting entry in GitHub, then retry.';
       const label = unsaved ? 'Discard unsaved completion' : savedWithNewerTimer ? 'Keep newer timer'
         : changedAddTime ? 'Recheck and retry start'
-        : rejectedWrite ? 'Retry queued write' : queuedAddition ? 'Retry added time'
+        : rejectedWrite ? 'Retry queued write' : queuedMultipleTimes ? 'Find free time and retry' : queuedAddition ? 'Retry added time'
           : queuedEdit ? 'Retry saved edit' : 'Retry entry sync';
       box.append(el('strong', title), el('div', detail, 'muted'));
+      if (queuedAddition && item.lastError && !rejectedWrite) {
+        box.append(el('p', `Last sync error: ${safeQueueDetail(item.lastError)}`, 'muted'));
+      }
       if (changedAddTime && completion && timesMode && overlapState?.loading && !localPair) {
         box.replaceChildren(el('p', 'Loading the two entries…'));
         container.append(box);

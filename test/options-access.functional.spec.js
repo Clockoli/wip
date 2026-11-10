@@ -20,6 +20,11 @@ globalThis.accessStillRejected = false;
 globalThis.silentPromotion = false;
 globalThis.removalMode = 'denied';
 globalThis.removedCollaborator = false;
+globalThis.blockSignout = false;
+globalThis.blockDiscovery = false;
+globalThis.savedWidth = 'contained';
+globalThis.rateLimited = false;
+globalThis.mockConfigured = false;
 const originalAccessExpiry = Date.now() - 60_000;
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   globalThis.requests.push(message.type);
@@ -51,9 +56,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ ok: false, error: { code: 'temporary_failure', message: 'Temporary onboarding read failure' } });
     return;
   }
+  if (message.type === 'DISCONNECT_GITHUB_APP' && globalThis.blockSignout) {
+    sendResponse({ ok: false, error: { message: 'Stop the active timer before changing GitHub authentication.' } });
+    return;
+  }
+  if (message.type === 'DISCOVER_REPOSITORIES' && globalThis.blockDiscovery) {
+    sendResponse({ ok: true, data: { blocked: {
+      code: 'migration_blocked', message: 'Stop the active timer before changing GitHub authentication.',
+    } } });
+    return;
+  }
+  if (message.type === 'SET_INTERFACE_WIDTH') {
+    globalThis.savedWidth = message.width;
+    sendResponse({ ok: true, data: { preferences: { interfaceWidth: globalThis.savedWidth } } });
+    return;
+  }
   if (message.type === 'GET_PAGE_STATE' && message.refresh && globalThis.expired
       && (!globalThis.reauthorizedExternally || globalThis.accessStillRejected)) {
     sendResponse({ ok: false, error: { code: 'auth_expired', message: 'Clockoli could not renew GitHub access.' } });
+    return;
+  }
+  if (message.type === 'GET_PAGE_STATE' && message.refresh && globalThis.rateLimited) {
+    sendResponse({ ok: false, error: { code: 'rate_limit', retryAt: '2026-11-09T16:35:15.000Z',
+      message: 'GitHub API rate limit exceeded.' } });
     return;
   }
   const onboardingState = {
@@ -71,8 +96,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       ? { status: 'authorized', githubUserId: 42, githubLogin: 'octocat' } : globalThis.deviceAttempt,
     OPEN_DEVICE_FLOW_PAGE: { opened: true },
     GET_STATE: { configured: true, active: null, pendingWrites: [] },
-    GET_PAGE_STATE: { configured: globalThis.expired || globalThis.authorizedAgain, active: null, pendingWrites: [] },
-    GET_LOCAL_PREFERENCES: { rates: {}, invoicing: { clients: [] }, projects: [], recentDays: 7, revision: 0 },
+    GET_PAGE_STATE: { configured: globalThis.expired || globalThis.authorizedAgain || globalThis.mockConfigured,
+      active: null, pendingWrites: [] },
+    GET_LOCAL_PREFERENCES: { rates: {}, invoicing: { clients: [] }, projects: [], recentDays: 7,
+      revision: 0, interfaceWidth: globalThis.savedWidth },
     GET_ADDON_SETTINGS: {},
     DISCOVER_REPOSITORIES: { ...(globalThis.silentPromotion ? { onboardingState } : {}), repositories: [{
       installationId: 10, repoId: 22, owner: 'acme', repo: 'check-example',
@@ -171,6 +198,180 @@ test('Add time repository scrolls to the repository setup heading', async () => 
   } finally { await closeOptions(fixture); }
 });
 
+test('Settings stays centered when Interface width is full', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, worker, browserErrors } = fixture;
+    const control = page.locator('#interface-width');
+    await expect(control).toHaveValue('contained');
+    await control.selectOption('full');
+    await expect(page.locator('#interface-width-feedback')).toHaveText('Interface width saved.');
+    expect(await page.evaluate(() => localStorage.getItem('clockoli-interface-width'))).toBe('full');
+    for (const width of [2200, 1440, 390]) {
+      await page.setViewportSize({ width, height: 850 });
+      await page.reload();
+      await expect(control).toHaveValue('full');
+      expect(await page.evaluate(() => ({ mode: document.documentElement.dataset.clockoliWidth,
+        main: document.querySelector('main.settings-main').getBoundingClientRect().width,
+        mainLeft: document.querySelector('main.settings-main').getBoundingClientRect().left,
+        status: document.querySelector('#running-status .running-status-row').getBoundingClientRect().width,
+        statusLeft: document.querySelector('#running-status .running-status-row').getBoundingClientRect().left,
+        overflow: document.documentElement.scrollWidth > innerWidth })))
+        .toEqual({ mode: undefined, main: Math.min(1280, width - (width <= 700 ? 24 : 48)),
+          mainLeft: (width - Math.min(1280, width - (width <= 700 ? 24 : 48))) / 2,
+          status: Math.min(1440, width), statusLeft: (width - Math.min(1440, width)) / 2,
+          overflow: false });
+    }
+    expect(await worker.evaluate(() => globalThis.savedWidth)).toBe('full');
+    await page.setViewportSize({ width: 2200, height: 850 });
+    await page.goto(new URL('../tasks/tasks.html', page.url()).href);
+    await expect(page.locator('html')).toHaveAttribute('data-clockoli-width', 'full');
+    expect(await page.locator('main').evaluate(node => node.getBoundingClientRect().width)).toBe(2152);
+    await page.goto(new URL('../options/options.html', page.url()).href);
+    await expect(page.locator('#interface-width')).toHaveValue('full');
+    expect(await page.locator('main.settings-main').evaluate(node => node.getBoundingClientRect().width)).toBe(1280);
+    expect(browserErrors).toEqual([]);
+  } finally { await closeOptions(fixture); }
+});
+
+test('rate-limited GitHub refresh retains local status and explains the retry', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, worker, browserErrors } = fixture;
+    await worker.evaluate(() => { globalThis.mockConfigured = true; globalThis.rateLimited = true; });
+    await page.reload();
+    await expect(page.locator('.running-status-error')).toContainText('GitHub rate limit reached');
+    await expect(page.locator('.running-status-error')).not.toContainText('Could not load tracking status');
+    await expect(page.locator('.running-status-error')).toContainText('retry after');
+    await page.waitForTimeout(5_200);
+    await expect(page.locator('.running-status-error')).toContainText('GitHub rate limit reached');
+    await worker.evaluate(() => { globalThis.rateLimited = false; });
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await expect(page.locator('.running-status-error')).toBeHidden();
+    expect(browserErrors).toEqual([]);
+  } finally { await closeOptions(fixture); }
+});
+
+test('connected account shows one status badge opposite GitHub account', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, worker, browserErrors } = fixture;
+    for (const width of [1280, 390, 320]) {
+      await page.setViewportSize({ width, height: 800 });
+      await expect(page.locator('#connection-status')).toBeVisible();
+      await expect(page.locator('#connection-status')).toHaveText('Connected');
+      await expect(page.locator('#connected-status')).toHaveCount(0);
+      const layout = await page.evaluate(() => {
+        const rect = selector => document.querySelector(selector).getBoundingClientRect();
+        const heading = rect('#connection-title'), badge = rect('#connection-status'), card = rect('.connection-card');
+        return { width: innerWidth, direction: getComputedStyle(document.querySelector('.connection-card .card-heading')).flexDirection,
+          headingRight: heading.right, headingTop: heading.top, badgeLeft: badge.left,
+          badgeTop: badge.top, badgeRight: badge.right, cardRight: card.right,
+          badgeInHeading: document.querySelector('#connection-status').parentElement.classList.contains('card-heading'),
+          accountBadges: document.querySelectorAll('.account-summary .badge').length };
+      });
+      expect(layout.badgeInHeading).toBe(true);
+      expect(layout.accountBadges).toBe(0);
+      expect(layout.badgeLeft, JSON.stringify(layout)).toBeGreaterThanOrEqual(layout.headingRight);
+      expect(Math.abs(layout.badgeTop - layout.headingTop)).toBeLessThan(12);
+      expect(layout.badgeRight).toBeLessThanOrEqual(layout.cardRight);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    }
+    await worker.evaluate(() => { globalThis.expired = true; });
+    await page.reload();
+    await expect(page.locator('#connection-status')).toBeVisible();
+    await expect(page.locator('#connection-status')).toHaveText('Sign-in required');
+    await expect(page.locator('#connected')).toBeHidden();
+    expect(browserErrors).toEqual([]);
+  } finally { await closeOptions(fixture); }
+});
+
+test('active-timer authentication warning stays inside the GitHub account section', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, worker, browserErrors } = fixture;
+    await worker.evaluate(() => { globalThis.blockSignout = true; });
+    page.once('dialog', dialog => dialog.accept());
+    await page.locator('#disconnect').click();
+    await expect(page.locator('#message')).toHaveText('Stop the active timer before changing GitHub authentication.');
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 800 });
+      const layout = await page.evaluate(() => {
+        const box = selector => document.querySelector(selector).getBoundingClientRect().toJSON();
+        const notice = document.querySelector('#message');
+        return { position: getComputedStyle(notice).position, notice: box('#message'),
+          account: box('.account-summary'), actions: box('.account-actions'),
+          section: box('.connection-card'), repositories: box('#time-repositories'),
+          scrollWidth: document.documentElement.scrollWidth };
+      });
+      expect(layout.position).not.toBe('fixed');
+      expect(layout.notice.y).toBeGreaterThanOrEqual(layout.account.bottom);
+      expect(layout.notice.bottom).toBeLessThanOrEqual(layout.actions.y);
+      expect(layout.notice.x).toBeGreaterThanOrEqual(layout.section.x);
+      expect(layout.notice.right).toBeLessThanOrEqual(layout.section.right);
+      expect(layout.notice.bottom).toBeLessThanOrEqual(layout.repositories.y);
+      expect(layout.scrollWidth).toBeLessThanOrEqual(width);
+    }
+    await expect(page.locator('#connected-account')).toHaveText('@octocat');
+    await worker.evaluate(() => { globalThis.blockSignout = false; });
+    page.once('dialog', dialog => dialog.accept());
+    await page.locator('#disconnect').click();
+    await expect(page.locator('#message')).toHaveText('Unexpected test request');
+    expect(await page.locator('#message').evaluate(node => getComputedStyle(node).position)).toBe('fixed');
+    expect(browserErrors).toEqual([]);
+  } finally { await closeOptions(fixture); }
+});
+
+test('blocked authorization has one compact account warning, not a duplicate repository message', async () => {
+  const fixture = await openOptions();
+  try {
+    const { page, worker, browserErrors } = fixture;
+    await worker.evaluate(() => { globalThis.authorizedAgain = true; globalThis.blockDiscovery = true; });
+    await page.reload();
+    await expect(page.locator('#message')).toHaveText('Stop the active timer before changing GitHub authentication.');
+    await expect(page.locator('#setup-ready-summary')).not.toContainText('Stop the active timer');
+    await expect(page.locator('#finish-setup')).toBeDisabled();
+    expect(await page.locator('#message').evaluate(node =>
+      node.previousElementSibling?.id === 'connected' && node.nextElementSibling?.id === 'connected-actions')).toBe(true);
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 800 });
+      const style = await page.locator('#message').evaluate(node => {
+        const css = getComputedStyle(node);
+        const swatch = document.createElement('span');
+        swatch.style.backgroundColor = 'var(--bgColor-danger-muted)';
+        swatch.style.color = 'var(--fgColor-danger)';
+        document.body.append(swatch);
+        const dangerBackground = getComputedStyle(swatch).backgroundColor;
+        const dangerAccent = getComputedStyle(swatch).color;
+        swatch.remove();
+        return { width: node.getBoundingClientRect().width, position: css.position,
+          background: css.backgroundColor, gradient: css.backgroundImage,
+          leftBorder: css.borderLeftWidth, rightBorder: css.borderRightWidth,
+          leftBorderColor: css.borderLeftColor, iconColor: getComputedStyle(node, '::before').color,
+          opacity: css.opacity, mask: css.maskImage, dangerBackground, dangerAccent,
+          overflow: document.documentElement.scrollWidth > innerWidth };
+      });
+      expect(style.width).toBeLessThanOrEqual(Math.min(640, width));
+      expect(style.position).toBe('static');
+      expect(style.gradient).toContain(style.dangerBackground);
+      expect(style.gradient).toMatch(/linear-gradient\(.*rgba\(0, 0, 0, 0\) 100%\)/);
+      expect(style.background).toBe('rgba(0, 0, 0, 0)');
+      expect(style.leftBorder).toBe('3px');
+      expect(style.rightBorder).toBe('0px');
+      expect(style.leftBorderColor).toBe(style.dangerAccent);
+      expect(style.iconColor).toBe(style.dangerAccent);
+      expect(style.opacity).toBe('1');
+      expect(style.mask).toBe('none');
+      expect(style.overflow).toBe(false);
+    }
+    await worker.evaluate(() => { globalThis.blockDiscovery = false; });
+    await page.locator('#add-time-repository').click();
+    await expect(page.locator('#message')).toBeEmpty();
+    await expect(page.locator('#setup-ready-summary')).not.toContainText('Stop the active timer');
+    expect(browserErrors).toEqual([]);
+  } finally { await closeOptions(fixture); }
+});
+
 test('connected account can reauthorize without signing out or losing its repositories', async () => {
   const fixture = await openOptions();
   try {
@@ -239,6 +440,7 @@ test('renewal failure opens sign-in immediately without a duplicate status error
     await expect(page.locator('#authorize')).toHaveText('Sign in again with GitHub');
     await expect(page.locator('#connection-status')).toHaveText('Sign-in required');
     await expect(page.locator('#connected')).toBeHidden();
+    await expect(page.locator('#connected-actions')).toBeHidden();
     await expect(page.locator('.running-status-error')).toBeHidden();
     expect(await worker.evaluate(() => globalThis.requests)).not.toContain('START_DEVICE_FLOW');
     await page.waitForTimeout(5_200);
@@ -251,6 +453,7 @@ test('renewal failure opens sign-in immediately without a duplicate status error
     await returnFromGitHub(page);
     await expect(page.locator('#reauth-required')).toBeHidden();
     await expect(page.locator('#connected')).toBeVisible();
+    await expect(page.locator('#connected-actions')).toBeVisible();
     await expect(page.locator('#connection-status')).toHaveText('Connected');
     expect(await worker.evaluate(() => globalThis.requests)).not.toContain('DISCONNECT_GITHUB_APP');
   } finally { await closeOptions(fixture); }
@@ -302,6 +505,7 @@ test('authorized device flow waiting for repository validation is not called sig
     await page.reload();
     await expect(page.locator('#reauth-required')).toBeHidden();
     await expect(page.locator('#connection-status')).toHaveText('Checking repository access');
+    await expect(page.locator('#connection-status')).toBeVisible();
     await expect(page.locator('#repository-step')).toBeVisible();
     await expect(page.locator('.time-repository')).toHaveCount(2);
   } finally { await closeOptions(fixture); }

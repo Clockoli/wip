@@ -230,6 +230,22 @@ test('Activity keeps local sync and conflict warnings visible in Timeline and Ca
     await worker.evaluate(() => { configured = false; pendingWrites = []; });
     await expect(root).toContainText('Choose where Clockoli should save your time', { timeout: 12_000 });
     await expect(status).toBeEmpty();
+    await worker.evaluate(() => {
+      configured = true;
+      pendingWrites = [{
+        id: 'bulk-conflict', operation: 'bulkAddTimes', stage: 'bulkAddTimes',
+        status: 'conflict', conflictReason: 'bulk_add_validation',
+        lastError: 'Selected day 2026-11-02 overlaps an existing time entry on GitHub.',
+        subjects: [{ proposed: { entryDate: '2026-11-02',
+          startedAt: '2026-11-02T09:00:00.000Z', endedAt: '2026-11-02T13:00:00.000Z',
+          taskTitle: 'Local batch' } }],
+      }];
+    });
+    await expect(status.getByRole('button', { name: 'Review sync issues' })).toBeVisible({ timeout: 12_000 });
+    await status.getByRole('button', { name: 'Review sync issues' }).click();
+    await expect(dialog.getByText(/Last sync error: Selected day 2026-11-02 overlaps/)).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Find free time and retry' })).toBeVisible();
+    await page.keyboard.press('Escape');
     expect(errors).toEqual([]);
   } finally {
     await context?.close();
@@ -1435,7 +1451,7 @@ test('Activity Timeline and Calendar edit a running timer start without exposing
     const dialog = page.getByRole('dialog', { name: 'Edit timer start' });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByLabel('Start', { exact: true })).toBeVisible();
-    await expect(dialog.getByLabel('Date', { exact: true })).toBeVisible();
+    await expect(dialog.getByLabel('Start date', { exact: true })).toBeVisible();
     await expect(dialog.getByLabel('End (optional)')).toBeHidden();
     await expect(dialog.getByLabel('Description (optional)')).toBeHidden();
     await worker.evaluate(() => { globalThis.deferActiveEdit = true; });
@@ -2224,7 +2240,7 @@ test('List, Timeline and Calendar Edit open the shared time form', async () => {
       };
       return range.map(format);
     }, originalRange);
-    await expect(dialog.getByLabel('Date', { exact: true })).toHaveValue(visibleRange[0].slice(0, 10));
+    await expect(dialog.getByLabel('Start date', { exact: true })).toHaveValue(visibleRange[0].slice(0, 10));
     await expect(dialog.getByLabel('Start', { exact: true })).toHaveValue(visibleRange[0].slice(11));
     await expect(dialog.getByLabel('End (optional)')).toHaveValue(visibleRange[1].slice(11));
     const movedRange = await page.evaluate(range => range.map(value => {
@@ -2331,7 +2347,7 @@ test('List, Timeline and Calendar Edit open the shared time form', async () => {
       taskUrl: 'https://example.com/other', taskTitle: '',
     });
     await page.evaluate(() => window.__openFixtureEdit(window.__zeroEntry));
-    const dateInput = dialog.getByLabel('Date', { exact: true });
+    const dateInput = dialog.getByLabel('Start date', { exact: true });
     const originalDay = await dateInput.inputValue();
     const previousDay = day => {
       const date = new Date(`${day}T12:00:00Z`);

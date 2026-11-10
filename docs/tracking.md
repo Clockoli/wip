@@ -28,6 +28,8 @@ Activity shows the same weekly statistics, running status, quick-start tasks and
 
 Quick start also appears on Activity, Top tasks, Reports, and Settings. Each recent task shows the description from its latest time entry, if present. Starting it reuses that description and focuses the running Description with its text selected: leave it to continue the same work, press Backspace to clear it, or type to replace it. Tasks without a saved description start with an empty focused field.
 
+If GitHub rate-limits a tracking-status refresh, the locally stored timer remains visible. The tracking strip reports the rate limit and its retry time instead of claiming that local tracking status could not load; the warning clears after a successful GitHub refresh.
+
 The accessible **Timeline**, **Calendar**, and **List** icon switcher sits beside the theme control in Activity. The timeline's block Start and Stop actions remain available. See [Activity](activity.md) for the views themselves.
 
 ## Tracking strip layout
