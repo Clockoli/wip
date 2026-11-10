@@ -10,6 +10,8 @@ Open **Settings** → **More settings** → **Clients (invoice recipients)** to 
 
 Client details can be left empty when a client is used only for reports. Clients can own [projects](projects-and-routing.md).
 
+Saving does not replace unexpected characters in names, addresses, bank details, or notes. If pasted text contains a tab or another unsupported control character, the error names the section and field (and bank account number where applicable), the character, and its position. Correct the draft and save again; ordinary spaces and line breaks in multiline fields are allowed.
+
 ### Bank details
 
 Add up to 20 bank accounts under **Invoicing**. Give each an account label and payment instructions (for example, bank name, account holder, IBAN, SWIFT or routing details), then optionally choose a default. The default appears when you first open an invoice; the invoice dialog lets you choose a different saved account or **No bank details** for that invoice. Only the selected account's instructions appear in the preview and printed or saved invoice. Bank details stay in this browser and in any settings backup you download; they are not written to your time repository. Protect backups containing financial information.

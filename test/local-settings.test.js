@@ -157,7 +157,7 @@ test('bank details remain local, allow multiple accounts, and reject malformed o
     { bankAccounts: [{ id: 'a', label: 'A', details: 'One' }, { id: 'a', label: 'B', details: 'Two' }] },
     { bankAccounts: [{ id: 'a', label: '', details: 'One' }] },
     { bankAccounts: [{ id: 'a', label: 'A', details: '' }] },
-    { bankAccounts: [{ id: 'a', label: 'A', details: 'bad\tvalue' }] },
+    { bankAccounts: [{ id: 'a', label: 'A', details: 'bad\u0001value' }] },
     { bankAccounts: [{ id: 'a', label: 'A', details: 'One', secret: 'unexpected' }] },
     { bankAccounts: Array.from({ length: 21 }, (_, i) => ({ id: `a${i}`, label: 'A', details: 'One' })) },
   ]) assert.throws(() => normalizeInvoicingSettings(invalid));
@@ -203,7 +203,7 @@ test('settings backup preserves explicit project and catch-all client assignment
 
 test('invoicing rejects unknown fields, invalid strings, clients, numbering and tax', () => {
   for (const value of [null, [], { unknown: true }, { seller: { unknown: '' } }, { clients: [{ id: 'a', unknown: '' }] },
-    { seller: { name: 12 } }, { notes: '\tunsafe' }, { seller: { email: 'bad\u007fmail' } },
+    { seller: { name: 12 } }, { notes: '\u0001unsafe' }, { seller: { email: 'bad\u007fmail' } },
     { clients: [{ id: '' }] }, { clients: [{ id: 'bad/id' }] }, { clients: [{ id: 'a' }, { id: 'a' }] },
     { clients: [{ id: 'a', defaultCurrency: 'US1' }] }, { clients: Array.from({ length: 51 }, (_, index) => ({ id: `c${index}` })) },
     ...[0, -1, 1.5, 1e9 + 1, Number.MAX_SAFE_INTEGER, '1'].map(nextNumber => ({ nextNumber })),
@@ -272,16 +272,32 @@ test('legacy payment notes append once as an exact line and respect the notes li
   assert.equal(normalizeInvoicingSettings({ paymentTerms, notes: fits }).notes, `${fits}\n${line}`);
   assert.equal(normalizeInvoicingSettings({ paymentTerms, notes: full }).notes, full);
   assert.equal(normalizeInvoicingSettings({ paymentTerms, paymentTermsDays: 14 }).notes, line);
-  assert.throws(() => normalizeInvoicingSettings({ notes: 'a\n' + 'b'.repeat(999) }), /notes/);
-  assert.throws(() => normalizeInvoicingSettings({ seller: { name: 'a\nb' } }), /name/);
+  assert.throws(() => normalizeInvoicingSettings({ notes: 'a\n' + 'b'.repeat(999) }), /Footer notes/);
+  assert.throws(() => normalizeInvoicingSettings({ seller: { name: 'a\nb' } }), /Name/);
 });
 
-test('an invoicing address keeps its line breaks while other party fields reject control characters', () => {
+test('invoicing keeps ordinary spaces and address line breaks without changing the text', () => {
   const address = '12 Karaiskaki\nNicosia, Cyprus';
   const invoicing = normalizeInvoicingSettings({ seller: { name: 'Manticore Software LTD', address } });
   assert.equal(invoicing.seller.address, address);
-  assert.throws(() => normalizeInvoicingSettings({ seller: { name: 'Bad\nName' } }), /Invalid invoicing name/);
-  assert.throws(() => normalizeInvoicingSettings({ seller: { address: 'Tabbed\taddress' } }), /Invalid invoicing address/);
+  assert.equal(invoicing.seller.name, 'Manticore Software LTD');
+});
+
+test('invoicing errors identify the field, exact control character and position without echoing input', () => {
+  const cases = [
+    [{ seller: { name: 'First\tLast' } }, 'Your business details → Name: tab (U+0009) at character 6 is not allowed. Replace it with a space.'],
+    [{ seller: { name: 'Bad\nName' } }, 'Your business details → Name: line break (U+000A) at character 4 is not allowed. Remove it.'],
+    [{ seller: { address: 'Street\nRoom\t4' } }, 'Your business details → Address: tab (U+0009) at line 2, column 5 is not allowed. Replace it with a space.'],
+    [{ seller: { address: 'Street\u0001City' } }, 'Your business details → Address: control character (U+0001) at line 1, column 7 is not allowed. Remove it.'],
+    [{ clients: [{ id: 'client-1', name: 'Client\tName' }] }, 'Clients → client 1 → Name: tab (U+0009) at character 7 is not allowed. Replace it with a space.'],
+    [{ bankAccounts: [{ id: 'one', label: 'EUR', details: 'OK' }, { id: 'two', label: 'USD', details: 'IBAN\nSWIFT\tXXXX' }] }, 'Bank details → account 2 → Payment instructions: tab (U+0009) at line 2, column 6 is not allowed. Replace it with a space.'],
+    [{ bankAccounts: [{ id: 'one', label: 'EUR\taccount', details: 'OK' }] }, 'Bank details → account 1 → Account label: tab (U+0009) at character 4 is not allowed. Replace it with a space.'],
+    [{ notes: 'Thank\tyou' }, 'Invoice defaults → Footer notes: tab (U+0009) at line 1, column 6 is not allowed. Replace it with a space.'],
+    [{ seller: { email: 'a\tb@example.com' } }, 'Your business details → Email: tab (U+0009) at character 2 is not allowed. Replace it with a space.'],
+  ];
+  for (const [value, expected] of cases) assert.throws(() => normalizeInvoicingSettings(value), error => error.message === expected);
+  assert.throws(() => normalizeInvoicingSettings({ seller: { name: 'a'.repeat(201) } }),
+    error => error.message === 'Your business details → Name: use at most 200 characters.');
 });
 
 

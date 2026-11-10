@@ -72,6 +72,23 @@ test('Settings bank accounts save and Reports selects only one for the invoice a
     await expect(page.locator('#invoicing-settings legend').first()).toHaveText('Your business details');
     await expect(page.locator('#clients-title')).toHaveText('Clients (invoice recipients)');
     await expect(page.locator('#rates-destination')).toHaveValue('github:1');
+    await page.locator('#seller-address').fill('Suite\u007f1');
+    await page.locator('#save-invoicing').click();
+    await expect(page.locator('#invoicing-feedback')).toHaveText('Your business details → Address: control character (U+007F) at line 1, column 6 is not allowed. Remove it.');
+    await page.locator('#seller-name').fill('Example\tStudio');
+    await page.locator('#seller-address').fill('Suite\t\t1\nMain Street');
+    await page.locator('#save-invoicing').click();
+    await expect(page.locator('#invoicing-feedback')).toHaveText('Your business details → Name: tab (U+0009) at character 8 is not allowed. Replace it with a space.');
+    await expect(page.locator('#seller-name')).toHaveValue('Example\tStudio');
+    await page.locator('#seller-name').fill('Example Studio');
+    await page.locator('#save-invoicing').click();
+    await expect(page.locator('#invoicing-feedback')).toHaveText('Your business details → Address: tab (U+0009) at line 1, column 6 is not allowed. Replace it with a space.');
+    await expect(page.locator('#seller-address')).toHaveValue('Suite\t\t1\nMain Street');
+    await page.locator('#seller-address').fill('Suite  1\nMain Street');
+    await page.locator('#save-invoicing').click();
+    await expect(page.locator('#save-invoicing')).toHaveText('Saved');
+    await expect(page.locator('#seller-name')).toHaveValue('Example Studio');
+    await expect(page.locator('#seller-address')).toHaveValue('Suite  1\nMain Street');
     const login = page.locator('.rate-row .rate-login').first();
     await login.fill('');
     await expect(page.locator('.rate-row').first().locator('.rate-user-choice')).toHaveCount(5);
@@ -113,6 +130,12 @@ test('Settings bank accounts save and Reports selects only one for the invoice a
       await row.locator('.bank-account-label').fill(label);
       await row.locator('.bank-account-details').fill(details);
     }
+    const secondDetails = page.locator('.bank-account-row').last().locator('.bank-account-details');
+    await secondDetails.fill('Routing:\t02');
+    await page.locator('#save-invoicing').click();
+    await expect(page.locator('#invoicing-feedback')).toHaveText('Bank details → account 2 → Payment instructions: tab (U+0009) at line 1, column 9 is not allowed. Replace it with a space.');
+    await expect(secondDetails).toHaveValue('Routing:\t02');
+    await secondDetails.fill('Routing: 02');
     const secondId = await page.locator('.bank-account-row').last().getAttribute('data-bank-account-id');
     await page.locator('#default-bank-account').selectOption(secondId);
     await page.locator('#save-invoicing').click();
