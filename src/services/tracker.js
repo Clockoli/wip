@@ -401,6 +401,36 @@ function nextLocalMidnight(date) {
   const [year, month, day] = date.split('-').map(Number);
   return localTimestamp(new Date(year, month - 1, day + 1, 0, 0, 0, 0));
 }
+// Keep locally accepted Multiple days intervals available for overlap checks
+// even after the small Recent cache drops old dates. Store only timestamps and
+// stable IDs; this is an occupancy hint, not a second source of work records.
+const MAX_LOCAL_DAY_RANGE_INTERVALS = 5000;
+function rememberDayRangeIntervals(previous, entries) {
+  const known = new Map((previous ?? []).map(item => [item.id, item]));
+  for (const entry of entries) {
+    if (!entry?.id) continue;
+    known.delete(entry.id);
+    known.set(entry.id, { id: entry.id, entryDate: entry.entryDate,
+      startedAt: entry.startedAt, endedAt: entry.endedAt });
+  }
+  return [...known.values()].slice(-MAX_LOCAL_DAY_RANGE_INTERVALS);
+}
+function updateDayRangeIntervals(previous, updates = [], removals = []) {
+  const known = new Map((previous ?? []).map(item => [item.id, item]));
+  for (const id of removals) known.delete(id);
+  for (const entry of updates) {
+    if (!known.has(entry.id)) continue;
+    known.delete(entry.id);
+    known.set(entry.id, { id: entry.id, entryDate: entry.entryDate,
+      startedAt: entry.startedAt, endedAt: entry.endedAt });
+  }
+  return [...known.values()];
+}
+function knownLocalIntervals(state) {
+  return overlayPendingEntries([...(state.summaryCache?.weekEntries ?? []), ...(state.recentCache ?? []),
+    ...(state.dayRangeIntervals ?? [])], state.pendingWrites ?? []);
+}
+
 function replaceCachedFiles(cache, replacements, touchedPaths = replacements.map(entry => entry._path)) {
   const paths = new Set(touchedPaths);
   return [...replacements, ...(cache ?? []).filter(entry => !paths.has(entry._path))]
@@ -2209,7 +2239,8 @@ export class TrackerService {
       if (existing) Object.assign(existing, operation); else pendingWrites.push(operation);
       const recentCache = (state.recentCache ?? []).map(entry => entry.id === original.id && entry._path === path
         ? { ...updated, _path: entry._path, _sha: entry._sha, _index: entry._index, _pending: true } : entry);
-      return { pendingWrites, recentCache };
+      return { pendingWrites, recentCache,
+        dayRangeIntervals: updateDayRangeIntervals(state.dayRangeIntervals, [updated]) };
     }).then(state => ({
       operationId: trailingSupersedable(state.pendingWrites ?? [], operation => operation.operation === 'editEntry'
         && operation.request?.path === path && operation.request?.original?.id === original.id)?.id,
@@ -2231,7 +2262,8 @@ export class TrackerService {
       };
       pendingWrites.push(operation);
       const recentCache = (state.recentCache ?? []).filter(entry => !(entry.id === cached.id && entry._path === path));
-      return { pendingWrites, recentCache };
+      return { pendingWrites, recentCache,
+        dayRangeIntervals: updateDayRangeIntervals(state.dayRangeIntervals, [], [cached.id]) };
     }).then(state => {
       const operation = state.pendingWrites.at(-1);
       return { operationId: operation?.operation === 'deleteEntry' ? operation.id : null, pending: true };
@@ -2312,7 +2344,8 @@ export class TrackerService {
         const updated = updatedByIdentity.get(`${entry._path}\u0000${entry.id}`);
         return updated ? { ...updated, _path: entry._path, _sha: entry._sha, _index: entry._index, _pending: true } : entry;
       });
-      return { pendingWrites, recentCache };
+      return { pendingWrites, recentCache,
+        dayRangeIntervals: updateDayRangeIntervals(state.dayRangeIntervals, [...updatedByIdentity.values()]) };
     }).then(state => ({ operationId: state.pendingWrites.at(-1)?.operation === 'editEntries' ? state.pendingWrites.at(-1).id : null, pending: true }));
   }
 
@@ -2336,7 +2369,7 @@ export class TrackerService {
       const updated = applyActiveEdits(active, edits, queuedAt);
       const pendingWrites = [...(state.pendingWrites ?? [])];
       if (overlap) {
-        const known = overlayPendingEntries([...(state.recentCache ?? []), ...(state.summaryCache?.weekEntries ?? [])], pendingWrites);
+        const known = knownLocalIntervals({ ...state, pendingWrites });
         assertNoRunningCompletedOverlap(updated, [...overlap.files.flatMap(file => file.entries), ...known]);
       }
       const existing = trailingSupersedable(pendingWrites, operation => operation.operation === 'editActiveStart'
@@ -2658,8 +2691,7 @@ export class TrackerService {
       if (state.activeCache && endMs > new Date(state.activeCache.startedAt).getTime()) {
         throw new Error('Added time would overlap the running timer.');
       }
-      const known = overlayPendingEntries([...(state.recentCache ?? []), ...(state.summaryCache?.weekEntries ?? [])],
-        state.pendingWrites ?? []);
+      const known = knownLocalIntervals(state);
       if (known.some(entry => new Date(entry.startedAt).getTime() < endMs
           && new Date(entry.endedAt).getTime() > startMs)) {
         throw new Error('Added time would overlap existing time.');
@@ -2882,8 +2914,7 @@ export class TrackerService {
     const queuedAt = this.clock();
     let accepted;
     await this.mutateState(state => {
-      const known = overlayPendingEntries([...(state.recentCache ?? []), ...(state.summaryCache?.weekEntries ?? [])],
-        state.pendingWrites ?? []);
+      const known = knownLocalIntervals(state);
       const files = new Map();
       for (const record of known) {
         const path = monthlyRecordsPath(this.user, record.entryDate);
@@ -2911,6 +2942,7 @@ export class TrackerService {
         pendingWrites,
         recentCache: [...accepted, ...(state.recentCache ?? []).filter(entry => !newIds.has(entry.id))]
           .sort(newestFirst).slice(0, 50),
+        ...(noFuture ? { dayRangeIntervals: rememberDayRangeIntervals(state.dayRangeIntervals, planned) } : {}),
       };
     });
     return { added: requested.length, pending: true, entries: accepted };
