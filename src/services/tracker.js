@@ -3052,7 +3052,7 @@ export class TrackerService {
       if (updateCache) {
         const state = await this.store.getState();
         await this.store.patchState({ recentCache: replaceCachedDeletedFile(state.recentCache, saved, path),
-          dayRangeIntervals: updateDayRangeIntervals(state.dayRangeIntervals, [], [original.id]) });
+          dayRangeIntervals: updateDayRangeIntervals(state.dayRangeIntervals, [], [file.entries[located].id]) });
       }
       return { deleted: true, entries: saved };
     } catch (error) { if (isConflict(error)) throw new TrackerConflictError('This monthly time file changed while deleting. Reload.'); throw error; }
