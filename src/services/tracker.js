@@ -1788,7 +1788,8 @@ export class TrackerService {
           const pendingWrites = [...(latest.pendingWrites ?? [])], index = pendingWrites.findIndex(item => item.id === id);
           if (index < 0 || pendingWrites[index].status !== 'conflict') throw new Error('The pending conflict changed before it was resolved.');
           pendingWrites.splice(index, 1);
-          return { pendingWrites, recentCache: (latest.recentCache ?? []).filter(entry => !ids.has(entry.id)) };
+          return { pendingWrites, recentCache: (latest.recentCache ?? []).filter(entry => !ids.has(entry.id)),
+            dayRangeIntervals: updateDayRangeIntervals(latest.dayRangeIntervals, [], ids) };
         });
         return { resolved: true, discarded: true };
       }
@@ -1806,8 +1807,14 @@ export class TrackerService {
         await this.mutateState(latest => {
           const pendingWrites = [...(latest.pendingWrites ?? [])], index = pendingWrites.findIndex(item => item.id === id);
           if (index < 0 || pendingWrites[index].status !== 'conflict') throw new Error('The pending conflict changed before it was resolved.');
+          const discarded = pendingWrites[index];
           pendingWrites.splice(index, 1);
-          return { pendingWrites };
+          const originals = discarded.operation === 'editEntries'
+            ? discarded.request?.entries?.map(request => request.original) ?? []
+            : [discarded.request?.original].filter(Boolean);
+          const known = new Map((latest.dayRangeIntervals ?? []).map(entry => [entry.id, entry]));
+          const restored = originals.filter(entry => known.has(entry.id));
+          return { pendingWrites, dayRangeIntervals: updateDayRangeIntervals(latest.dayRangeIntervals, restored) };
         });
         return { resolved: true, discarded: true };
       }
@@ -2429,7 +2436,8 @@ export class TrackerService {
         const saved = parseMonthlyRecords(serializeMonthlyRecords(entries), { user: this.user, month: source.month, path, sha: blobShas[path] });
         if (updateCache) {
           const state = await this.store.getState();
-          await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, saved) });
+          await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, saved),
+            dayRangeIntervals: updateDayRangeIntervals(state.dayRangeIntervals, [updated]) });
         }
         return saved[position];
       }
@@ -2451,7 +2459,8 @@ export class TrackerService {
       const replacements = [...savedSource, ...savedDestination];
       if (updateCache) {
         const state = await this.store.getState();
-        await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, replacements, [source.path, destination.path]) });
+        await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, replacements, [source.path, destination.path]),
+          dayRangeIntervals: updateDayRangeIntervals(state.dayRangeIntervals, [updated]) });
       }
       return savedDestination.at(-1);
     } catch (error) { if (isConflict(error)) throw new TrackerConflictError('A monthly time file changed while you were saving. Reload.'); throw error; }
@@ -2560,7 +2569,8 @@ export class TrackerService {
       const replacements = [...savedByPath.values()].flat();
       if (updateCache) {
         const state = await this.store.getState();
-        await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, replacements, touchedPaths) });
+        await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, replacements, touchedPaths),
+          dayRangeIntervals: updateDayRangeIntervals(state.dayRangeIntervals, updated) });
       }
       return resultLocations.map(location => savedByPath.get(location.path)[location.index]);
     } catch (error) {
@@ -3037,7 +3047,8 @@ export class TrackerService {
       const saved = parseMonthlyRecords(serializeMonthlyRecords(entries), { user: this.user, month: file.month, path, sha: blobShas[path] ?? null });
       if (updateCache) {
         const state = await this.store.getState();
-        await this.store.patchState({ recentCache: replaceCachedDeletedFile(state.recentCache, saved, path) });
+        await this.store.patchState({ recentCache: replaceCachedDeletedFile(state.recentCache, saved, path),
+          dayRangeIntervals: updateDayRangeIntervals(state.dayRangeIntervals, [], [original.id]) });
       }
       return { deleted: true, entries: saved };
     } catch (error) { if (isConflict(error)) throw new TrackerConflictError('This monthly time file changed while deleting. Reload.'); throw error; }
@@ -3080,7 +3091,10 @@ export class TrackerService {
       });
       const savedByPath = new Map(touched.map(file => [file.path, parseMonthlyRecords(serializeMonthlyRecords(file.entries), { user: this.user, month: file.month, path: file.path, sha: blobShas[file.path] ?? null })]));
       const replacements = [...savedByPath.values()].flat();
-      const state = await this.store.getState(); await this.store.patchState({ recentCache: replaceCachedFiles(state.recentCache, replacements, touched.map(file => file.path)) });
+      const state = await this.store.getState(); await this.store.patchState({
+        recentCache: replaceCachedFiles(state.recentCache, replacements, touched.map(file => file.path)),
+        dayRangeIntervals: updateDayRangeIntervals(state.dayRangeIntervals, updated),
+      });
       return resultLocations.map(location => savedByPath.get(location.path)[location.index]);
     } catch (error) {
       if (isConflict(error)) throw new TrackerConflictError('A monthly time file changed while the boundary was being saved. Reload.');
