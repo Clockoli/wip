@@ -636,11 +636,7 @@ export class TrackerService {
     const { operation, pendingActive } = this.prepareQueuedStart(taskUrl, taskTitle, description, { startedAt, overlapGuards, overlapHeadSha, requireNoOverlap });
     await this.mutateState(current => {
       if (current.activeCache) throw new Error(`A timer is already tracking ${taskLabel(current.activeCache)}`);
-      if (requireNoOverlap) {
-        const known = overlayPendingEntries([...(current.recentCache ?? []), ...(current.summaryCache?.weekEntries ?? [])],
-          current.pendingWrites ?? []);
-        assertNoRunningCompletedOverlap(pendingActive, known);
-      }
+      if (requireNoOverlap) assertNoRunningCompletedOverlap(pendingActive, knownLocalIntervals(current));
       return { pendingWrites: [...(current.pendingWrites ?? []), operation], activeCache: pendingActive };
     });
     return pendingActive;

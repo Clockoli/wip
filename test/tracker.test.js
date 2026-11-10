@@ -3186,10 +3186,14 @@ test('activity projection reports indexed IDs replaced by queued deletes and edi
 
 test('completed Add time rejects locally known overlaps without waiting for GitHub', async () => {
   const previous = entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z');
-  for (const source of ['recent', 'week', 'queued']) {
+  for (const source of ['recent', 'week', 'queued', 'index']) {
     const github = new FakeGitHub(), store = new MemoryStore();
     if (source === 'recent') store.value.recentCache = [previous];
     if (source === 'week') store.value.summaryCache = { weekEntries: [previous] };
+    if (source === 'index') store.value.dayRangeIntervals = [{
+      id: previous.id, entryDate: previous.entryDate,
+      startedAt: previous.startedAt, endedAt: previous.endedAt,
+    }];
     if (source === 'queued') store.value.pendingWrites = [{
       operation: 'addTime', id: 'pending-add', entry: previous, status: 'pending',
     }];
@@ -3214,10 +3218,14 @@ test('completed Add time rejects locally known overlaps without waiting for GitH
 
 test('running Add time rejects locally known overlapping entries before queuing', async () => {
   const previous = entry('2026-08-18T07:00:00.000Z', '2026-08-18T08:00:00.000Z');
-  for (const source of ['recent', 'week', 'queued']) {
+  for (const source of ['recent', 'week', 'queued', 'index']) {
     const github = new FakeGitHub(), store = new MemoryStore();
     if (source === 'recent') store.value.recentCache = [previous];
     if (source === 'week') store.value.summaryCache = { weekEntries: [previous] };
+    if (source === 'index') store.value.dayRangeIntervals = [{
+      id: previous.id, entryDate: previous.entryDate,
+      startedAt: previous.startedAt, endedAt: previous.endedAt,
+    }];
     if (source === 'queued') store.value.pendingWrites = [{
       operation: 'addTime', id: 'pending-add', entry: previous, status: 'pending',
     }];
