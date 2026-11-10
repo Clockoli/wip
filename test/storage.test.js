@@ -662,6 +662,24 @@ test('restoring an older backup never rewinds the invoice counter', async () => 
   assert.equal((await store.reserveInvoiceNumber()).sequence, 8);
 });
 
+test('bank accounts survive local-store restart, client-only saves, and settings backup', async () => {
+  const backend = new MemoryBackend(), store = new ChromeStore(backend);
+  const bankAccounts = [{ id: 'bank-1', label: 'EUR', details: 'IBAN: XX01' }, { id: 'bank-2', label: 'USD', details: 'Routing: 02' }];
+  await store.saveBillingSettings({ invoicing: { bankAccounts, defaultBankAccountId: 'bank-2', clients: [{ id: 'acme' }] } });
+  const restarted = new ChromeStore(backend);
+  const saved = await restarted.getLocalPreferences();
+  assert.deepEqual(saved.invoicing.bankAccounts, bankAccounts);
+  await restarted.saveBillingSettings({ invoicing: { ...saved.invoicing, clients: [...saved.invoicing.clients, { id: 'globex' }] } }, null, saved.revision);
+  assert.deepEqual((await new ChromeStore(backend).getLocalPreferences()).invoicing.bankAccounts, bankAccounts);
+  const restored = new ChromeStore(new MemoryBackend());
+  await restored.importSettings((await store.exportSettings()).text);
+  assert.deepEqual((await restored.getLocalPreferences()).invoicing.bankAccounts, bankAccounts);
+  assert.equal((await restored.getLocalPreferences()).invoicing.defaultBankAccountId, 'bank-2');
+  const before = structuredClone(backend.values);
+  await assert.rejects(restarted.saveBillingSettings({ invoicing: { ...saved.invoicing, defaultBankAccountId: 'missing' } }), /bank account/i);
+  assert.deepEqual(backend.values, before);
+});
+
 test('billing saves reject stale invoice counters inside the transaction without changing settings', async () => {
   const backend = new MemoryBackend(), store = new ChromeStore(backend);
   await store.saveBillingSettings({ invoicing: { nextNumber: 7, notes: 'Original' } });

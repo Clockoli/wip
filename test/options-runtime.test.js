@@ -2113,6 +2113,30 @@ test('saving a client does not validate or overwrite unsaved invoice number and 
   assert.equal(page.nodes.get('clients-list').querySelectorAll('.client-row').at(-1).querySelector('.client-name').value, 'New client');
 });
 
+test('invoicing saves multiple bank details and a default without changing clients; client saves keep bank drafts', async () => {
+  const page = harness({ reply: request => billingSaveResult(request) });
+  page.context.renderLocalPreferences(preferences);
+  page.context.addBankAccountRow();
+  page.context.addBankAccountRow();
+  const rows = page.nodes.get('bank-accounts-list').querySelectorAll('.bank-account-row');
+  rows[0].querySelector('.bank-account-label').value = 'EUR';
+  rows[0].querySelector('.bank-account-details').value = 'IBAN: XX01';
+  rows[1].querySelector('.bank-account-label').value = 'USD';
+  rows[1].querySelector('.bank-account-details').value = 'Routing: 02';
+  const defaultSelect = page.nodes.get('default-bank-account');
+  page.context.refreshBankAccountOptions();
+  defaultSelect.value = rows[1].dataset.bankAccountId;
+  await page.submit('clients-form');
+  assert.deepEqual(page.requests[0].payload.invoicing.bankAccounts, []);
+  assert.equal(rows[0].querySelector('.bank-account-details').value, 'IBAN: XX01');
+  await page.submit('invoicing-form');
+  const saved = page.requests.at(-1).payload.invoicing;
+  assert.equal(saved.bankAccounts.length, 2);
+  assert.equal(saved.bankAccounts[1].details, 'Routing: 02');
+  assert.equal(saved.defaultBankAccountId, rows[1].dataset.bankAccountId);
+  assert.equal(saved.clients.length, 1);
+});
+
 test('individual client Save works even if invoice defaults are invalid', async () => {
   const page = harness({ reply: request => billingSaveResult(request) });
   page.context.renderLocalPreferences(preferences);
@@ -2171,6 +2195,131 @@ test('rates cannot be added until their client is saved', () => {
   assert.equal(page.nodes.get('rates-client').value.startsWith('client-'), true);
   assert.equal(page.nodes.get('add-rate').disabled, true);
   assert.equal(page.nodes.get('save-billing').disabled, true);
+});
+
+test('rate login suggestions use the selected time repository and preserve manual logins', async () => {
+  const replies = new Map();
+  const page = harness({ collaboratorReplies: true, reply(request) {
+    if (request.type !== 'LOAD_REPOSITORY_COLLABORATORS') return {};
+    return new Promise(resolve => replies.set(request.destinationId, resolve));
+  } });
+  page.context.testState = { ...connectedState, destinations: [
+    { id: 'github:20', owner: 'acme', repo: 'one' },
+    { id: 'github:21', owner: 'acme', repo: 'two' },
+  ], defaultDestinationId: 'github:20' };
+  page.context.testPrefs = preferences;
+  vm.runInContext('state = testState; renderLocalPreferences(testPrefs)', page.context);
+  const repository = page.nodes.get('rates-destination');
+  assert.equal(repository.value, 'github:20');
+  const row = page.nodes.get('rates-list').querySelector('.rate-row');
+  const login = row.querySelector('.rate-login');
+  login.value = '';
+  login.listeners.focus();
+  assert.deepEqual(page.requests.map(request => request.destinationId), ['github:20']);
+  repository.value = 'github:21'; repository.listeners.change();
+  login.listeners.focus();
+  replies.get('github:21')({ users: [{ login: 'second', id: 21 }], avatarUsers: [{ login: 'second' }] });
+  await Promise.resolve(); await Promise.resolve();
+  replies.get('github:20')({ users: [{ login: 'first', id: 20 }], avatarUsers: [{ login: 'first' }] });
+  await Promise.resolve(); await Promise.resolve();
+  assert.deepEqual(row.querySelectorAll('.rate-user-choice').map(choice => choice.textContent), ['second']);
+  login.value = 'custom-user';
+  assert.equal(login.value, 'custom-user', 'suggestions cannot replace a typed login');
+  assert.equal(page.requests.some(request => request.type === 'SEARCH_INVITEE_USERS'), false);
+});
+
+test('rate login dropdown includes collaborators beyond the team preview', async () => {
+  const page = harness({ collaboratorReplies: true, reply(request) {
+    if (request.type === 'LOAD_REPOSITORY_COLLABORATORS') return {
+      users: [{ login: 'first' }], moreUsers: [{ login: 'fifth' }], avatarUsers: [{ login: 'first' }, { login: 'fifth' }], truncated: true,
+    };
+    return billingSaveResult(request);
+  } });
+  page.context.testState = connectedState;
+  vm.runInContext('state = testState', page.context);
+  page.context.renderLocalPreferences(preferences);
+  const row = page.nodes.get('rates-list').querySelector('.rate-row');
+  const input = row.querySelector('.rate-login');
+  input.value = '';
+  input.listeners.focus();
+  await Promise.resolve(); await Promise.resolve();
+  assert.deepEqual(row.querySelectorAll('.rate-user-choice').map(choice => choice.textContent), ['first', 'fifth']);
+  assert.match(row.querySelector('.rate-login-note').textContent, /first 100/i);
+  input.value = 'fifth';
+  await page.submit('billing-form');
+  assert.equal(page.requests.at(-1).payload.clientRates['client-1'].fifth[0].amountMinorPerHour, 12500);
+});
+
+test('repository collaborator load failure leaves rate login editable', async () => {
+  const page = harness({ collaboratorReplies: true, reply(request) {
+    if (request.type === 'LOAD_REPOSITORY_COLLABORATORS') return new Error('GitHub unavailable');
+    return billingSaveResult(request);
+  } });
+  page.context.testState = connectedState;
+  vm.runInContext('state = testState', page.context);
+  page.context.renderLocalPreferences(preferences);
+  const row = page.nodes.get('rates-list').querySelector('.rate-row');
+  const input = row.querySelector('.rate-login');
+  input.listeners.focus();
+  await Promise.resolve(); await Promise.resolve();
+  assert.match(row.querySelector('.rate-login-note').textContent, /manually/);
+  input.value = 'manual-user';
+  await page.submit('billing-form');
+  assert.equal(page.requests.at(-1).payload.clientRates['client-1']['manual-user'][0].amountMinorPerHour, 12500);
+});
+
+test('rate suggestions reuse the loaded team directory and clear on account change', async () => {
+  const page = harness({ collaboratorReplies: true, reply: () => ({ users: [{ login: 'new-account' }], avatarUsers: [{ login: 'new-account' }] }) });
+  page.context.testState = connectedState;
+  vm.runInContext(`state = testState; collaboratorAccount = 'github_app:octocat';
+    repositoryCollaborators.set('pat:single', new Map([['existing', '']]));`, page.context);
+  page.context.renderLocalPreferences(preferences);
+  const row = page.nodes.get('rates-list').querySelector('.rate-row');
+  row.querySelector('.rate-login').value = '';
+  row.querySelector('.rate-login').listeners.focus();
+  await Promise.resolve();
+  assert.deepEqual(row.querySelectorAll('.rate-user-choice').map(choice => choice.textContent), ['existing']);
+  assert.equal(page.requests.some(request => request.type === 'LOAD_REPOSITORY_COLLABORATORS'), false);
+  page.context.otherState = { ...connectedState, auth: { ...connectedState.auth, githubLogin: 'different' } };
+  vm.runInContext('state = otherState; renderState()', page.context);
+  assert.equal(vm.runInContext('rateUserDirectories.size', page.context), 0);
+  assert.equal(row.querySelector('.rate-user-choices').hidden, true);
+});
+
+test('rate suggestions reflect a refreshed repository team without another collaborator request', async () => {
+  const destination = { id: 'github:20', owner: 'acme', repo: 'time-data', installationId: 10 };
+  let users = [{ id: 1, login: 'old-member' }];
+  const page = harness({ collaboratorReplies: true, reply: request => request.type === 'LOAD_REPOSITORY_COLLABORATORS'
+    ? users instanceof Error ? users : { users, avatarUsers: users, hasMore: false } : {} });
+  page.render({ ...connectedState, destinations: [destination] });
+  await new Promise(setImmediate);
+  page.context.renderLocalPreferences(preferences);
+  const row = page.nodes.get('rates-list').querySelector('.rate-row');
+  const input = row.querySelector('.rate-login');
+  input.value = '';
+  input.listeners.focus();
+  await new Promise(setImmediate);
+  assert.deepEqual(row.querySelectorAll('.rate-user-choice').map(choice => choice.textContent), ['old-member']);
+
+  users = [{ id: 2, login: 'new-member' }];
+  const root = page.nodes.get('time-repository-list');
+  await page.context.loadRepositoryCollaborators(root.children[0], destination, root);
+  await new Promise(setImmediate);
+  assert.deepEqual(row.querySelectorAll('.rate-user-choice').map(choice => choice.textContent), ['new-member']);
+  input.listeners.focus();
+  await new Promise(setImmediate);
+  assert.deepEqual(row.querySelectorAll('.rate-user-choice').map(choice => choice.textContent), ['new-member']);
+  assert.equal(page.requests.filter(request => request.type === 'LOAD_REPOSITORY_COLLABORATORS').length, 2);
+
+  users = new Error('GitHub unavailable');
+  await page.context.loadRepositoryCollaborators(root.children[0], destination, root);
+  assert.deepEqual(row.querySelectorAll('.rate-user-choice').map(choice => choice.textContent), []);
+  assert.match(row.querySelector('.rate-login-note').textContent, /manually/);
+  users = [{ id: 3, login: 'recovered-member' }];
+  input.listeners.focus();
+  await new Promise(setImmediate);
+  assert.deepEqual(row.querySelectorAll('.rate-user-choice').map(choice => choice.textContent), ['recovered-member']);
+  assert.equal(page.requests.filter(request => request.type === 'LOAD_REPOSITORY_COLLABORATORS').length, 4);
 });
 
 test('invalid billable input reports inline without sending a mutation', async () => {

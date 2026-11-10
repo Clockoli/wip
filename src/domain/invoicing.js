@@ -20,7 +20,7 @@ export function invoiceExchangeRequest(records, clientRates, clientId, targetCur
 
 export function buildInvoice(records, {
   clientRates = {}, invoicing, clientId = '', currency = '', exchangeRates = null,
-  groupBy = 'task', startDate, endDate, issueDate, extraLines = [], sequence = null,
+  groupBy = 'task', startDate, endDate, issueDate, extraLines = [], sequence = null, bankAccountId = undefined,
 }) {
   const settings = invoicingSettings({ invoicing }), period = validateDateRange(startDate, endDate);
   validateDateRange(issueDate, issueDate);
@@ -30,6 +30,9 @@ export function buildInvoice(records, {
   if (!Number.isFinite(due.getTime()) || due.getUTCFullYear() > 9999) throw new Error('Invoice due date is out of range');
   const client = settings.clients.find(item => item.id === clientId) ?? null;
   if (!client) throw new Error(clientId ? 'Invoice client was not found' : 'Choose a client for the invoice');
+  const selectedBankId = bankAccountId === undefined ? settings.defaultBankAccountId : bankAccountId;
+  const bankAccount = selectedBankId ? settings.bankAccounts.find(item => item.id === selectedBankId) : null;
+  if (selectedBankId && !bankAccount) throw new Error('Invoice bank account was not found');
   const entries = (records ?? []).map(record => ({ record, rate: rateForUser(record.user, clientRates?.[client.id] || {}, recordDate(record)) }));
   const currencies = [...new Set(entries.filter(entry => entry.rate).map(entry => entry.rate.currency))];
   const target = currency || client?.defaultCurrency || (currencies.length === 1 ? currencies[0] : '');
@@ -77,7 +80,7 @@ export function buildInvoice(records, {
   if (![...lines.map(line => line.amountMinor), subtotalMinor, taxMinor, subtotalMinor + taxMinor].every(Number.isSafeInteger)) throw new Error('Invoice amounts must remain safe integers in minor units');
   return {
     number: sequence === null ? '' : formatInvoiceNumber(settings.numberFormat, sequence, issueDate), sequence,
-    issueDate, dueDate: due.toISOString().slice(0, 10), seller: settings.seller, client, period, groupBy, lines,
+    issueDate, dueDate: due.toISOString().slice(0, 10), seller: settings.seller, client, bankAccount, period, groupBy, lines,
     unbilled: [...uncovered].map(([person, seconds]) => ({ person, seconds })).sort((a, b) => a.person.localeCompare(b.person)),
     subtotalMinor, taxMinor, totalMinor: subtotalMinor + taxMinor, taxPercent: settings.taxPercent,
     currency: targetCurrency, currencyPosition, paymentTermsDays: settings.paymentTermsDays, notes: settings.notes, converted,

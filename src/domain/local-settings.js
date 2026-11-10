@@ -278,32 +278,65 @@ function normalizeRatePeriods(raw, login, legacyCurrency = 'USD') {
   return periods;
 }
 
-function invoicingText(value, label, limit, multiline = false) {
-  if (typeof value !== 'string' || /[\u0000-\u001f\u007f]/.test(multiline ? value.replace(/\n/g, '') : value) || value.trim().length > limit) throw new Error(`Invalid invoicing ${label}`);
+function invoicingText(value, field, limit, multiline = false) {
+  if (typeof value !== 'string') throw new Error(`${field}: enter text.`);
+  let line = 1, column = 1, position = 1;
+  for (const character of value) {
+    const code = character.codePointAt(0);
+    if ((code < 32 || code === 127) && !(multiline && code === 10)) {
+      const name = code === 9 ? 'tab' : code === 10 ? 'line break'
+        : code === 13 ? 'carriage return' : 'control character';
+      const point = `U+${code.toString(16).toUpperCase().padStart(4, '0')}`;
+      const location = multiline ? `line ${line}, column ${column}` : `character ${position}`;
+      throw new Error(`${field}: ${name} (${point}) at ${location} is not allowed. ${code === 9 ? 'Replace it with a space.' : 'Remove it.'}`);
+    }
+    if (code === 10) { line += 1; column = 1; }
+    else column += 1;
+    position += 1;
+  }
+  if (value.trim().length > limit) throw new Error(`${field}: use at most ${limit} characters.`);
   return value.trim();
 }
 
-function invoicingParty(value, client = false) {
+function invoicingParty(value, client = false, index = 0) {
   const allowed = ['name', 'address', 'email', 'taxId', ...(client ? ['id', 'defaultCurrency'] : [])];
   if (!plainObject(value) || Object.keys(value).some(key => !allowed.includes(key))) throw new Error('Invoicing party has unexpected fields');
   // The address is captured in a textarea and rendered with white-space:pre-line, so it keeps its line breaks.
-  return Object.fromEntries(['name', 'address', 'email', 'taxId'].map(key => [key, invoicingText(value[key] ?? '', key, key === 'address' ? 1000 : 200, key === 'address')]));
+  const section = client ? `Clients → client ${index + 1}` : 'Your business details';
+  return Object.fromEntries(['name', 'address', 'email', 'taxId'].map(key => [key, invoicingText(
+    value[key] ?? '', `${section} → ${{ name: 'Name', address: 'Address', email: 'Email', taxId: 'Tax ID' }[key]}`,
+    key === 'address' ? 1000 : 200, key === 'address',
+  )]));
 }
 
 export function normalizeInvoicingSettings(value = {}) {
-  const allowed = ['seller', 'clients', 'nextNumber', 'numberFormat', 'paymentTermsDays', 'paymentTerms', 'taxPercent', 'notes'];
+  const allowed = ['seller', 'clients', 'bankAccounts', 'defaultBankAccountId', 'nextNumber', 'numberFormat', 'paymentTermsDays', 'paymentTerms', 'taxPercent', 'notes'];
   if (!plainObject(value) || Object.keys(value).some(key => !allowed.includes(key))) throw new Error('Invoicing settings have unexpected fields');
   const seller = invoicingParty(value.seller ?? {}), source = value.clients ?? [];
   if (!Array.isArray(source) || source.length > 50) throw new Error('Invoicing clients must be a list of at most 50 entries');
   const ids = new Set();
-  const clients = source.map(raw => {
-    const party = invoicingParty(plainObject(raw) ? Object.fromEntries(Object.entries(raw).filter(([key]) => key !== 'projects')) : raw, true), id = invoicingText(raw.id ?? '', 'client id', 64);
+  const clients = source.map((raw, index) => {
+    const party = invoicingParty(plainObject(raw) ? Object.fromEntries(Object.entries(raw).filter(([key]) => key !== 'projects')) : raw, true, index), id = invoicingText(raw.id ?? '', 'client id', 64);
     if (!CLIENT_ID_RE.test(id)) throw new Error('Invalid invoicing client id');
     if (ids.has(id)) throw new Error(`Duplicate invoicing client id: ${id}`);
     ids.add(id);
     const currency = invoicingText(raw.defaultCurrency ?? '', 'client currency', 200);
     return { id, ...party, defaultCurrency: currency ? normalizeCurrency(currency) : '' };
   });
+  const bankSource = value.bankAccounts ?? [];
+  if (!Array.isArray(bankSource) || bankSource.length > 20) throw new Error('Bank accounts must be a list of at most 20 entries');
+  const bankIds = new Set();
+  const bankAccounts = bankSource.map((raw, index) => {
+    if (!plainObject(raw) || Object.keys(raw).some(key => !['id', 'label', 'details'].includes(key))) throw new Error('Bank account has unexpected fields');
+    const id = invoicingText(raw.id ?? '', 'bank account id', 64);
+    const label = invoicingText(raw.label ?? '', `Bank details → account ${index + 1} → Account label`, 200);
+    const details = invoicingText(raw.details ?? '', `Bank details → account ${index + 1} → Payment instructions`, 1000, true);
+    if (!CLIENT_ID_RE.test(id) || bankIds.has(id) || !label || !details) throw new Error('Invalid or duplicate bank account');
+    bankIds.add(id);
+    return { id, label, details };
+  });
+  const defaultBankAccountId = invoicingText(value.defaultBankAccountId ?? '', 'default bank account id', 64);
+  if (defaultBankAccountId && !bankIds.has(defaultBankAccountId)) throw new Error('Default bank account was not found');
   const nextNumber = value.nextNumber ?? 1, taxPercent = value.taxPercent ?? 0;
   if (!Number.isSafeInteger(nextNumber) || nextNumber < 1 || nextNumber > 1e9) throw new Error('Invoice next number must be a positive integer no greater than 1000000000');
   if (typeof taxPercent !== 'number' || !Number.isFinite(taxPercent) || taxPercent < 0 || taxPercent > 100 || !/^\d+(?:\.\d{1,2})?$/.test(String(taxPercent))) throw new Error('Invoice tax percent must be 0–100 with at most two decimal places');
@@ -314,12 +347,12 @@ export function normalizeInvoicingSettings(value = {}) {
   const legacyDays = onReceipt ? 0 : Number(legacyTerms.match(/\bnet\s*(-?\d+)/i)?.[1] ?? (numbers.length === 1 ? numbers[0] : 30));
   const paymentTermsDays = Object.hasOwn(value, 'paymentTermsDays') ? value.paymentTermsDays : Math.max(0, Math.min(365, legacyDays));
   if (!Number.isInteger(paymentTermsDays) || paymentTermsDays < 0 || paymentTermsDays > 365) throw new Error('Invoice payment terms must be an integer from 0 to 365 days');
-  let notes = invoicingText(value.notes ?? '', 'notes', 1000, true);
+  let notes = invoicingText(value.notes ?? '', 'Invoice defaults → Footer notes', 1000, true);
   if (legacyTerms.trim() && legacyTerms !== `Net ${paymentTermsDays}` && !onReceipt) {
     const line = `Payment terms: ${legacyTerms}`, appended = notes ? `${notes}\n${line}` : line;
-    if (!notes.split('\n').includes(line) && appended.length <= 1000) notes = invoicingText(appended, 'notes', 1000, true);
+    if (!notes.split('\n').includes(line) && appended.length <= 1000) notes = invoicingText(appended, 'Invoice defaults → Footer notes', 1000, true);
   }
-  return { seller, clients, nextNumber, numberFormat, paymentTermsDays, taxPercent, notes };
+  return { seller, clients, bankAccounts, defaultBankAccountId, nextNumber, numberFormat, paymentTermsDays, taxPercent, notes };
 }
 
 export function invoicingSettings(billing = {}) { return normalizeInvoicingSettings(billing?.invoicing ?? {}); }

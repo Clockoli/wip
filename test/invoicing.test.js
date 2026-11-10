@@ -18,7 +18,7 @@ test('invoice assembles seller, selected client, period, whole-cent tax, terms a
   const input = structuredClone(invoicing), records = [structuredClone(record)];
   const invoice = buildInvoice(records, { ...options, invoicing, clientId: 'c', sequence: 7 });
   assert.deepEqual(invoice, {
-    number: 'INV-2026-0007', sequence: 7, issueDate: '2026-09-01', dueDate: '2026-09-15', seller: invoicing.seller, client: invoicing.clients[0],
+    number: 'INV-2026-0007', sequence: 7, issueDate: '2026-09-01', dueDate: '2026-09-15', seller: invoicing.seller, client: invoicing.clients[0], bankAccount: null,
     period: { startDate: '2026-08-01', endDate: '2026-08-31' }, groupBy: 'task',
     lines: [{ key: JSON.stringify([record.taskUrl, 'alice', 'Work description', 12345, 'USD']), taskUrl: record.taskUrl, taskTitle: 'Task', person: 'alice', description: 'Work description', seconds: 3600, hours: 1, rateMinorPerHour: 12345, effectiveRateMinorPerHour: 12345, rateCurrency: 'USD', amountMinor: 12345 }],
     unbilled: [], subtotalMinor: 12345, taxMinor: 895, totalMinor: 13240, taxPercent: 7.25, currency: 'USD', currencyPosition: 'suffix', paymentTermsDays: 14, notes: 'Thanks', converted: false,
@@ -27,6 +27,15 @@ test('invoice assembles seller, selected client, period, whole-cent tax, terms a
   assert.deepEqual(records, [record]);
   assert.equal(buildInvoice(records, { ...options, issueDate: '2028-02-28', invoicing: { paymentTermsDays: 2 } }).dueDate, '2028-03-01');
   assert.equal(buildInvoice(records, { ...options, issueDate: '2026-12-31', invoicing: { paymentTermsDays: 1 } }).dueDate, '2027-01-01');
+});
+
+test('an invoice selects one saved bank account independently of its client and default', () => {
+  const bankAccounts = [{ id: 'one', label: 'EUR', details: 'IBAN: XX01' }, { id: 'two', label: 'USD', details: 'Routing: 02' }];
+  const invoicing = { bankAccounts, defaultBankAccountId: 'one', clients: [{ id: 'c' }, { id: 'another' }] };
+  assert.deepEqual(buildInvoice([record], { ...options, invoicing }).bankAccount, bankAccounts[0]);
+  assert.deepEqual(buildInvoice([record], { ...options, invoicing, bankAccountId: 'two' }).bankAccount, bankAccounts[1]);
+  assert.equal(buildInvoice([record], { ...options, invoicing, bankAccountId: '' }).bankAccount, null);
+  assert.throws(() => buildInvoice([record], { ...options, invoicing, bankAccountId: 'missing' }), /bank account/i);
 });
 
 test('uncovered records remain visible but only billed people determine description suffixes', () => {
