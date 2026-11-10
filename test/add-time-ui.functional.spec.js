@@ -286,6 +286,8 @@ test('Add and Edit time accept separate dates, keyboard times and an overnight E
     await page.keyboard.type('1000');
     await start.press('Tab');
     await expect(start).toHaveValue('10:00');
+    await expect(endDate).toBeFocused();
+    await endDate.press('Tab');
     await expect(end).toBeFocused();
     await end.pressSequentially('1200');
     await end.press('Tab');
