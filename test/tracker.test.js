@@ -4066,11 +4066,23 @@ test('bulk import appends entries after existing same-day time and stages same-d
   assert.equal(saved[2].description, 'Second task');
 });
 
-test('bulk import is all-or-nothing when requested hours do not fit without crossing the day', async () => {
+test('Bulk time adding reuses an earlier free gap when appending at the end would not fit', async () => {
   const github = new FakeGitHub(), path = 'times/2026-08/alice.jsonl';
   seedText(github, path, serializeMonthlyRecords([entry(localTimestamp(2026, 7, 21, 23), localTimestamp(2026, 7, 22, 0))]), 'before');
+  await service({ github }).bulkAddTimes('2026-08-21 https://example.com/a One more hour 1:00');
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved.length, 2);
+  assert.deepEqual([saved[0].startedAt, saved[0].endedAt], [
+    new Date(localTimestamp(2026, 7, 21, 0)).toISOString(), new Date(localTimestamp(2026, 7, 21, 1)).toISOString(),
+  ]);
+});
+
+test('Bulk time adding is atomic when no contiguous free interval can hold the duration', async () => {
+  const github = new FakeGitHub(), path = 'times/2026-08/alice.jsonl';
+  seedText(github, path, serializeMonthlyRecords([entry(localTimestamp(2026, 7, 21, 0), localTimestamp(2026, 7, 21, 23, 30))]), 'before');
   const tracker = service({ github });
-  await assert.rejects(() => tracker.bulkAddTimes('2026-08-21 https://example.com/a No room 1:00'), /Line 1.*do not fit.*No entries were added/i);
+  await assert.rejects(() => tracker.bulkAddTimes('2026-08-21 https://example.com/a No room 1:00'),
+    /Line 1.*do not fit.*No entries were added/i);
   assert.equal(github.writes.length, 0);
   assert.equal(github.atomicWrites.length, 0);
   assert.equal(github.files.get(path).sha, 'before');
@@ -4130,26 +4142,130 @@ test('eight hours per day across months syncs all records and the index in one g
 
 test('day range does not partly queue when one requested day cannot fit', async () => {
   const github = new FakeGitHub(), store = new MemoryStore();
-  const existing = entry(localTimestamp(2026, 10, 2, 10), localTimestamp(2026, 10, 2, 11));
+  const existing = entry(localTimestamp(2026, 10, 2, 0), localTimestamp(2026, 10, 2, 22));
   seedText(github, 'times/2026-11/alice.jsonl', serializeMonthlyRecords([existing]));
   await store.patchState({ recentCache: [existing] });
   const tracker = service({ github, store, clock: () => new Date('2026-11-03T12:00:00Z'), timezone: 'UTC' });
   await assert.rejects(() => tracker.addDayRange({ taskUrl: issue.url, taskTitle: 'Time off', description: '',
     dates: ['2026-11-01', '2026-11-02'], durationSeconds: 8 * 3600 }),
-  error => /Selected day 2026-11-02 overlaps an existing time entry\. No days were added\./.test(error.message)
+  error => /Selected day 2026-11-02 has no free 8-hour interval\. No days were added\./.test(error.message)
     && !/Line 2/.test(error.message));
   assert.equal((await store.getState()).pendingWrites.length, 0);
   assert.equal(github.atomicWrites.length, 0);
 });
 
-test('multiple days reject an existing interval inside the default 09:00–17:00 block without moving the start', async () => {
+test('Multiple days moves around a known interval instead of rejecting an otherwise free day', async () => {
   const github = new FakeGitHub(), store = new MemoryStore();
   const existing = entry(localTimestamp(2026, 7, 31, 10), localTimestamp(2026, 7, 31, 11));
   await store.patchState({ recentCache: [existing] });
   const tracker = service({ github, store, clock: () => new Date('2026-11-03T12:00:00Z'), timezone: 'UTC' });
-  await assert.rejects(() => tracker.addDayRange({ taskUrl: issue.url, dates: ['2026-08-30', '2026-08-31'],
-    durationSeconds: 28800 }), /overlap/i);
+  await tracker.addDayRange({ taskUrl: issue.url, dates: ['2026-08-30', '2026-08-31'],
+    durationSeconds: 28800 });
+  const [first, second] = (await store.getState()).pendingWrites[0].entries;
+  assert.deepEqual([new Date(first.startedAt).getHours(), new Date(first.endedAt).getHours()], [9, 17]);
+  assert.deepEqual([new Date(second.startedAt).getHours(), new Date(second.endedAt).getHours()], [11, 19]);
+  assert.deepEqual(github.reads, [], 'placing known time must never wait for GitHub');
+});
+
+test('repeating Multiple days across a restart appends two 4-hour blocks without overlaps', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const clock = () => new Date('2026-11-09T20:00:00Z'), timezone = 'UTC';
+  const tracker = () => service({ github, store, clock, timezone });
+  await tracker().addDayRange({ taskUrl: issue.url, taskTitle: 'Time off', description: '',
+    dates: ['2026-11-01', '2026-11-02', '2026-11-03'], durationSeconds: 4 * 3600 });
+  const first = (await store.getState()).pendingWrites[0].entries;
+  assert.deepEqual(first.map(entry => [entry.entryDate, entry.startedAt.slice(11, 16), entry.endedAt.slice(11, 16)]), [
+    ['2026-11-01', '09:00', '13:00'], ['2026-11-02', '09:00', '13:00'], ['2026-11-03', '09:00', '13:00'],
+  ]);
+  await tracker().syncPending();
   assert.equal((await store.getState()).pendingWrites.length, 0);
+  assert.equal(store.value.dayRangeIntervals.length, 3, 'accepted dates survive the small Recent cache');
+
+  // An Activity refresh can evict older records from Recent. The durable local
+  // interval index must still prevent a second 09:00–13:00 entry after restart.
+  store.value.recentCache = [];
+  store.value.summaryCache = null;
+  github.reads.length = 0;
+  await tracker().addDayRange({ taskUrl: issue.url, taskTitle: 'Time off', description: '',
+    dates: ['2026-11-01', '2026-11-03'], durationSeconds: 4 * 3600 });
+  const second = (await store.getState()).pendingWrites[0].entries;
+  assert.deepEqual(second.map(entry => [entry.entryDate, entry.startedAt.slice(11, 16), entry.endedAt.slice(11, 16)]), [
+    ['2026-11-01', '13:00', '17:00'], ['2026-11-03', '13:00', '17:00'],
+  ]);
+  assert.deepEqual(github.reads, [], 'repeated Add time must remain local-first');
+
+  await tracker().syncPending();
+  assert.equal((await store.getState()).pendingWrites.length, 0);
+  assert.equal(github.atomicWrites.length, 2);
+  const saved = parseMonthlyRecords(github.files.get('times/2026-11/alice.jsonl').text,
+    { user: 'alice', month: '2026-11' });
+  assert.equal(saved.length, 5);
+  for (const day of ['2026-11-01', '2026-11-02', '2026-11-03']) {
+    const intervals = saved.filter(entry => entry.entryDate === day).sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+    for (let i = 1; i < intervals.length; i++) {
+      assert.ok(new Date(intervals[i - 1].endedAt) <= new Date(intervals[i].startedAt),
+        `no overlaps after two successful batches on ${day}`);
+    }
+  }
+});
+
+test('editing and deleting an accepted Multiple days entry update its local interval footprint', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const clock = () => new Date('2026-11-09T20:00:00Z'), path = 'times/2026-11/alice.jsonl';
+  const tracker = () => service({ github, store, clock, timezone: 'UTC' });
+  await tracker().addDayRange({ taskUrl: issue.url, dates: ['2026-11-02'], durationSeconds: 4 * 3600 });
+  await tracker().syncPending();
+  const original = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11' })[0];
+  store.value.recentCache = [];
+
+  await tracker().queueEntryEdit({
+    path, originalSha: github.files.get(path).sha, index: 0, original,
+    edits: { startedAt: '2026-11-02T10:00:00.000Z', endedAt: '2026-11-02T14:00:00.000Z' },
+  });
+  assert.deepEqual(store.value.dayRangeIntervals.map(item => [item.startedAt, item.endedAt]), [
+    ['2026-11-02T10:00:00.000Z', '2026-11-02T14:00:00.000Z'],
+  ]);
+  await tracker().syncPending();
+  store.value.recentCache = [];
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11' })[0];
+  await tracker().queueEntryDelete({ path, originalSha: github.files.get(path).sha, index: 0, original: saved });
+  assert.deepEqual(store.value.dayRangeIntervals, []);
+  await tracker().syncPending();
+  assert.deepEqual(store.value.dayRangeIntervals, []);
+});
+
+test('discarding a conflicting local Multiple days batch clears its reserved intervals', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const tracker = service({ github, store, clock: () => new Date('2026-11-09T20:00:00Z'), timezone: 'UTC' });
+  await tracker.addDayRange({ taskUrl: issue.url, dates: ['2026-11-02'], durationSeconds: 4 * 3600 });
+  const pending = store.value.pendingWrites[0];
+  assert.equal(store.value.dayRangeIntervals.length, 1);
+  pending.status = 'conflict';
+  assert.deepEqual(await tracker.resolvePendingConflict(pending.id, 'discard_queued_addition'), {
+    resolved: true, discarded: true,
+  });
+  assert.deepEqual(store.value.dayRangeIntervals, []);
+  assert.equal(store.value.pendingWrites.length, 0);
+});
+
+test('Multiple days can reuse an earlier free slot when the rest of the day is occupied', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const existing = entry(localTimestamp(2026, 10, 2, 9), localTimestamp(2026, 10, 2, 23));
+  await store.patchState({ recentCache: [existing] });
+  await service({ github, store, clock: () => new Date('2026-11-09T20:00:00Z'), timezone: 'UTC' })
+    .addDayRange({ taskUrl: issue.url, dates: ['2026-11-02'], durationSeconds: 4 * 3600 });
+  const [added] = (await store.getState()).pendingWrites[0].entries;
+  assert.deepEqual([added.startedAt.slice(11, 16), added.endedAt.slice(11, 16)], ['00:00', '04:00']);
+});
+
+test('Multiple days finds a free interval spanning 09:00 when there is no later slot', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const occupied = entry(localTimestamp(2026, 10, 2, 15), localTimestamp(2026, 10, 2, 16));
+  await store.patchState({ recentCache: [occupied] });
+  await service({ github, store, clock: () => new Date('2026-11-09T20:00:00Z'), timezone: 'UTC' })
+    .addDayRange({ taskUrl: issue.url, dates: ['2026-11-02'], durationSeconds: 10 * 3600 });
+  const [added] = (await store.getState()).pendingWrites[0].entries;
+  assert.deepEqual([added.startedAt.slice(11, 16), added.endedAt.slice(11, 16)], ['00:00', '10:00']);
 });
 
 test('multiple days use 09:00 even when a nonoverlapping evening entry already exists', async () => {
@@ -4248,24 +4364,127 @@ test('day range rejects future, duplicate, and unordered selections before queui
   assert.equal((await store.getState()).pendingWrites.length, 0);
 });
 
-test('remote day-range overlap after acceptance keeps every locally queued day for review', async () => {
-  const github = new FakeGitHub(), store = new MemoryStore();
-  const clock = () => new Date('2026-11-03T12:00:00Z');
-  await service({ github, store, clock, timezone: 'UTC' }).addDayRange({ taskUrl: issue.url,
-    taskTitle: 'Time off', description: '', dates: ['2026-08-30', '2026-08-31'], durationSeconds: 28800 });
-  seedText(github, 'times/2026-08/alice.jsonl', serializeMonthlyRecords([
+test('sync relocates a Multiple days batch into free remote intervals without losing its dates or IDs', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), month = 'times/2026-08/alice.jsonl';
+  const clock = () => new Date('2026-11-03T12:00:00Z'), tracker = service({ github, store, clock, timezone: 'UTC' });
+  await tracker.addDayRange({ taskUrl: issue.url, taskTitle: 'Time off', description: '',
+    dates: ['2026-08-30', '2026-08-31'], durationSeconds: 28800 });
+  const accepted = store.value.pendingWrites[0].entries;
+  seedText(github, month, serializeMonthlyRecords([
     entry(localTimestamp(2026, 7, 31, 10), localTimestamp(2026, 7, 31, 11))
   ]));
-  await service({ github, store, clock, timezone: 'UTC' }).syncPending();
-  assert.equal(github.atomicWrites.length, 0);
-  const state = await store.getState();
-  assert.equal(state.pendingWrites.length, 1);
-  assert.equal(state.pendingWrites[0].entries.length, 2);
-  assert.equal(state.pendingWrites[0].status, 'conflict');
-  assert.match(state.pendingWrites[0].lastError, /Queued days remain for review/);
-  assert.doesNotMatch(state.pendingWrites[0].lastError, /No days were added/);
+  await tracker.syncPending();
+  assert.equal(github.atomicWrites.length, 1);
+  assert.equal(store.value.pendingWrites.length, 0);
+  const saved = parseMonthlyRecords(github.files.get(month).text, { user: 'alice', month: '2026-08' });
+  assert.equal(saved.length, 3);
+  const relocated = saved.find(item => item.id === accepted[1].id);
+  assert.ok(relocated);
+  assert.deepEqual([relocated.entryDate, relocated.startedAt.slice(11, 16), relocated.endedAt.slice(11, 16),
+    relocated.taskUrl, relocated.durationSeconds],
+  ['2026-08-31', '11:00', '19:00', issue.url, 28800]);
+  assert.equal(saved.find(item => item.id === accepted[0].id)?.startedAt, accepted[0].startedAt);
+  assert.equal(store.value.dayRangeIntervals.find(item => item.id === relocated.id).startedAt, relocated.startedAt);
 });
 
+
+test('stale Multiple days cache still syncs a second four-hour batch by finding remote free space', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), month = 'times/2026-11/alice.jsonl';
+  const clock = () => new Date('2026-11-09T20:00:00Z');
+  let sequence = 0;
+  const idFactory = timestamp => deterministicRecordId(timestamp + sequence++);
+  const tracker = () => service({ github, store, clock, timezone: 'UTC', idFactory });
+  await tracker().addDayRange({ taskUrl: issue.url, taskTitle: 'Review', dates: ['2026-11-01', '2026-11-02', '2026-11-03'],
+    durationSeconds: 4 * 3600 });
+  await tracker().syncPending();
+  assert.equal(github.atomicWrites.length, 1);
+
+  store.value.recentCache = []; store.value.summaryCache = null; store.value.dayRangeIntervals = [];
+  github.reads.length = 0;
+  await tracker().addDayRange({ taskUrl: issue.url, taskTitle: 'Review',
+    dates: ['2026-11-02', '2026-11-03'], durationSeconds: 4 * 3600 });
+  const accepted = store.value.pendingWrites[0].entries;
+  assert.deepEqual(accepted.map(row => [row.startedAt.slice(11, 16), row.endedAt.slice(11, 16)]),
+    [['09:00', '13:00'], ['09:00', '13:00']], 'reproduces an older browser with missing local occupancy');
+  assert.deepEqual(github.reads, [], 'acceptance never waits for GitHub');
+  await tracker().syncPending();
+  assert.equal(github.atomicWrites.length, 2);
+  assert.equal(store.value.pendingWrites.length, 0);
+  const saved = parseMonthlyRecords(github.files.get(month).text, { user: 'alice', month: '2026-11' });
+  assert.equal(saved.length, 5);
+  for (const row of accepted) {
+    const relocated = saved.find(item => item.id === row.id);
+    assert.equal(relocated.startedAt.slice(11, 16), '13:00');
+    assert.equal(relocated.endedAt.slice(11, 16), '17:00');
+  }
+});
+
+test('one automatic sync attempt repairs an already-conflicted old Multiple days batch', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), month = 'times/2026-11/alice.jsonl';
+  const clock = () => new Date('2026-11-09T20:00:00Z');
+  let sequence = 0;
+  const idFactory = timestamp => deterministicRecordId(timestamp + sequence++);
+  const tracker = () => service({ github, store, clock, timezone: 'UTC', idFactory });
+  await tracker().addDayRange({ taskUrl: issue.url, dates: ['2026-11-02'], durationSeconds: 4 * 3600 });
+  await tracker().syncPending();
+  store.value.recentCache = []; store.value.summaryCache = null; store.value.dayRangeIntervals = [];
+  await tracker().addDayRange({ taskUrl: issue.url, dates: ['2026-11-02'], durationSeconds: 4 * 3600 });
+  const pending = store.value.pendingWrites[0], queuedId = pending.entries[0].id;
+  pending.status = 'conflict'; pending.conflictReason = 'bulk_add_validation';
+  pending.lastError = 'Selected day 2026-11-02 overlaps an existing time entry on GitHub.';
+  await tracker().syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.atomicWrites.length, 2);
+  const saved = parseMonthlyRecords(github.files.get(month).text, { user: 'alice', month: '2026-11' });
+  assert.equal(saved.find(item => item.id === queuedId).startedAt, '2026-11-02T13:00:00.000Z');
+});
+
+test('replanned Multiple days persists the new positions before writing so a lost reply is idempotent', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), month = 'times/2026-11/alice.jsonl';
+  const clock = () => new Date('2026-11-09T20:00:00Z');
+  let sequence = 0;
+  const idFactory = timestamp => deterministicRecordId(timestamp + sequence++);
+  const tracker = () => service({ github, store, clock, timezone: 'UTC', idFactory });
+  await tracker().addDayRange({ taskUrl: issue.url, dates: ['2026-11-02'], durationSeconds: 4 * 3600 });
+  await tracker().syncPending();
+  store.value.recentCache = []; store.value.summaryCache = null; store.value.dayRangeIntervals = [];
+  await tracker().addDayRange({ taskUrl: issue.url, dates: ['2026-11-02'], durationSeconds: 4 * 3600 });
+  const queuedId = store.value.pendingWrites[0].entries[0].id;
+  const original = github.updateTextsAtomic.bind(github);
+  let failOnce = true;
+  github.updateTextsAtomic = async (...args) => {
+    const result = await original(...args);
+    if (failOnce) { failOnce = false; throw new TypeError('lost acknowledgement'); }
+    return result;
+  };
+  await tracker().syncPending();
+  assert.equal(github.atomicWrites.length, 2, 'GitHub already committed the relocated batch');
+  assert.equal(store.value.pendingWrites.length, 1, 'the locally accepted batch must survive a lost reply');
+  assert.equal(store.value.pendingWrites[0].entries[0].startedAt, '2026-11-02T13:00:00.000Z');
+  await tracker().syncPending();
+  assert.equal(store.value.pendingWrites.length, 0);
+  assert.equal(github.atomicWrites.length, 2, 'retry must adopt the saved identity, not append duplicates');
+  const saved = parseMonthlyRecords(github.files.get(month).text, { user: 'alice', month: '2026-11' });
+  assert.equal(saved.filter(item => item.id === queuedId).length, 1);
+});
+
+test('no available remote interval keeps all queued Multiple days without a partial commit', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore(), month = 'times/2026-11/alice.jsonl';
+  const clock = () => new Date('2026-11-09T20:00:00Z'), tracker = service({ github, store, clock, timezone: 'UTC' });
+  await tracker.addDayRange({ taskUrl: issue.url, dates: ['2026-11-01', '2026-11-02'], durationSeconds: 4 * 3600 });
+  const accepted = structuredClone(store.value.pendingWrites[0].entries);
+  seedText(github, month, serializeMonthlyRecords([
+    entry('2026-11-02T00:00:00.000Z', '2026-11-02T23:00:00.000Z'),
+  ]));
+  await tracker.syncPending();
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.deepEqual(store.value.pendingWrites[0].entries, accepted, 'failed batch is unchanged');
+  await tracker.syncPending(); // one automatic recovery attempt, then stop retrying
+  assert.equal(github.atomicWrites.length, 0);
+  assert.equal(store.value.pendingWrites[0].status, 'conflict');
+  assert.equal(store.value.pendingWrites[0].autoReplanAttempted, true);
+});
 
 test('bulk import rejects intervals that would overlap the running timer', async () => {
   const github = new FakeGitHub(), store = new MemoryStore();

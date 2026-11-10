@@ -53,6 +53,17 @@ test('unverified onboarding target survives store recreation and stays account-s
   assert.deepEqual(backend.values.get('destinationStates'), initial.destinationStates);
 });
 
+test('locally accepted Multiple days intervals survive IndexedDB store recreation and are destination-scoped', async () => {
+  const backend = new MemoryBackend(v5State());
+  const store = new ChromeStore(backend);
+  const record = { id: 'accepted-id', entryDate: '2026-11-02',
+    startedAt: '2026-11-02T09:00:00.000Z', endedAt: '2026-11-02T13:00:00.000Z' };
+  await store.destinationStore('github:1').patchState({ dayRangeIntervals: [record] });
+  const reopened = new ChromeStore(backend);
+  assert.deepEqual((await reopened.destinationStore('github:1').getState()).dayRangeIntervals, [record]);
+  assert.deepEqual((await reopened.destinationStore('github:2').getState()).dayRangeIntervals, []);
+});
+
 test('lossless v4 migration preserves active, pending, caches, verification, and unknown fields', async () => {
   const active = { id: 'timer', _sha: 'active-sha', unknown: { bytes: [0, 255] } };
   const recent = [{ id: 'done', _pending: true, unknownRoot: 'keep' }];
@@ -67,7 +78,8 @@ test('lossless v4 migration preserves active, pending, caches, verification, and
     taskMetadataCache: metadata, reportCache: report,
   });
   const store = new ChromeStore(backend), state = await store.ensureDataVersion(5), id = 'github:77';
-  assert.deepEqual(state, { activeCache: active, recentCache: recent, summaryCache: summary, pendingWrites: pending, user: 'alice', dataVersion: 5 });
+  assert.deepEqual(state, { activeCache: active, recentCache: recent, summaryCache: summary, pendingWrites: pending,
+    user: 'alice', dayRangeIntervals: [], dataVersion: 5 });
   assert.deepEqual(await store.destinationStore(id).getState(), state);
   assert.deepEqual(backend.values.get('activeTimer'), { destinationId: id, record: active });
   assert.deepEqual(backend.values.get('repositoryVerification'), { [id]: { lastVerifiedAt: '2026-09-09T10:00:00.000Z', status: 'write_verified' } });
