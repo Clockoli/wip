@@ -230,6 +230,22 @@ test('Activity keeps local sync and conflict warnings visible in Timeline and Ca
     await worker.evaluate(() => { configured = false; pendingWrites = []; });
     await expect(root).toContainText('Choose where Clockoli should save your time', { timeout: 12_000 });
     await expect(status).toBeEmpty();
+    await worker.evaluate(() => {
+      configured = true;
+      pendingWrites = [{
+        id: 'bulk-conflict', operation: 'bulkAddTimes', stage: 'bulkAddTimes',
+        status: 'conflict', conflictReason: 'bulk_add_validation',
+        lastError: 'Selected day 2026-11-02 overlaps an existing time entry on GitHub.',
+        subjects: [{ proposed: { entryDate: '2026-11-02',
+          startedAt: '2026-11-02T09:00:00.000Z', endedAt: '2026-11-02T13:00:00.000Z',
+          taskTitle: 'Local batch' } }],
+      }];
+    });
+    await expect(status.getByRole('button', { name: 'Review sync issues' })).toBeVisible({ timeout: 12_000 });
+    await status.getByRole('button', { name: 'Review sync issues' }).click();
+    await expect(dialog.getByText(/Last sync error: Selected day 2026-11-02 overlaps/)).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Find free time and retry' })).toBeVisible();
+    await page.keyboard.press('Escape');
     expect(errors).toEqual([]);
   } finally {
     await context?.close();
