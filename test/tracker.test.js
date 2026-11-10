@@ -4179,7 +4179,12 @@ test('repeating Multiple days across a restart appends two 4-hour blocks without
   ]);
   await tracker().syncPending();
   assert.equal((await store.getState()).pendingWrites.length, 0);
+  assert.equal(store.value.dayRangeIntervals.length, 3, 'accepted dates survive the small Recent cache');
 
+  // An Activity refresh can evict older records from Recent. The durable local
+  // interval index must still prevent a second 09:00–13:00 entry after restart.
+  store.value.recentCache = [];
+  store.value.summaryCache = null;
   github.reads.length = 0;
   await tracker().addDayRange({ taskUrl: issue.url, taskTitle: 'Time off', description: '',
     dates: ['2026-11-01', '2026-11-03'], durationSeconds: 4 * 3600 });
@@ -4202,6 +4207,31 @@ test('repeating Multiple days across a restart appends two 4-hour blocks without
         `no overlaps after two successful batches on ${day}`);
     }
   }
+});
+
+test('editing and deleting an accepted Multiple days entry update its local interval footprint', async () => {
+  const github = new FakeGitHub(), store = new MemoryStore();
+  const clock = () => new Date('2026-11-09T20:00:00Z'), path = 'times/2026-11/alice.jsonl';
+  const tracker = () => service({ github, store, clock, timezone: 'UTC' });
+  await tracker().addDayRange({ taskUrl: issue.url, dates: ['2026-11-02'], durationSeconds: 4 * 3600 });
+  await tracker().syncPending();
+  const original = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11' })[0];
+  store.value.recentCache = [];
+
+  await tracker().queueEntryEdit({
+    path, originalSha: github.files.get(path).sha, index: 0, original,
+    edits: { startedAt: '2026-11-02T10:00:00.000Z', endedAt: '2026-11-02T14:00:00.000Z' },
+  });
+  assert.deepEqual(store.value.dayRangeIntervals.map(item => [item.startedAt, item.endedAt]), [
+    ['2026-11-02T10:00:00.000Z', '2026-11-02T14:00:00.000Z'],
+  ]);
+  await tracker().syncPending();
+  store.value.recentCache = [];
+  const saved = parseMonthlyRecords(github.files.get(path).text, { user: 'alice', month: '2026-11' })[0];
+  await tracker().queueEntryDelete({ path, originalSha: github.files.get(path).sha, index: 0, original: saved });
+  assert.deepEqual(store.value.dayRangeIntervals, []);
+  await tracker().syncPending();
+  assert.deepEqual(store.value.dayRangeIntervals, []);
 });
 
 test('Multiple days can reuse an earlier free slot when the rest of the day is occupied', async () => {
