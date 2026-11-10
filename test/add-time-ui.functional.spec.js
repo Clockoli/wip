@@ -287,8 +287,8 @@ test('Add and Edit time accept separate dates, keyboard times and an overnight E
     await start.press('Tab');
     await expect(start).toHaveValue('10:00');
     await expect(endDate).toBeFocused();
-    await endDate.press('Tab');
-    await expect(end).toBeFocused();
+    // Native date inputs contain browser-specific focusable segments; fill End
+    // directly rather than assuming one Tab always reaches its time field.
     await end.pressSequentially('1200');
     await end.press('Tab');
     await expect(end).toHaveValue('12:00');
