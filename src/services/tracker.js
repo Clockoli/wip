@@ -2764,50 +2764,92 @@ export class TrackerService {
     const activeStartMs = activeTimer ? new Date(activeTimer.startedAt).getTime() : Infinity;
     const added = [], usedIds = new Set([...files.values()].flatMap(file => file.entries.map(record => record.id)));
     for (const [offset, item] of requested.entries()) {
-      const dayStart = localMidnight(item.date), dayEnd = nextLocalMidnight(item.date);
-      const dayStartMs = new Date(dayStart).getTime(), dayEndMs = new Date(dayEnd).getTime();
+      const dayStartMs = new Date(localMidnight(item.date)).getTime();
+      const dayEndMs = new Date(nextLocalMidnight(item.date)).getTime();
       const fixedStart = item.startTime === '09:00';
       const accepted = fixedStart && fixedIds ? acceptedEntries?.[offset] : null;
-      const requestedStartMs = fixedStart
-        ? accepted ? new Date(accepted.startedAt).getTime() : new Date(`${item.date}T09:00:00`).getTime()
-        : dayStartMs;
-      const requestedEndMs = requestedStartMs + item.durationSeconds * 1000;
+      const preferredStartMs = fixedStart ? new Date(`${item.date}T09:00:00`).getTime() : dayStartMs;
+      const durationMs = item.durationSeconds * 1000;
+      // A 24-hour Multiple days entry is the one permitted exception that
+      // spans into the following day; it keeps its original 09:00 anchor.
+      const limitMs = fixedStart && durationMs === 86_400_000 ? preferredStartMs + durationMs : dayEndMs;
       const existing = [...files.values()].flatMap(file => file.entries).filter(entry => {
         const start = new Date(entry.startedAt).getTime(), end = new Date(entry.endedAt).getTime();
-        return fixedStart ? item.durationSeconds > 0 && start < requestedEndMs && end > requestedStartMs
-          : start < dayEndMs && end > dayStartMs;
-      }).sort((left, right) => new Date(left.startedAt) - new Date(right.startedAt));
-      if (fixedStart && existing.length) {
-        throw new TrackerConflictError(fixedIds
-          ? `Selected day ${item.date} overlaps an existing time entry on GitHub. Queued days remain for review.`
-          : `Selected day ${item.date} overlaps an existing time entry. No days were added.`, 'bulk_add_validation');
-      }
-      for (let index = 1; index < existing.length; index += 1) {
+        return end > start && start < limitMs && end > dayStartMs;
+      }).sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt));
+      for (let index = 1; index < existing.length; index++) {
         if (new Date(existing[index].startedAt) < new Date(existing[index - 1].endedAt)) {
           throw new Error(`Line ${item.line}: existing time on ${item.date} already overlaps. No entries were added.`);
         }
       }
-      const latestEnd = fixedStart ? requestedStartMs
-        : existing.reduce((latest, entry) => Math.max(latest, new Date(entry.endedAt).getTime()), dayStartMs);
-      const startedAt = latestEnd === dayStartMs ? dayStart : localTimestamp(new Date(latestEnd));
-      const endedAt = localTimestamp(new Date(latestEnd + item.durationSeconds * 1000)), endedAtMs = new Date(endedAt).getTime();
-      if (!fixedStart && (endedAtMs > dayEndMs || (item.durationSeconds === 0 && latestEnd >= dayEndMs))) throw new Error(`Line ${item.line}: ${item.durationSeconds / 3600} hours do not fit after existing time on ${item.date}. No entries were added.`);
-      if (endedAtMs > activeStartMs) {
-        if (fixedStart) throw new TrackerConflictError(fixedIds
-          ? `Selected day ${item.date} overlaps the running timer on GitHub. Queued days remain for review.`
-          : `Selected day ${item.date} overlaps the running timer. No days were added.`, 'bulk_add_validation');
-        throw new Error(`Line ${item.line}: imported time would overlap the running timer that started at ${activeTimer.startedAt}. No entries were added.`);
+      const occupied = existing.map(entry => ({
+        start: new Date(entry.startedAt).getTime(), end: new Date(entry.endedAt).getTime(),
+      }));
+      if (activeStartMs < limitMs) occupied.push({ start: activeStartMs, end: Infinity });
+      occupied.sort((a, b) => a.start - b.start);
+      const overlaps = (start, end, interval) => durationMs > 0
+        && interval.start < end && interval.end > start;
+      const firstFree = (from, until) => {
+        let cursor = from;
+        if (durationMs === 0) return cursor <= until ? cursor : null;
+        for (const interval of occupied) {
+          if (interval.end <= cursor) continue;
+          if (cursor + durationMs <= interval.start) break;
+          cursor = Math.max(cursor, interval.end);
+          if (cursor + durationMs > until) return null;
+        }
+        return cursor + durationMs <= until ? cursor : null;
+      };
+      let startedMs;
+      if (accepted) {
+        // Synchronization must not move a previously accepted Multiple days
+        // entry. A competing remote write is a recoverable conflict instead.
+        startedMs = new Date(accepted.startedAt).getTime();
+        const acceptedEnd = startedMs + durationMs;
+        if (occupied.some(interval => overlaps(startedMs, acceptedEnd, interval))) {
+          throw new TrackerConflictError(
+            activeStartMs < acceptedEnd
+              ? `Selected day ${item.date} overlaps the running timer on GitHub. Queued days remain for review.`
+              : `Selected day ${item.date} overlaps an existing time entry on GitHub. Queued days remain for review.`,
+            'bulk_add_validation',
+          );
+        }
+      } else if (fixedStart && durationMs === 86_400_000) {
+        startedMs = firstFree(preferredStartMs, limitMs);
+      } else if (fixedStart) {
+        startedMs = firstFree(preferredStartMs, dayEndMs);
+        if (startedMs === null) startedMs = firstFree(dayStartMs, preferredStartMs);
+      } else {
+        // Keep Bulk time adding's usual append-after-existing behavior, but
+        // use an earlier free gap if there is insufficient room at the end.
+        const latestEnd = existing.reduce((latest, entry) =>
+          Math.max(latest, new Date(entry.endedAt).getTime()), dayStartMs);
+        startedMs = firstFree(latestEnd, dayEndMs);
+        if (startedMs === null) startedMs = firstFree(dayStartMs, dayEndMs);
       }
-      const id = fixedIds?.[offset] || this.uniqueRecordId(latestEnd, usedIds);
-      if (fixedIds && (usedIds.has(id) || !id)) throw new TrackerConflictError('A bulk time entry ID already exists. Review Activity before retrying.', 'bulk_add_id_conflict');
+      if (startedMs === null) {
+        const hours = item.durationSeconds / 3600;
+        const running = activeStartMs < dayEndMs;
+        throw new TrackerConflictError(fixedStart
+          ? `Selected day ${item.date} has no free ${hours}-hour interval${running ? ' before the running timer' : ''}. No days were added.`
+          : `Line ${item.line}: ${hours} hours do not fit in a free interval on ${item.date}${running ? ' before the running timer' : ''}. No entries were added.`,
+        'bulk_add_validation');
+      }
+      const endedMs = startedMs + durationMs;
+      const id = fixedIds?.[offset] || this.uniqueRecordId(startedMs, usedIds);
+      if (fixedIds && (usedIds.has(id) || !id)) {
+        throw new TrackerConflictError('A bulk time entry ID already exists. Review Activity before retrying.', 'bulk_add_id_conflict');
+      }
       usedIds.add(id);
       const active = this.buildActive({ id, taskUrl: item.taskUrl, taskTitle: item.taskTitle || '',
-        startedAt, entryDate: item.date, description: item.description,
+        startedAt: localTimestamp(new Date(startedMs)), entryDate: item.date, description: item.description,
         ...(accepted ? { timezone: accepted.timezone } : {}) });
-      const entry = buildEntry({ active, endedAt, now: endedAt, description: item.description });
+      const entry = buildEntry({ active, endedAt: localTimestamp(new Date(endedMs)),
+        now: localTimestamp(new Date(endedMs)), description: item.description });
       entry.entryDate = item.date;
       const path = monthlyRecordsPath(this.user, item.date), file = files.get(path);
-      file.entries.push(entry); file.entries.sort((left, right) => new Date(left.startedAt) - new Date(right.startedAt));
+      file.entries.push(entry);
+      file.entries.sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt));
       added.push(entry);
     }
     return added;
