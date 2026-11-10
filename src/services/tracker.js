@@ -1152,7 +1152,19 @@ export class TrackerService {
           if (String(operation.conflictReason || '').startsWith('queued_write_')) break;
           const retryQueuedStart = operation.stage === 'startNext' && operation.nextActive
             && operation.conflictReason !== 'add_time_overlap_changed';
-          if (retryQueuedStart) {
+          const retryOldDayRange = operation.operation === 'bulkAddTimes'
+            && operation.conflictReason === 'bulk_add_validation'
+            && operation.requested?.length > 0
+            && operation.requested.every(item => item.startTime === '09:00')
+            && !operation.autoReplanAttempted;
+          if (retryOldDayRange) {
+            // Older extension versions could queue 09:00–13:00 again after
+            // saving a first 09:00–13:00 batch. Give the shared planner one
+            // automatic recovery attempt after upgrading, not endless retries.
+            operation.status = 'pending'; operation.lastError = ''; operation.conflictReason = '';
+            operation.autoReplanAttempted = true;
+            await this.persistQueueOperation(operation);
+          } else if (retryQueuedStart) {
             operation.status = 'pending'; operation.lastError = ''; operation.conflictReason = '';
             await this.persistQueueOperation(operation);
           } else {
@@ -1201,9 +1213,43 @@ export class TrackerService {
         if (operation.operation === 'bulkAddTimes') {
           let result;
           try {
+            const multipleDays = operation.requested?.length > 0
+              && operation.requested.every(item => item.startTime === '09:00');
+            const onRelocated = multipleDays ? async revised => {
+              const accepted = revised.map(stripInternal);
+              const byId = new Map(accepted.map(entry => [entry.id, entry]));
+              await this.mutateState(latest => {
+                const pendingWrites = [...(latest.pendingWrites ?? [])];
+                const index = pendingWrites.findIndex(item => item.id === operation.id);
+                if (index < 0 || pendingWrites[index].status !== 'pending'
+                    || pendingWrites[index].entries?.some((entry, offset) =>
+                      entry.id !== operation.entries[offset]?.id
+                      || entry.startedAt !== operation.entries[offset]?.startedAt)
+                    || pendingWrites.slice(index + 1).some(item =>
+                      accepted.some(entry => operationEditsEntry(item, entry.id)
+                        || item.operation === 'deleteEntry' && item.request?.original?.id === entry.id))) {
+                  throw new TrackerConflictError(
+                    'This addition was edited after it was queued. Its original times are preserved for review.',
+                    'bulk_add_validation');
+                }
+                pendingWrites[index] = { ...pendingWrites[index], entries: accepted };
+                const updateCache = entries => entries.map(entry => byId.has(entry.id)
+                  ? { ...entry, ...byId.get(entry.id), _pending: true } : entry);
+                return {
+                  pendingWrites,
+                  recentCache: updateCache(latest.recentCache ?? []),
+                  summaryCache: latest.summaryCache?.weekEntries
+                    ? { ...latest.summaryCache, weekEntries: updateCache(latest.summaryCache.weekEntries) }
+                    : latest.summaryCache,
+                  dayRangeIntervals: rememberDayRangeIntervals(latest.dayRangeIntervals, accepted),
+                };
+              });
+              operation.entries = accepted;
+              appendQueueDiagnostic(operation, 'Moved Multiple days to free intervals found on GitHub before the atomic sync.');
+            } : null;
             result = await this.bulkAddTimes('', {
               requested: operation.requested, ids: operation.entries.map(entry => entry.id),
-              acceptedEntries: operation.entries, updateCache: false, includeEntries: true,
+              acceptedEntries: operation.entries, updateCache: false, includeEntries: true, onRelocated,
             });
           } catch (error) {
             if (error instanceof TrackerConflictError) throw error;
@@ -1217,7 +1263,11 @@ export class TrackerService {
           if (index >= 0) queue.splice(index, 1);
           await this.persistQueueOperation(operation, {
             remove: true, savedEntries: saved,
-            patch: state => ({ recentCache: completedCacheAfterAddition(state, operation, saved) }),
+            patch: state => ({
+              recentCache: completedCacheAfterAddition(state, operation, saved),
+              ...(operation.requested?.every(item => item.startTime === '09:00')
+                ? { dayRangeIntervals: rememberDayRangeIntervals(state.dayRangeIntervals, saved) } : {}),
+            }),
           });
           continue;
         }
