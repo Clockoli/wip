@@ -179,10 +179,32 @@ are not licensed as trademarks for misleading or unauthorized use.
 Requires Node.js 20.19+ (CI uses Node.js 22) and Python 3 for release packaging. The extension has no runtime package dependencies; the timeline component and test tooling live in this repository as an npm workspace.
 
 ```bash
+git clone https://github.com/Clockoli/clockoli.git
+cd clockoli
 npm ci
+npx playwright install chromium
 npm test
+npm run test:browser
 npm run check
 ```
+
+Maintainers with access to the private regression tests should clone them into
+`test-private/` **inside the Clockoli checkout** (that is, `clockoli/test-private/`):
+
+```bash
+git clone git@github.com:Clockoli/tests-private.git test-private
+npm run test:private
+```
+
+The `test-private/` directory is ignored by the public repository. If you do
+not have access to it, skip `npm run test:private`; the public commands above
+work without the private checkout. See [CONTRIBUTING.md](CONTRIBUTING.md) for
+focused private-test commands and testing guidance.
+
+Public CI runs the public tests without a private checkout. On trusted pushes
+to `main`, a separate job checks out the private suite with a read-only token
+and tests the exact commit. Fork pull requests do not receive private-test
+access.
 
 Load the repository root as an unpacked extension in `chrome://extensions` with **Developer mode** on. [CONTRIBUTING.md](CONTRIBUTING.md) covers architecture rules, browser verification and release packaging for Chrome, Firefox and Safari.
 
