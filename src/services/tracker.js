@@ -2830,9 +2830,13 @@ export class TrackerService {
       if (startedMs === null) {
         const hours = item.durationSeconds / 3600;
         const running = activeStartMs < dayEndMs;
-        throw new TrackerConflictError(fixedStart
-          ? `Selected day ${item.date} has no free ${hours}-hour interval${running ? ' before the running timer' : ''}. No days were added.`
-          : `Line ${item.line}: ${hours} hours do not fit in a free interval on ${item.date}${running ? ' before the running timer' : ''}. No entries were added.`,
+        throw new TrackerConflictError(running
+          ? fixedStart
+            ? `Selected day ${item.date} cannot fit ${hours} hours without overlapping the running timer. No days were added.`
+            : `Line ${item.line}: ${hours} hours would overlap the running timer on ${item.date}. No entries were added.`
+          : fixedStart
+            ? `Selected day ${item.date} has no free ${hours}-hour interval. No days were added.`
+            : `Line ${item.line}: ${hours} hours do not fit in a free interval on ${item.date}. No entries were added.`,
         'bulk_add_validation');
       }
       const endedMs = startedMs + durationMs;
