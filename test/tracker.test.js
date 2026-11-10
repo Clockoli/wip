@@ -4391,7 +4391,9 @@ test('sync relocates a Multiple days batch into free remote intervals without lo
 test('stale Multiple days cache still syncs a second four-hour batch by finding remote free space', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), month = 'times/2026-11/alice.jsonl';
   const clock = () => new Date('2026-11-09T20:00:00Z');
-  const tracker = () => service({ github, store, clock, timezone: 'UTC' });
+  let sequence = 0;
+  const idFactory = timestamp => deterministicRecordId(timestamp + sequence++);
+  const tracker = () => service({ github, store, clock, timezone: 'UTC', idFactory });
   await tracker().addDayRange({ taskUrl: issue.url, taskTitle: 'Review', dates: ['2026-11-01', '2026-11-02', '2026-11-03'],
     durationSeconds: 4 * 3600 });
   await tracker().syncPending();
@@ -4420,7 +4422,9 @@ test('stale Multiple days cache still syncs a second four-hour batch by finding 
 test('one automatic sync attempt repairs an already-conflicted old Multiple days batch', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), month = 'times/2026-11/alice.jsonl';
   const clock = () => new Date('2026-11-09T20:00:00Z');
-  const tracker = () => service({ github, store, clock, timezone: 'UTC' });
+  let sequence = 0;
+  const idFactory = timestamp => deterministicRecordId(timestamp + sequence++);
+  const tracker = () => service({ github, store, clock, timezone: 'UTC', idFactory });
   await tracker().addDayRange({ taskUrl: issue.url, dates: ['2026-11-02'], durationSeconds: 4 * 3600 });
   await tracker().syncPending();
   store.value.recentCache = []; store.value.summaryCache = null; store.value.dayRangeIntervals = [];
@@ -4438,7 +4442,9 @@ test('one automatic sync attempt repairs an already-conflicted old Multiple days
 test('replanned Multiple days persists the new positions before writing so a lost reply is idempotent', async () => {
   const github = new FakeGitHub(), store = new MemoryStore(), month = 'times/2026-11/alice.jsonl';
   const clock = () => new Date('2026-11-09T20:00:00Z');
-  const tracker = () => service({ github, store, clock, timezone: 'UTC' });
+  let sequence = 0;
+  const idFactory = timestamp => deterministicRecordId(timestamp + sequence++);
+  const tracker = () => service({ github, store, clock, timezone: 'UTC', idFactory });
   await tracker().addDayRange({ taskUrl: issue.url, dates: ['2026-11-02'], durationSeconds: 4 * 3600 });
   await tracker().syncPending();
   store.value.recentCache = []; store.value.summaryCache = null; store.value.dayRangeIntervals = [];
