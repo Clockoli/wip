@@ -2806,7 +2806,7 @@ export class TrackerService {
     }
   }
 
-  planBulkRows(requested, files, activeTimer, fixedIds = null, acceptedEntries = null) {
+  planBulkRows(requested, files, activeTimer, fixedIds = null, acceptedEntries = null, { replanAccepted = false } = {}) {
     const activeStartMs = activeTimer ? new Date(activeTimer.startedAt).getTime() : Infinity;
     const added = [], usedIds = new Set([...files.values()].flatMap(file => file.entries.map(record => record.id)));
     for (const [offset, item] of requested.entries()) {
@@ -2846,28 +2846,29 @@ export class TrackerService {
         }
         return cursor + durationMs <= until ? cursor : null;
       };
-      let startedMs;
-      if (accepted) {
-        // Synchronization must not move a previously accepted Multiple days
-        // entry. A competing remote write is a recoverable conflict instead.
-        startedMs = new Date(accepted.startedAt).getTime();
-        const acceptedEnd = startedMs + durationMs;
-        if (occupied.some(interval => overlaps(startedMs, acceptedEnd, interval))) {
+      let startedMs = accepted ? new Date(accepted.startedAt).getTime() : null;
+      if (accepted && occupied.some(interval => overlaps(startedMs, startedMs + durationMs, interval))) {
+        if (!replanAccepted || accepted.timezone !== this.timezone) {
           throw new TrackerConflictError(
-            activeStartMs < acceptedEnd
+            activeStartMs < startedMs + durationMs
               ? `Selected day ${item.date} overlaps the running timer on GitHub. Queued days remain for review.`
               : `Selected day ${item.date} overlaps an existing time entry on GitHub. Queued days remain for review.`,
             'bulk_add_validation',
           );
         }
-      } else if (fixedStart && durationMs === 86_400_000) {
+        // Multiple days specifies a calendar day and duration, not an exact
+        // clock time. At sync, find a safe free slot from the complete GitHub
+        // history if the locally chosen interval is no longer available.
+        startedMs = null;
+      }
+      if (startedMs === null && fixedStart && durationMs === 86_400_000) {
         startedMs = firstFree(preferredStartMs, limitMs);
-      } else if (fixedStart) {
+      } else if (startedMs === null && fixedStart) {
         startedMs = firstFree(preferredStartMs, dayEndMs);
         if (startedMs === null) startedMs = firstFree(dayStartMs, dayEndMs);
-      } else {
-        // Keep Bulk time adding's usual append-after-existing behavior, but
-        // use an earlier free gap if there is insufficient room at the end.
+      } else if (startedMs === null) {
+        // Bulk time adding uses this same planner: append when possible,
+        // otherwise fill a contiguous earlier gap.
         const latestEnd = existing.reduce((latest, entry) =>
           Math.max(latest, new Date(entry.endedAt).getTime()), dayStartMs);
         startedMs = firstFree(latestEnd, dayEndMs);
@@ -2963,7 +2964,7 @@ export class TrackerService {
   }
 
   async bulkAddTimes(text, { background = false, requested = null, ids = null, acceptedEntries = null,
-    updateCache = true, includeEntries = false } = {}) {
+    updateCache = true, includeEntries = false, onRelocated = null } = {}) {
     if (background) return this.queueBulkAddTimes(text, requested ?? parseBulkTimeText(text));
     requested ||= parseBulkTimeText(text);
     if (ids && requested.some((item, index) => item.startTime === '09:00'
@@ -3011,7 +3012,14 @@ export class TrackerService {
       }
       if (found.some(Boolean)) throw new TrackerConflictError('Bulk time is only partially present on GitHub. No automatic rewrite was attempted.', 'bulk_add_partial');
     }
-    const added = this.planBulkRows(requested, files, activeTimer, ids, acceptedEntries);
+    const added = this.planBulkRows(requested, files, activeTimer, ids, acceptedEntries,
+      { replanAccepted: Boolean(ids && onRelocated) });
+    if (ids && onRelocated && added.some((entry, index) =>
+      entry.startedAt !== acceptedEntries[index].startedAt || entry.endedAt !== acceptedEntries[index].endedAt)) {
+      // Persist the revised accepted instants before the guarded GitHub write.
+      // This is essential for replay if GitHub commits but its response is lost.
+      await onRelocated(added);
+    }
     const touched = [...touchedMonths].sort().map(month => files.get(monthlyRecordsPath(this.user, `${month}-01`)));
     const staged = touched.map(file => {
       const text = serializeMonthlyRecords(file.entries);
