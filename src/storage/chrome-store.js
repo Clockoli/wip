@@ -1,10 +1,11 @@
 import {
-  invoicingSettings, normalizeBillingSettings, normalizeDefaultDestinationId, normalizeOtherProjectClient, normalizeOtherProjectName,
+  invoicingSettings, normalizeBillingSettings, normalizeStoredBillingSettings, normalizeInvoicingSettings, normalizeDefaultDestinationId, normalizeOtherProjectClient, normalizeOtherProjectName,
   normalizeProjectDefinitions, normalizeProjects, normalizeReportingUtc, parseSettingsImport, projectClientPreferences, settingsExportText,
 } from '../domain/local-settings.js';
 import { listAddons } from '../addons/registry.js';
+import { validateJoinRepository } from '../domain/join-invitation.js';
 const DEFAULT_STATE = Object.freeze({ activeCache: null, recentCache: [], summaryCache: null, pendingWrites: [], user: null, dataVersion: 0 });
-const DESTINATION_STATE_DEFAULT = Object.freeze({ user: null, recentCache: [], summaryCache: null, pendingWrites: [] });
+const DESTINATION_STATE_DEFAULT = Object.freeze({ user: null, recentCache: [], summaryCache: null, pendingWrites: [], dayRangeIntervals: [] });
 const CONFIGURATION_GENERATION = 'configurationGeneration';
 const AUTH = 'auth';
 const AUTH_GENERATION = 'authGeneration';
@@ -13,6 +14,8 @@ const PENDING_AUTH = 'pendingAuth';
 const PENDING_AUTH_GENERATION = 'pendingAuthGeneration';
 const ONBOARDING_KEYS = ['onboardingLastVerifiedAt', 'onboardingVerificationStatus'];
 const REPOSITORY_CHOICE = 'onboardingRepositoryChoice';
+const JOIN_INVITATION = 'onboardingJoinInvitation';
+const IGNORED_JOIN_INVITATIONS = 'ignoredJoinInvitations';
 const BILLING_SETTINGS = 'billingSettings';
 const EXCHANGE_RATE_CACHE = 'exchangeRateCache';
 const LOCAL_RECENT_DAYS = 'localRecentDays';
@@ -22,6 +25,7 @@ const OTHER_PROJECT_CLIENT = 'otherProjectClient';
 const REPORTING_UTC = 'reportingUtc';
 const SHOW_QUEUE_DIAGNOSTICS = 'showQueueDiagnostics';
 const INTERFACE_WIDTH = 'interfaceWidth';
+const TOOLBAR_CLICK_MODE = 'toolbarClickMode';
 const ACTIVITY_VIEW_MODE = 'activityViewMode';
 const SETTINGS_REVISION = 'settingsRevision';
 const SETTINGS_EXPORTED_REVISION = 'settingsExportedRevision';
@@ -38,7 +42,7 @@ const MIGRATION_KEYS = [
   'config', CONFIGURATION_GENERATION, ...LEGACY_TRACKING_KEYS, 'dataVersion', ...ONBOARDING_KEYS,
   'taskMetadataCache', 'reportCache', 'taskSearchCache', DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION,
 ];
-const ALL_KEYS = [REPOSITORY_CHOICE, 'config', 'token', AUTH, AUTH_GENERATION, PENDING_AUTH, PENDING_AUTH_GENERATION, DEVICE_ATTEMPT, 'reportCache', 'taskSearchCache', 'taskMetadataCache', EXCHANGE_RATE_CACHE, ADDON_ENABLED, INTERFACE_WIDTH, ACTIVITY_VIEW_MODE, ...ONBOARDING_KEYS, ...SETTINGS_KEYS, CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE), DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION];
+const ALL_KEYS = [REPOSITORY_CHOICE, JOIN_INVITATION, IGNORED_JOIN_INVITATIONS, 'config', 'token', AUTH, AUTH_GENERATION, PENDING_AUTH, PENDING_AUTH_GENERATION, DEVICE_ATTEMPT, 'reportCache', 'pageSnapshots', 'taskSearchCache', 'taskMetadataCache', EXCHANGE_RATE_CACHE, ADDON_ENABLED, INTERFACE_WIDTH, TOOLBAR_CLICK_MODE, ACTIVITY_VIEW_MODE, ...ONBOARDING_KEYS, ...SETTINGS_KEYS, CONFIGURATION_GENERATION, ...Object.keys(DEFAULT_STATE), DESTINATION_REGISTRY, DESTINATION_STATES, ACTIVE_TIMER, REPOSITORY_VERIFICATION];
 
 function preservedProjectClients(values) {
   if (!(values[BILLING_SETTINGS]?.invoicing?.clients ?? []).some(client => Array.isArray(client.projects) && client.projects.length)) return {};
@@ -226,6 +230,46 @@ export class IndexedDbBackend {
 
 export class ChromeStore {
   constructor(backend = new IndexedDbBackend()) { this.backend = backend; }
+
+  // Repository identifiers are unverified intent, never evidence of GitHub access.
+  async getJoinInvitation() {
+    const saved = (await this.backend.getMany([JOIN_INVITATION]))[JOIN_INVITATION];
+    return validateJoinRepository(saved);
+  }
+
+  async getIgnoredJoinInvitations() {
+    const saved = (await this.backend.getMany([IGNORED_JOIN_INVITATIONS]))[IGNORED_JOIN_INVITATIONS];
+    return Array.isArray(saved) ? saved.filter(item => validateJoinRepository(item)).slice(-20) : [];
+  }
+
+  async saveJoinInvitation(repository) {
+    const name = validateJoinRepository(repository);
+    if (!name) throw new Error('Invalid Clockoli invitation repository');
+    await this.backend.mutateMany([JOIN_INVITATION, IGNORED_JOIN_INVITATIONS], values => ({
+      set: {
+        [JOIN_INVITATION]: name,
+        [IGNORED_JOIN_INVITATIONS]: (Array.isArray(values[IGNORED_JOIN_INVITATIONS]) ? values[IGNORED_JOIN_INVITATIONS] : [])
+          .filter(item => item?.toLowerCase() !== name.toLowerCase()).slice(-20),
+      },
+    }));
+  }
+
+  async ignoreJoinInvitation(repository) {
+    const name = validateJoinRepository(repository);
+    if (!name) return;
+    await this.backend.mutateMany([JOIN_INVITATION, IGNORED_JOIN_INVITATIONS], values => {
+      const ignored = (Array.isArray(values[IGNORED_JOIN_INVITATIONS]) ? values[IGNORED_JOIN_INVITATIONS] : [])
+        .filter(item => validateJoinRepository(item) && item.toLowerCase() !== name.toLowerCase());
+      return {
+        set: { [IGNORED_JOIN_INVITATIONS]: [...ignored, name].slice(-20) },
+        delete: values[JOIN_INVITATION]?.toLowerCase() === name.toLowerCase() ? [JOIN_INVITATION] : [],
+      };
+    });
+  }
+
+  async clearJoinInvitation() {
+    await this.backend.mutateMany([JOIN_INVITATION], () => ({ delete: [JOIN_INVITATION] }));
+  }
 
   // UI-only, credentials-free intent. This never configures a destination.
   async getOnboardingRepositoryChoice(account) {
@@ -813,7 +857,7 @@ export class ChromeStore {
     const { taskSearchCache } = values;
     return generationValue(values[CONFIGURATION_GENERATION]) === scope.generation
       && generationValue(values[AUTH_GENERATION]) === scope.authGeneration
-      && taskSearchCache?.version === 1 && JSON.stringify(taskSearchCache.scope) === JSON.stringify(scope)
+      && taskSearchCache?.version === 2 && JSON.stringify(taskSearchCache.scope) === JSON.stringify(scope)
       && Array.isArray(taskSearchCache.indexTasks) && Array.isArray(taskSearchCache.readStatus)
       ? taskSearchCache : null;
   }
@@ -836,7 +880,7 @@ export class ChromeStore {
 
   async saveTaskSearchCache(value, scope = value?.scope, expectedRevision = undefined) {
     if (!scope || !Number.isSafeInteger(scope.generation) || !Number.isSafeInteger(scope.authGeneration)
-        || !Array.isArray(scope.repositories) || (value && (value.version !== 1 || !Array.isArray(value.indexTasks)
+        || !Array.isArray(scope.repositories) || (value && (value.version !== 2 || !Array.isArray(value.indexTasks)
           || !Array.isArray(value.readStatus) || JSON.stringify(value.scope) !== JSON.stringify(scope)))) {
       throw new Error('Invalid task search cache');
     }
@@ -848,6 +892,29 @@ export class ChromeStore {
           && (current.taskSearchCache.refreshedAt ?? 0) > (value.refreshedAt ?? 0)) return { result: false };
       const revision = current.taskSearchCache?.revision ?? 0;
       return { set: { taskSearchCache: value && { ...value, ...(revision ? { revision } : {}) } }, result: true };
+    });
+  }
+
+  async getPageSnapshot(kind, scope, { allowDifferentRange = false } = {}) {
+    if (!['reports', 'tasks'].includes(kind)) return null;
+    const values = await this.backend.getMany(['pageSnapshots', CONFIGURATION_GENERATION, AUTH_GENERATION]);
+    const snapshot = values.pageSnapshots?.[kind];
+    const valid = generationValue(values[CONFIGURATION_GENERATION]) === scope.generation
+      && generationValue(values[AUTH_GENERATION]) === scope.authGeneration
+      && snapshot?.scope?.generation === scope.generation && snapshot.scope.authGeneration === scope.authGeneration;
+    if (!valid) return null;
+    if (JSON.stringify(snapshot.scope) === JSON.stringify(scope)) return snapshot.view;
+    return allowDifferentRange && kind === 'reports' && snapshot.scope.reportingUtc === scope.reportingUtc
+      ? { ...snapshot.view, cachedRange: { startDate: snapshot.scope.startDate, endDate: snapshot.scope.endDate } } : null;
+  }
+
+  async savePageSnapshot(kind, scope, view, startedAt = Date.now()) {
+    if (!['reports', 'tasks'].includes(kind) || !view?.configured) return false;
+    return this.backend.mutateMany(['pageSnapshots', CONFIGURATION_GENERATION, AUTH_GENERATION], values => {
+      if (generationValue(values[CONFIGURATION_GENERATION]) !== scope.generation
+          || generationValue(values[AUTH_GENERATION]) !== scope.authGeneration
+          || (values.pageSnapshots?.[kind]?.startedAt ?? -1) > startedAt) return { result: false };
+      return { set: { pageSnapshots: { ...values.pageSnapshots, [kind]: { scope, view, startedAt } } }, result: true };
     });
   }
 
@@ -902,8 +969,8 @@ export class ChromeStore {
   }
 
   async getLocalPreferences() {
-    const values = await this.backend.getMany(['config', 'dataVersion', DESTINATION_REGISTRY, INTERFACE_WIDTH, ...SETTINGS_KEYS]);
-    const normalizedBilling = normalizeBillingSettings(values[BILLING_SETTINGS] || {});
+    const values = await this.backend.getMany(['config', 'dataVersion', DESTINATION_REGISTRY, INTERFACE_WIDTH, TOOLBAR_CLICK_MODE, ...SETTINGS_KEYS]);
+    const normalizedBilling = normalizeStoredBillingSettings(values[BILLING_SETTINGS] || {});
     const billing = { ...normalizedBilling, invoicing: invoicingSettings(normalizedBilling) };
     const revision = Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0;
     const exportedRevision = Number.isSafeInteger(values[SETTINGS_EXPORTED_REVISION]) && values[SETTINGS_EXPORTED_REVISION] >= 0 ? values[SETTINGS_EXPORTED_REVISION] : 0;
@@ -920,14 +987,41 @@ export class ChromeStore {
     return {
       recentDays, projects,
       interfaceWidth: values[INTERFACE_WIDTH] === 'full' ? 'full' : 'contained',
+      toolbarClickMode: values[TOOLBAR_CLICK_MODE] === 'popup' ? 'popup' : 'tab',
       ...(values.dataVersion === 5 ? { defaultDestinationId: values[DESTINATION_REGISTRY]?.defaultDestinationId ?? null } : {}),
       otherProjectName, otherProjectClient, reportingUtc: values[REPORTING_UTC] === true, showQueueDiagnostics, ...billing, revision, exportedRevision, exportRecommended: revision > exportedRevision,
+    };
+  }
+
+  // Activity and the tracker must not depend on financial settings. This
+  // read deliberately excludes the billing key, even when billing is damaged.
+  async getActivityDisplayPreferences() {
+    const values = await this.backend.getMany(['dataVersion', DESTINATION_REGISTRY, INTERFACE_WIDTH, PROJECTS, OTHER_PROJECT_NAME, OTHER_PROJECT_CLIENT, SHOW_QUEUE_DIAGNOSTICS]);
+    const projects = values[PROJECTS] || [];
+    const destinations = normalizedRegistryDestinations(values[DESTINATION_REGISTRY]?.destinations);
+    if (values.dataVersion === 5) normalizeProjectDefinitions(projects, destinations);
+    else normalizeProjects(projects);
+    const otherProjectName = normalizeOtherProjectName(values[OTHER_PROJECT_NAME]);
+    const normalized = projectClientPreferences({ projects, otherProjectName, otherProjectClient: values[OTHER_PROJECT_CLIENT] });
+    return {
+      projects: normalized.projects, otherProjectName, showQueueDiagnostics: values[SHOW_QUEUE_DIAGNOSTICS] === true,
+      interfaceWidth: values[INTERFACE_WIDTH] === 'full' ? 'full' : 'contained',
     };
   }
 
   async setInterfaceWidth(width) {
     if (!['contained', 'full'].includes(width)) throw new Error('Invalid interface width');
     return this.backend.mutateMany([INTERFACE_WIDTH], () => ({ set: { [INTERFACE_WIDTH]: width }, result: width }));
+  }
+
+  async getToolbarClickMode() {
+    const values = await this.backend.getMany([TOOLBAR_CLICK_MODE]);
+    return values[TOOLBAR_CLICK_MODE] === 'popup' ? 'popup' : 'tab';
+  }
+
+  async setToolbarClickMode(mode) {
+    if (!['tab', 'popup'].includes(mode)) throw new Error('Invalid toolbar click mode');
+    return this.backend.mutateMany([TOOLBAR_CLICK_MODE], () => ({ set: { [TOOLBAR_CLICK_MODE]: mode }, result: mode }));
   }
 
   async getActivityViewMode() {
@@ -942,7 +1036,7 @@ export class ChromeStore {
 
   async saveBillingSettings(value, projectLinks = null, expectedRevision = null) {
     if (!value || typeof value !== 'object' || Array.isArray(value)
-        || !Object.keys(value).length || Object.keys(value).some(key => !['rates', 'invoicing'].includes(key))) {
+        || !Object.keys(value).length || Object.keys(value).some(key => !['clientRates', 'invoicing'].includes(key))) {
       throw new Error('Billing settings are invalid');
     }
     if (expectedRevision !== null && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0)) throw new Error('Settings revision is invalid');
@@ -961,8 +1055,14 @@ export class ChromeStore {
       };
     }
     return this.backend.mutateMany([BILLING_SETTINGS, PROJECTS, OTHER_PROJECT_NAME, OTHER_PROJECT_CLIENT, SETTINGS_REVISION], values => {
-      const previousBilling = normalizeBillingSettings(values[BILLING_SETTINGS] || {});
-      const billing = normalizeBillingSettings({ ...previousBilling, ...value });
+      const previousBilling = normalizeStoredBillingSettings(values[BILLING_SETTINGS] || {});
+      const nextBilling = { ...previousBilling, ...value };
+      // Deleting a client also removes that client's private rate card.
+      if (value.invoicing) {
+        const remaining = new Set(normalizeInvoicingSettings(value.invoicing).clients.map(client => client.id));
+        nextBilling.clientRates = Object.fromEntries(Object.entries(nextBilling.clientRates || {}).filter(([id]) => remaining.has(id)));
+      }
+      const billing = normalizeBillingSettings(nextBilling);
       const stored = invoicingSettings(previousBilling).nextNumber;
       if (invoicingSettings(billing).nextNumber < stored) throw new Error(`Next invoice number cannot go below ${stored}; invoice ${stored - 1} has already been issued.`);
       const currentRevision = Number.isSafeInteger(values[SETTINGS_REVISION]) && values[SETTINGS_REVISION] >= 0 ? values[SETTINGS_REVISION] : 0;
@@ -990,7 +1090,7 @@ export class ChromeStore {
 
   async reserveInvoiceNumber() {
     return this.backend.mutateMany([BILLING_SETTINGS, PROJECTS, OTHER_PROJECT_NAME, OTHER_PROJECT_CLIENT, SETTINGS_REVISION], values => {
-      const billing = normalizeBillingSettings(values[BILLING_SETTINGS] || {}), invoicing = invoicingSettings(billing);
+      const billing = normalizeStoredBillingSettings(values[BILLING_SETTINGS] || {}), invoicing = invoicingSettings(billing);
       const sequence = invoicing.nextNumber;
       if (sequence >= 1e9) throw new Error('Invoice number sequence is exhausted');
       const revision = generationValue(values[SETTINGS_REVISION]) + 1;
@@ -1134,14 +1234,19 @@ export class ChromeStore {
   async exportSettings() {
     const values = await this.backend.getMany(['config', 'dataVersion', DESTINATION_REGISTRY, BILLING_SETTINGS, LOCAL_RECENT_DAYS, PROJECTS, OTHER_PROJECT_NAME, OTHER_PROJECT_CLIENT, REPORTING_UTC, SHOW_QUEUE_DIAGNOSTICS, SETTINGS_REVISION]);
     const revision = generationValue(values[SETTINGS_REVISION]);
+    const savedBilling = values[BILLING_SETTINGS] || {};
+    const billing = normalizeStoredBillingSettings(savedBilling);
+    const linked = preservedProjectClients(values);
+    const projects = linked[PROJECTS] || values[PROJECTS] || [];
+    const otherProjectClient = linked[OTHER_PROJECT_CLIENT] ?? values[OTHER_PROJECT_CLIENT];
     if (values.dataVersion === 5) {
       const registry = values[DESTINATION_REGISTRY] ?? emptyDestinationRegistry();
       const destinations = normalizedRegistryDestinations(registry.destinations);
       const config = { recentDays: values[LOCAL_RECENT_DAYS] ?? registry.destinations?.[registry.defaultDestinationId]?.recentDays ?? 7 };
       return {
         text: settingsExportText({
-          config, billing: values[BILLING_SETTINGS] || {}, projects: values[PROJECTS] || [],
-          otherProjectName: values[OTHER_PROJECT_NAME], otherProjectClient: values[OTHER_PROJECT_CLIENT],
+          config, billing, projects,
+          otherProjectName: values[OTHER_PROJECT_NAME], otherProjectClient,
           reportingUtc: values[REPORTING_UTC] === true, showQueueDiagnostics: values[SHOW_QUEUE_DIAGNOSTICS],
           destinations, defaultDestinationId: registry.defaultDestinationId,
         }),
@@ -1151,8 +1256,8 @@ export class ChromeStore {
     const config = values.config ? { ...values.config } : { recentDays: values[LOCAL_RECENT_DAYS] ?? 7 };
     return {
       text: settingsExportText({
-        config, billing: values[BILLING_SETTINGS] || {}, projects: values[PROJECTS] || [], otherProjectName: values[OTHER_PROJECT_NAME],
-        otherProjectClient: values[OTHER_PROJECT_CLIENT], reportingUtc: values[REPORTING_UTC] === true, showQueueDiagnostics: values[SHOW_QUEUE_DIAGNOSTICS],
+        config, billing, projects, otherProjectName: values[OTHER_PROJECT_NAME],
+        otherProjectClient, reportingUtc: values[REPORTING_UTC] === true, showQueueDiagnostics: values[SHOW_QUEUE_DIAGNOSTICS],
       }),
       revision,
     };

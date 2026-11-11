@@ -353,7 +353,10 @@ export class CredentialBroker {
     const body = await jsonResponse(response);
     if (!response.ok || body?.error) {
       const error = oauthError(body, response.status);
-      if (['authentication_failed', 'invalid_device_flow'].includes(error.code)) error.code = 'auth_expired';
+      if (['authentication_failed', 'invalid_device_flow'].includes(error.code)) {
+        error.code = 'auth_expired';
+        error.message = 'Clockoli could not renew GitHub access. Reconnect GitHub in Settings.';
+      }
       throw error;
     }
     const next = { ...auth, ...tokenPair(body, now) };

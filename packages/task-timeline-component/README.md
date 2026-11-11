@@ -7,8 +7,8 @@ This workspace contains the **Clockoli-owned**, dependency-free `TaskTimeline` c
 - `vendor/timeline-component.js` — Clockoli-owned component, maintained here with local-midnight day-band and Calendar selection behavior.
 - `src/clockoli-adapter.js` — Clockoli data/callback/state/theme adapter.
 - `scripts/build.mjs` — deterministically creates `src/content/task-timeline-component.js`.
-- `tests/` — source/API contract tests.
-- `e2e/` — Chromium tests for running/pending hydration, styling, reconcile, Timeline/Calendar mode, atomic switching, and overlap rejection.
+- `tests/` — public theme tests; deeper adapter contracts live in the optional private suite.
+- `e2e/` — the public browser fixture; private Chromium tests cover hydration, styling, Timeline/Calendar mode, switching, and overlap rejection.
 
 The initial Clockoli prototype was imported from a local working copy. Its SHA-256 at import was:
 
@@ -22,7 +22,7 @@ Clockoli patches `_renderDays()` so each band starts at local `00:00` instead of
 babd006be2f7c47768ba6b8aea960d650815af10eb50b1a867d8bee38ae1c8fe
 ```
 
-The Clockoli patch also keeps Calendar tasks below sticky labels, preserves focused tasks across Timeline and Calendar renders so keyboard edits remain available after a resize, and adds a non-temporal trailing pixel gutter so `now` remains the final time while a running block stays visible. The current reviewed vendor SHA-256 is pinned in `tests/adapter.test.js`.
+The Clockoli patch also keeps Calendar tasks below sticky labels, preserves focused tasks across Timeline and Calendar renders so keyboard edits remain available after a resize, and adds a non-temporal trailing pixel gutter so `now` remains the final time while a running block stays visible. The current reviewed vendor SHA-256 is pinned in the private suite's `timeline-adapter.test.js`.
 
 ## Commands
 

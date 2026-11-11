@@ -83,47 +83,28 @@ test('URL routing is ordered first-match and falls back to the default destinati
   assert.equal(resolveDestinationIdForUrl('https://example.test/task', normalized, 'github:99'), 'github:99');
 });
 
-test('settings v5 retains its legacy shape and exposes additive unverified routing references', () => {
-  const legacy = {
-    format: 'clockoli-settings', version: 5, exportedAt: '2026-08-22T12:00:00.000Z',
-    display: { recentDays: 9, otherProjectName: 'General', showQueueDiagnostics: true },
-    projects: [{ name: 'Work', substrings: ['github.com/acme/'] }],
-    billing: { rates: {} },
-    repository: { repoId: 42, owner: 'acme', repo: 'team-time', branch: 'clockoli/users/7' },
-    security: { credentialsIncluded: false },
-  };
-  const imported = parseSettingsImport(JSON.stringify(legacy));
-  assert.deepEqual(imported, {
-    recentDays: 9,
-    projects: [{ name: 'Work', substrings: ['github.com/acme/'] }],
-    otherProjectName: 'General',
-    showQueueDiagnostics: true,
-    billing: { rates: {}, invoicing: { seller: { name: '', address: '', email: '', taxId: '' }, clients: [], nextNumber: 1, numberFormat: 'INV-{YYYY}-{NNNN}', paymentTermsDays: 30, taxPercent: 0, notes: '' } },
-  });
-  assert.deepEqual(imported.repository, legacy.repository);
-  assert.deepEqual(imported.destinations, { 'github:42': destinations['github:42'] });
-  assert.equal(imported.defaultDestinationId, 'github:42');
-  assert.deepEqual(imported.projectDefinitions, [
-    { id: 'legacy-project-1', name: 'Work', substrings: ['github.com/acme/'], destinationId: 'github:42' },
-  ]);
-  assert.equal(imported.repositoryReferencesVerified, false);
+test('settings import rejects unscoped rate cards and unsupported file versions', () => {
+  const saved = JSON.parse(settingsExportText());
+  assert.throws(() => parseSettingsImport(JSON.stringify({ ...saved, billing: { rates: {} } })), /billing fields/i);
+  assert.throws(() => parseSettingsImport(JSON.stringify({ ...saved, version: 5 })), /unsupported/i);
 });
 
-test('settings v6 exports exact credential-free routing fields and parses references as unverified data', () => {
+
+test('settings exports exact credential-free routing fields and parses references as unverified data', () => {
   const runtimeDestinations = {
     ...destinations,
     'github:42': { ...destinations['github:42'], installationId: 88, defaultBranch: 'main', storageLogin: 'alice' },
   };
   const text = settingsExportText({
     config: { recentDays: 9 }, destinations: runtimeDestinations, defaultDestinationId: 'github:42', projects,
-    billing: { rates: {} }, otherProjectName: 'General', showQueueDiagnostics: true,
+    billing: {}, otherProjectName: 'General', showQueueDiagnostics: true,
     exportedAt: '2026-08-22T12:00:00.000Z',
   });
   const saved = JSON.parse(text);
   assert.deepEqual(Object.keys(saved).sort(), [
     'billing', 'defaultDestinationId', 'destinations', 'display', 'exportedAt', 'format', 'projects', 'security', 'version',
   ]);
-  assert.equal(saved.version, 6);
+  assert.equal(saved.version, 8);
   assert.deepEqual(saved.destinations, destinations);
   assert.equal(saved.defaultDestinationId, 'github:42');
   assert.deepEqual(saved.projects, projects);
@@ -131,7 +112,7 @@ test('settings v6 exports exact credential-free routing fields and parses refere
   assert.doesNotMatch(text, /token|password|authorization|installationId/i);
   assert.deepEqual(parseSettingsImport(text), {
     recentDays: 9, projects, otherProjectName: 'General', otherProjectClient: '', reportingUtc: false, showQueueDiagnostics: true,
-    billing: { rates: {} }, destinations, defaultDestinationId: 'github:42',
+    billing: { clientRates: {}, invoicing: saved.billing.invoicing }, destinations, defaultDestinationId: 'github:42',
     repositoryReferencesVerified: false,
   });
 

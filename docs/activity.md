@@ -2,36 +2,36 @@
 
 Review a week of tracked time in Timeline, Calendar, or List, move and resize entries, and search your whole history.
 
-Activity shows your completed and running time one Monday–Sunday week at a time, in three views: **Timeline**, **Calendar**, and **List**. The same views appear in the toolbar panel and the GitHub panel.
+Activity shows your completed and running time one Monday–Sunday week at a time in **Timeline**, **Calendar**, and **List**. Both the browser toolbar icon and the Clockoli icon on GitHub open this standalone page.
 
 ## Open Activity
 
-Open **Activity** from the toolbar panel navigation or the GitHub split-menu arrow. The toolbar also opens Activity on pages that cannot be tracked, such as `chrome://` pages.
+Click the Clockoli toolbar icon from any page, or the Clockoli stopwatch icon before your avatar on GitHub. Activity opens in a browser tab, or the existing Activity tab is focused. On an HTTP(S) page, its validated URL and title appear in the **From current page** banner. No tracking panel appears over the source page.
 
 Activity loads the current user's completed entries from the selected time repositories. Each edit or delete is sent back to the record's original time repository.
 
 ## Browse weeks
 
-Activity, the toolbar panel, and the GitHub panel show one Monday–Sunday week. In Timeline and Calendar, week arrows sit at the left and right edges of the chart header, on a subtle gradient backing instead of a separate empty row; the selected week's short label and Total are in the summary card. List places the short range between its arrows beside Refresh. The left and right arrows move one week; Next is disabled on the current week, so future weeks cannot be opened. There is no period selector.
+Activity shows one Monday–Sunday week. In Timeline and Calendar, week arrows sit at the left and right edges of the chart header, on a subtle gradient backing instead of a separate empty row; the selected week's short label and Total are in the summary card. List places the short range between its arrows beside Refresh. The left and right arrows move one week; Next is disabled on the current week, so future weeks cannot be opened. There is no period selector.
 
-Switching between Timeline, Calendar, and List resets the displayed week to the current week; navigating within one view retains its selected week. Activity and the toolbar panel share the selected view in local extension storage and restore it when reopened. Live timer updates do not navigate away from an explicitly selected historical week.
+Switching between Timeline, Calendar, and List resets the displayed week to the current week; navigating within one view retains its selected week. Activity remembers your selected view and restores it when reopened. Live timer updates do not navigate away from an explicitly selected historical week.
 
-Browsing loads records for the displayed week, including work started earlier that continues into it, instead of silently showing only the panel's recent-record window. Weekly reads scan earlier monthly files within bounded file, byte, and record budgets; exceeding a budget reports an error instead of silently showing an incomplete total. A failed week read restores the previous week and its recoverable records. Opening the toolbar popup starts a full current-week read, so its Timeline can show the same entries as Calendar and Activity.
+Browsing loads records for the displayed week, including work started earlier that continues into it, instead of silently showing only the panel's recent-record window. Weekly reads scan earlier monthly files within bounded file, byte, and record budgets; exceeding a budget reports an error instead of silently showing an incomplete total. A failed week read restores the previous week and its recoverable records. Opening Activity starts a full current-week read.
 
 ## Weekly summary
 
 Activity shows three compact metrics in a summary panel headed by the selected week's short date range. On wide screens it sits beside the tracking-status strip (approximately one-eighth of the row for statistics, seven-eighths for tracking); on narrow screens the two panels stack.
 
-- **Today** shows tracked time for the current local day, regardless of the selected week. On Activity and both popup surfaces, Today appears here instead of in the running-timer strip.
+- **Today** shows tracked time for the current local day, regardless of the selected week.
 - **Total tracked** and **Tasks worked on** cover the selected Monday–Sunday week. Running time counts only on the current week; totals update when browsing weeks. List search filters entries without changing this week-wide total.
 
-Statistics reflect locally accepted records, including edits still waiting to sync to GitHub. No comparison with the previous week is implied. Calendar days without any entries show **No time entries** on weekdays and weekends alike.
+Statistics reflect locally accepted records, including edits still waiting to sync to GitHub. No comparison with the previous week is implied. Calendar days without any entries show **No time entries** on weekdays and weekends alike. The label stays at a fixed point in the day's grid rather than following the vertical scroll.
 
-In Activity and both popup surfaces, the summary panel replaces a duplicate Total above List, Timeline, and Calendar. The Timeline, Calendar, and List icon switcher sits beside the light/dark theme button in the page navigation; each icon has an accessible name.
+The summary panel replaces a duplicate Total above List, Timeline, and Calendar. The view switcher sits beside the light/dark theme button in page navigation; each icon has an accessible name.
 
 ## Timeline and Calendar
 
-Activity and both popup surfaces mount the same interactive Timeline and Calendar component. Both visual views show loaded entries; the active timer appears only when viewing the current week. In Activity, the toolbar popup, and the full-width GitHub panel, a gutter separates Timeline and Calendar from the summary and tracking panels.
+Activity mounts the interactive Timeline and Calendar component. Both views show loaded entries; the active timer appears only when viewing the current week. A gutter separates the chart from the summary and tracking panels.
 
 - Timeline and Calendar show tracked time for each local calendar day, including zero days. Intervals spanning midnight contribute to each affected day.
 - A completed zero-duration entry remains visible as a minimum-size block with its original equal Start and End times; it does not add tracked time.
@@ -40,26 +40,28 @@ Activity and both popup surfaces mount the same interactive Timeline and Calenda
 
 ### Scrolling and zoom
 
-Horizontal scrolling stays within the selected week, and narrow screens scroll within the week. The shared component leaves vertical Timeline wheel gestures to the containing Activity page or panel. Horizontal gestures scroll the Timeline, while Ctrl/⌘+wheel zooms it. Calendar has a height-limited grid on both surfaces: vertical wheel scrolls the grid, then continues through the containing page or panel at its edges.
+Horizontal scrolling stays within the selected week, and narrow screens scroll within the week. Vertical Timeline wheel gestures scroll the containing Activity page; horizontal gestures scroll the Timeline, while Ctrl/⌘+wheel zooms it. Calendar has a height-limited grid that scrolls vertically.
 
-On opening the current week's Timeline, Activity and the toolbar panel show the end of the week, including Saturday and Sunday when they fit in the viewport; earlier days remain scrollable. Loading the complete week after cached records does not progressively zoom the toolbar panel; the selected zoom level is preserved across refreshes. If cached records appear before the complete week arrives, Activity refocuses after the full read. A manual wheel, pointer, or keyboard interaction before that read cancels the automatic refocus; later refreshes preserve the user's chosen position.
+On opening the current week's Timeline, Activity shows the end of the week, including Saturday and Sunday when they fit in the viewport; earlier days remain scrollable. If cached records appear before the complete week arrives, Activity refocuses after the full read. A manual wheel, pointer, or keyboard interaction cancels that automatic refocus; later refreshes preserve the chosen position.
 
 On opening Calendar and on each week change, it scrolls to the start of the largest group of nearby record starts, ignoring a few isolated overnight entries; if there is no group, it starts at the first record. An empty period starts near 08:00. When the week's records arrive later, Calendar refocuses if it remains at the automatic position, even if some records were already cached; manual scroll and subsequent ordinary updates retain their position.
 
 ### Loading
 
-On both Activity and the toolbar panel, Calendar displays a large in-place loading indicator while a selected week's records are being read. It starts when navigating to another week and disappears after the read completes or fails; an incomplete read reports its warning instead of spinning indefinitely. Refreshing data preserves the mounted timeline and its position.
+Calendar displays a large in-place loading indicator while a selected week's records are read. It disappears when the read completes or fails; an incomplete read reports its warning instead of spinning indefinitely. Refreshing data preserves the mounted timeline and its position.
+
+If a GitHub read fails, Activity shows a compact notice with Retry. A connection failure says GitHub cannot be reached; a request that times out says GitHub did not respond in time, with technical details visible immediately. When all time repositories are rate-limited, the notice shows the latest retry time. If the repositories fail for mixed reasons while tracking status separately reports a rate limit, the notice shows that rate limit alongside the general failure without claiming it explains every failure. The same rate-limit warning is not repeated between the tracking card and Activity. Other load failures show **Could not load Activity** followed directly by the actual error reason, without a generic retry sentence or a false network diagnosis. A local timer and queued work remain available while a read fails.
 
 ## Select an entry
 
-Hovering over or focusing a Timeline or Calendar block shows its details in a compact floating card; clicking selects it without keeping the card open after the mouse leaves. A touchscreen tap also reveals the card. Neither single nor double click starts or stops a timer; use **Track time** or **Stop and save** in the details to change tracking. The selected entry's Start and End details show only the local time (HH:MM), without a date.
+Hovering over or focusing a Timeline or Calendar block shows its details in a compact floating card; clicking selects it without keeping the card open after the mouse leaves. A touchscreen tap also reveals the card. Neither single nor double click starts or stops a timer; use **Track again** or **Stop and save** in the details to change tracking. The selected entry's Start and End details show only the local time (HH:MM), without a date.
 
-Activity, the toolbar popup, and the GitHub panel use the same card: a task icon, single-line truncated title, inline local start–end range and duration, description when available, icon-only **Delete** and **Edit** actions, and a pastel **Track time** button. It opens immediately on hover and stays open while the pointer crosses the gap to the card, even slowly; moving away closes it without pinning. In Calendar, the card opens to the right of the record when space allows, or to the left near the right edge; narrow panels fall back to above or below. The card stays within the GitHub panel when space is limited. Start/End/Duration badges appear only while dragging an entry.
+Activity uses a compact details card with a task icon, truncated title, local start–end range, duration, an always-available inline description editor, separate icon-only **Delete** and **Edit**, and a prominent **Track again** action for completed entries. The card stays open while moving the pointer to its actions or editing the description. It fits within the available viewport.
 
-- Completed entries offer **Edit** beside their other detail actions; it opens the same prefilled form as List in Activity, the extension toolbar popup, and the GitHub-page panel. The GitHub-page panel keeps the dialog in an extension-owned closed Shadow DOM.
-- The details card omits the empty **Add description** field. Existing descriptions remain editable there; completed entries with no description can add one through **Edit**.
-- Both the running interval and completed intervals of the task currently being tracked show **Stop and save**. It stops and saves the current timer and never changes the selected completed interval. The running duration remains visible in the task details and header. Once stopped, a completed interval offers **Track time** again.
-- A completed imported task without an HTTP(S) URL can be restarted from either view in both surfaces; in the GitHub panel, the background verifies the source record before switching timers. Arbitrary page-originated task identities remain disallowed.
+- Completed entries offer **Edit** to open the same prefilled form as List. The field **Add description...** is always available, even for an empty description.
+- Description edits save with Enter or blur; Shift+Enter inserts a line and Escape cancels an unsaved edit.
+- Only the *running interval itself* shows **Stop and save**. Earlier completed intervals of the same task show **Track again**, disabled while that task is already running. They cannot stop the current timer. After the timer stops, **Track again** becomes available.
+- A completed imported task without an HTTP(S) URL can be restarted from either view, subject to verifying the saved task identity.
 
 ## Move and resize entries
 
@@ -68,10 +70,10 @@ Entries retain their default appearance. Hovering over or selecting an entry rev
 A drag previews its position, but a completed time edit appears in the local view only after the overlap check and durable queue acceptance; a rejected edit restores the original entry and displays an actionable error above the visual view.
 
 - **Reorder.** Drag a completed entry past another entry into free time before or after it to change their order. The moved entry keeps its duration; other entries stay in place. During the drag, it snaps to a free interval and never overlaps another entry.
-- **No future time.** A move or end resize that would place the end in the future is rejected and restored without saving.
+- **No future time.** While moving or extending a completed entry, its end stops at the current time; dragging farther cannot preview or save future time. A drag that cannot change the entry does not queue an edit. Keyboard edits and edits rejected by validation still leave the stored interval unchanged and show the reason without offering a data-loading retry.
 - **Snapping.** Timeline block moves, edge resizing, and keyboard arrow edits snap to five-minute increments (:00, :05, :10, etc.) at any zoom level; neighbor-boundary magnets still apply. Calendar keeps one-minute precision, and direct List time inputs accept exact minutes.
 - **Stay in the week.** Moving a completed entry stays within the selected Monday–Sunday week. Holding it at a chart edge never changes weeks; moves outside the week are rejected. An entry that crosses the displayed week's boundary cannot be moved from its clipped visual block, so its full duration is preserved. Use the normal week arrows to browse separately from dragging.
-- **Full week first.** In the toolbar popup and GitHub panel, moving and resizing completed entries become available only after the selected week loads completely; a partial or failed week read leaves those controls unavailable, so records outside the recent window cannot be overlooked. Short blocks in the narrow toolbar panel leave a wider draggable center between the resize grips; dragging the edges still resizes them.
+- **Full week first.** Moving and resizing completed entries become available only after the selected week loads completely; a partial or failed week read leaves those controls unavailable to prevent overlooked overlaps.
 
 Timeline keeps the positions of other entries, its horizontal scroll, and future day bands steady while moving an entry, including when another timer is running. The selected week's days also remain available after a viewport refresh or remount, even if the visible window ends before Sunday. Calendar keeps its hour grid fixed during the drag and recalculates it after the gesture. The moved entry's timestamp edit enters the durable queue. Deleting an entry updates the local view immediately.
 
@@ -87,16 +89,12 @@ List shows the selected week's completed entries in inset cards grouped by date,
 
 ### Search all history
 
-In Activity and toolbar-popup List views, entering a URL or title searches completed activity across all available weeks and selected time repositories, independently of the displayed week. Search fills the toolbar beside week navigation and Refresh on desktop; in the compact popup and on narrow screens it takes its own row above them. The field keeps its accessible Search activity name without a visible caption. The GitHub panel's List searches only the selected week.
+In Activity List, entering a URL or title searches completed activity across all available weeks and selected time repositories, independently of the displayed week. Search appears beside week navigation and Refresh on desktop and on its own row on narrow screens. The field keeps the accessible **Search activity** name.
 
 - The first search loads history on demand; a loading message appears until results are ready.
 - Matching records appear in pages of up to 20, newest first, with Previous/Next page controls and the matching-record range; changing the query returns to page one. Pagination is over the loaded history, not a separate repository request for each page.
 - Clear the search to return to the selected week's entries.
 - Unreadable repositories or conflicting records are flagged as incomplete; a failed history load shows an error and Retry rather than claiming no matches.
-
-### List in the toolbar panel
-
-In the toolbar panel's List view, completed entries from the selected week are grouped by date in separate inset cards, with task colors matching the timeline, start–stop times, durations, pending status, and **Continue**. Search entries above them works as in Activity, with the same loading, incomplete-history, retry, and pagination behavior. The week arrows surround a short range beside Refresh; the summary card holds today's total and the selected week's Total tracked and Tasks worked on. Continue saves any running task before restarting the selected task. Unavailable values display **…** or **—** instead of a misleading number. Older entries remain available in Activity.
 
 ## Task icons
 

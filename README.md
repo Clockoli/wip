@@ -73,7 +73,7 @@ Store reviews can make the Chrome Web Store version trail the latest GitHub rele
 
 ## Quick start
 
-1. **Sign in with GitHub.** Open **Settings**; it opens by itself after installation. Clockoli uses GitHub [device flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow): you enter a one-time code on github.com and approve access, so you never create or paste a token. If your browser asks for access to GitHub, allow it.
+1. **Connect GitHub.** Open **Settings**; the focused welcome screen opens by itself after installation. Clockoli uses GitHub [device flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow): you enter a one-time code on github.com and approve access, so you never create or paste a token. If your browser asks for access to GitHub, allow it.
 2. **Connect a private time repository.** Paste a repository URL or `owner/name`, or create a new one from the Clockoli template, then confirm **Connect repository**.
 3. **Track a task.** On a GitHub issue or pull request, use the stopwatch next to your avatar. On any other page, click the Clockoli toolbar button and choose **Track this task**. Choose **Stop and save** when you finish.
 
@@ -104,7 +104,7 @@ Your GitHub account signs you in, a source repository may own the issue you trac
 
 - Report across personal and organization time repositories, with breakdowns by day, week, month, person, source or task.
 - Export CSV or JSON timesheets, or print a report to PDF.
-- Set effective-dated hourly rates per person. Rates stay in your browser and are never written to the repository; mixed currencies are converted at each day's exchange rate.
+- Set effective-dated hourly rates per person **for each client**. Rates stay in your browser and are never written to the repository; mixed currencies are converted at each day's exchange rate.
 - Create numbered, taxed invoices from a filtered report and print them or save them as PDF. Invoices are generated in the browser and never committed.
 
 <p align="center">
@@ -179,10 +179,32 @@ are not licensed as trademarks for misleading or unauthorized use.
 Requires Node.js 20.19+ (CI uses Node.js 22) and Python 3 for release packaging. The extension has no runtime package dependencies; the timeline component and test tooling live in this repository as an npm workspace.
 
 ```bash
+git clone https://github.com/Clockoli/clockoli.git
+cd clockoli
 npm ci
+npx playwright install chromium
 npm test
+npm run test:browser
 npm run check
 ```
+
+Maintainers with access to the private regression tests should clone them into
+`test-private/` **inside the Clockoli checkout** (that is, `clockoli/test-private/`):
+
+```bash
+git clone git@github.com:Clockoli/tests.git test-private
+npm run test:private
+```
+
+The `test-private/` directory is ignored by the public repository. If you do
+not have access to it, skip `npm run test:private`; the public commands above
+work without the private checkout. See [CONTRIBUTING.md](CONTRIBUTING.md) for
+focused private-test commands and testing guidance.
+
+Public CI runs the public tests without a private checkout. On trusted pushes
+to `main`, a separate job checks out the private suite with a read-only token
+and tests the exact commit. Fork pull requests do not receive private-test
+access.
 
 Load the repository root as an unpacked extension in `chrome://extensions` with **Developer mode** on. [CONTRIBUTING.md](CONTRIBUTING.md) covers architecture rules, browser verification and release packaging for Chrome, Firefox and Safari.
 

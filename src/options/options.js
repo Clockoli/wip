@@ -4,10 +4,12 @@ import { invoicingSettings, normalizeInvoicingSettings, normalizeProjects, parse
 import { taskPeriodRange } from '../domain/tasks.js';
 import { normalizeStoredTaskIdentity, normalizeTaskUrl } from '../domain/values.js';
 import { getAddon } from '../addons/registry.js';
+import { clockoliInvitationLink, discoverClockoliInvitations, parseClockoliInvitationUrl, validateJoinRepository } from '../domain/join-invitation.js';
 
 
 const $ = id => document.getElementById(id);
 const SAVE_CONFIRMATION_MS = 2000;
+const DEVICE_HANDOFF_PAUSE_MS = 5000;
 const saveButtonStates = new WeakMap();
 let state = null;
 let repositories = [];
@@ -17,10 +19,25 @@ let deviceClipboardAttemptId = '';
 let deviceClipboardState = 'unknown';
 let deviceOpeningGitHubAutomatically = false;
 let deviceGitHubOpened = false;
+let deviceAutoOpenTimer = null;
+let deviceAutoOpenFailed = false;
 let showOnboarding = false;
+let showAdvancedSetup = false;
+let reconnectingGitHub = false;
+let authExpired = false;
+let refreshRunningStatus = null;
+let authRecoveryChecking = false;
+let authRecoveryKnown = '';
+let authRecoveryTried = '';
 import { ChromeStore } from '../storage/chrome-store.js';
 const choiceStore = new ChromeStore();
 let repositoryTarget = '';
+let setupPath = 'choose';
+let setupPathTouched = false;
+let joinChoices = [];
+let selectedJoinInvitation = '';
+let joinChoicesSignature = '';
+let invitationAutoCheckKey = '';
 let repositoryInputDirty = false;
 let checkingRepositoryTarget = '';
 let autoCheckingRepositoryTarget = '';
@@ -63,9 +80,23 @@ const repositoryCollaborators = new Map();
 let collaboratorAccount = '';
 
 
+function removeIcon() {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16'); svg.setAttribute('width', '16'); svg.setAttribute('height', '16');
+  svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('fill', 'currentColor');
+  const shape = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  shape.setAttribute('d', 'M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z'); svg.append(shape);
+  return svg;
+}
+
 function message(text, kind = '') {
   $('message').textContent = text;
-  $('message').className = kind;
+  $('message').className = kind === 'error' && isAuthTimerWarning(text)
+    ? 'error auth-guard' : kind;
+}
+
+function isAuthTimerWarning(text) {
+  return typeof text === 'string' && text.startsWith('Stop the active timer before changing GitHub authentication');
 }
 
 function renderAddonSettings(settings, hasClockifyAccess = false) {
@@ -260,12 +291,19 @@ function teammateSteps(destination) {
   ];
 }
 
-function teammateInstructions(destination) {
+function clockoliInvitationMessage(destination) {
+  const repository = `${destination.owner}/${destination.repo}`;
+  const link = clockoliInvitationLink(repository);
+  if (!link) return '';
   return [
-    `Join ${destinationLabel(destination)} in Clockoli:`,
-    ...teammateSteps(destination).map((step, index) => `${index + 1}. ${step}`),
+    "Hi! You're invited to track time with our team using Clockoli.",
     '',
-    'Clockoli creates a separate personal storage branch for each teammate. Do not create clockoli/users/… branches by hand.',
+    `1. Accept the GitHub invitation to ${repository} (if you haven't already).`,
+    '2. Open this link to set up Clockoli:',
+    `   ${link}`,
+    '3. Keep the page open while you install the Clockoli extension and connect your GitHub account. Follow the steps to join the shared time repository.',
+    '',
+    "That's it! You're ready to track time with the team.",
   ].join('\n');
 }
 
@@ -275,20 +313,13 @@ function renderTeammatePicker(details, destination, article) {
   const panel = document.createElement('div'); panel.className = 'teammate-picker';
   const label = document.createElement('label'); label.textContent = 'GitHub account';
   const input = document.createElement('input'); input.type = 'search'; input.className = 'teammate-search';
-  input.placeholder = 'Search by GitHub username'; input.autocomplete = 'off';
+  input.placeholder = 'Search GitHub users'; input.autocomplete = 'off';
   const choices = document.createElement('div'); choices.className = 'teammate-choices';
   const invite = document.createElement('button'); invite.type = 'button'; invite.className = 'invite-teammate secondary';
-  invite.textContent = 'Check access and invite'; invite.disabled = true;
+  invite.textContent = 'Send invitation to the repository'; invite.disabled = true;
   const feedback = document.createElement('p'); feedback.className = 'teammate-feedback form-feedback';
   feedback.setAttribute('role', 'status'); feedback.setAttribute('aria-live', 'polite');
-  const scope = document.createElement('p'); scope.className = 'help';
-  scope.textContent = 'Requires repository admin rights and Clockoli App Administration: write.';
-  const permissions = document.createElement('details'); permissions.className = 'teammate-permissions';
-  const permissionSummary = document.createElement('summary'); permissionSummary.textContent = 'About access and invitations';
-  const permissionDetails = document.createElement('p'); permissionDetails.className = 'help';
-  permissionDetails.textContent = 'The App permission applies to every repository selected for this installation, not every repository in your account. Invitations grant repository write access; your teammate must accept on GitHub and join Clockoli separately.';
-  permissions.append(permissionSummary, permissionDetails);
-  label.append(input); panel.append(label, choices, invite, feedback, scope, permissions); details.append(panel);
+  label.append(input); panel.append(label, choices, feedback, invite); details.append(panel);
   let selected = null, searchTimer = null, generation = 0;
   function profileRow(user) {
     const row = document.createElement('div'); row.className = 'teammate-profile';
@@ -310,7 +341,7 @@ function renderTeammatePicker(details, destination, article) {
   input.addEventListener('input', () => {
     const current = ++generation;
     clearTimeout(searchTimer); selected = null; invite.disabled = true;
-    choices.replaceChildren(); feedback.textContent = '';
+    choices.replaceChildren(); feedback.textContent = ''; feedback.className = 'teammate-feedback form-feedback';
     const query = input.value.trim();
     if (query.length < 2) return;
     searchTimer = setTimeout(async () => {
@@ -325,7 +356,7 @@ function renderTeammatePicker(details, destination, article) {
           choice.addEventListener('click', () => {
             ++generation; clearTimeout(searchTimer);
             selected = user; input.value = user.login; choices.replaceChildren(); invite.disabled = false;
-            feedback.textContent = `Selected @${user.login}${user.name ? ` (${user.name})` : ''}. Check access before inviting.`;
+            feedback.textContent = `Selected @${user.login}${user.name ? ` (${user.name})` : ''}`;
           });
           choices.append(choice);
         }
@@ -338,21 +369,23 @@ function renderTeammatePicker(details, destination, article) {
   invite.addEventListener('click', async () => {
     if (!selected || invite.disabled || !Number.isSafeInteger(selected.id)) return;
     const { login, id, name } = selected;
-    if (!window.confirm(`Check @${login}${name ? ` (${name})` : ''} and, if they have no access or pending invitation, invite them with write access to ${destinationLabel(destination)}?`)) return;
+    if (!window.confirm(`Invite @${login}${name ? ` (${name})` : ''} to ${destinationLabel(destination)}? They will be able to read the team's tracked time and write to the GitHub repository.`)) return;
     invite.disabled = true; feedback.textContent = 'Checking GitHub repository access…';
+    let completed = false;
     try {
       const result = await send({ type: 'INVITE_REPOSITORY_USER', payload: { destinationId: destination.id, login, userId: id } });
-      feedback.textContent = result.status === 'invited' ? `Invitation sent to @${result.login}. They must accept on GitHub.`
+      feedback.textContent = result.status === 'invited' ? `GitHub invitation sent to @${result.login}. They must accept it on GitHub before joining Clockoli.`
         : result.status === 'already_invited' ? `@${result.login} already has a pending GitHub invitation.`
           : result.status === 'read_only_access' ? `@${result.login} has read-only access. Grant write access on GitHub before they join Clockoli.`
           : `@${result.login} already has repository access.`;
-      feedback.className = 'teammate-feedback form-feedback success';
+      feedback.className = result.status === 'read_only_access' ? 'teammate-feedback form-feedback error' : 'teammate-feedback form-feedback success';
+      completed = result.status !== 'read_only_access';
       if (result.status === 'invited' || result.status === 'already_invited') {
         await loadRepositoryCollaborators(article, destination, $('time-repository-list'));
       }
     } catch (error) {
       feedback.textContent = error.message; feedback.className = 'teammate-feedback form-feedback error';
-    } finally { invite.disabled = selected?.id !== id; }
+    } finally { invite.disabled = completed || selected?.id !== id; }
   });
 }
 
@@ -379,67 +412,94 @@ function repositoryMetadata(destination) {
   return metadata;
 }
 
-function renderTeammateInstructions(container, destination) {
+function renderTeammateInstructions(container, destination, article) {
   const details = document.createElement('details'); details.className = 'teammate-instructions';
-  const summary = document.createElement('summary'); summary.textContent = 'Invite teammates';
+  const summary = document.createElement('summary'); summary.textContent = 'Invite teammate';
+  details.hidden = true;
   const intro = document.createElement('p'); intro.className = 'teammate-intro';
-  intro.textContent = `Find a GitHub account for ${destinationLabel(destination)}. Clockoli checks their access before requesting a write invitation.`;
+  intro.textContent = 'Choose a GitHub user. Clockoli checks their access and sends an invitation only if one is needed.';
   details.append(summary, intro);
-  renderTeammatePicker(details, destination, container);
+  renderTeammatePicker(details, destination, article);
+  const invitationMessage = clockoliInvitationMessage(destination);
+  if (invitationMessage) {
+    const actions = document.createElement('div'); actions.className = 'teammate-invitation-link';
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'secondary';
+    button.textContent = 'Copy Clockoli invitation message';
+    const status = document.createElement('p'); status.className = 'form-feedback';
+    status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
+    const fallback = document.createElement('textarea'); fallback.readOnly = true; fallback.rows = 9;
+    fallback.className = 'teammate-invitation-message-fallback';
+    fallback.setAttribute('aria-label', 'Clockoli invitation message');
+    fallback.value = invitationMessage; fallback.hidden = true;
+    fallback.addEventListener('focus', () => fallback.select());
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      try {
+        await navigator.clipboard.writeText(invitationMessage);
+        status.textContent = 'Invitation message copied. Send it to your teammate.';
+        status.className = 'form-feedback success';
+        fallback.hidden = true;
+      } catch {
+        status.textContent = 'Clipboard unavailable. Select and copy the invitation message below.';
+        status.className = 'form-feedback error';
+        fallback.hidden = false; fallback.focus();
+      } finally { button.disabled = false; }
+    });
+    const note = document.createElement('p'); note.className = 'help';
+    note.textContent = 'Share this message after sending a GitHub repository invitation. The message alone does not grant access.';
+    actions.append(button, status, fallback, note); details.append(actions);
+  }
   const setup = document.createElement('details'); setup.className = 'teammate-setup';
-  const setupSummary = document.createElement('summary'); setupSummary.textContent = 'What your teammate does next';
+  const setupSummary = document.createElement('summary'); setupSummary.textContent = 'How invitations work';
   const steps = document.createElement('ol'); steps.className = 'teammate-steps';
   for (const step of teammateSteps(destination)) {
     const item = document.createElement('li'); item.textContent = step; steps.append(item);
   }
   const note = document.createElement('p'); note.className = 'help';
   note.textContent = 'Clockoli creates a personal storage branch for each teammate. Do not create clockoli/users/… branches by hand.';
-  const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'secondary'; copy.textContent = 'Copy instructions';
-  const feedback = document.createElement('p'); feedback.className = 'form-feedback'; feedback.setAttribute('role', 'status'); feedback.setAttribute('aria-live', 'polite');
-  copy.addEventListener('click', async () => {
-    copy.disabled = true;
-    try {
-      await navigator.clipboard.writeText(teammateInstructions(destination));
-      feedback.textContent = 'Teammate instructions copied.'; feedback.className = 'form-feedback success';
-    } catch {
-      setup.open = true;
-      feedback.textContent = 'Could not copy automatically. Select the steps above and copy them with your keyboard.';
-      feedback.className = 'form-feedback error';
-    } finally { copy.disabled = false; }
-  });
-  setup.append(setupSummary, steps, note, copy, feedback);
+  setup.append(setupSummary, steps, note);
   details.append(setup);
   container.append(details);
 }
 
-function avatarAccessMenu(article, destination, root, avatar, user, kind) {
+function avatarAccessMenu(article, destination, root, user, kind) {
   const wrapper = document.createElement('span'); wrapper.className = 'repository-avatar-wrap';
+  const trigger = document.createElement('button'); trigger.type = 'button';
+  trigger.className = 'repository-member-actions-button'; trigger.textContent = '⋯';
+  trigger.setAttribute('aria-label', `Manage @${user.login}${kind === 'pending' ? ' pending invitation' : ' repository access'}`);
   const menu = document.createElement('span'); menu.className = 'repository-avatar-actions'; menu.hidden = true;
   const label = document.createElement('span'); label.textContent = `@${user.login}${kind === 'pending' ? ' · pending invitation' : ''}`;
   const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-repository-user';
   remove.textContent = kind === 'pending' ? `Cancel invitation for @${user.login}` : `Remove @${user.login}`;
   menu.append(label, remove);
-  avatar.setAttribute('aria-expanded', 'false'); avatar.setAttribute('aria-haspopup', 'true');
+  const showGitHubAccessLink = feedback => {
+    const link = document.createElement('a');
+    link.href = `https://github.com/${encodeURIComponent(destination.owner)}/${encodeURIComponent(destination.repo)}/settings/access`;
+    link.target = '_blank'; link.rel = 'noreferrer';
+    link.textContent = 'Manage repository access on GitHub';
+    feedback.append(link);
+  };
+  trigger.setAttribute('aria-expanded', 'false'); trigger.setAttribute('aria-haspopup', 'true');
   const outside = event => { if (!wrapper.contains(event.target)) close(); };
   const close = () => {
-    menu.hidden = true; avatar.setAttribute('aria-expanded', 'false');
+    menu.hidden = true; trigger.setAttribute('aria-expanded', 'false');
     document.removeEventListener('pointerdown', outside);
     if (closeActiveAvatarMenu === close) closeActiveAvatarMenu = null;
   };
-  avatar.addEventListener('click', event => {
+  trigger.addEventListener('click', event => {
     event.preventDefault(); event.stopPropagation();
     if (!menu.hidden) { close(); return; }
     closeActiveAvatarMenu?.();
-    menu.hidden = false; avatar.setAttribute('aria-expanded', 'true'); closeActiveAvatarMenu = close;
+    menu.hidden = false; trigger.setAttribute('aria-expanded', 'true'); closeActiveAvatarMenu = close;
     if (menu.getBoundingClientRect?.().right > window.innerWidth - 12) { menu.style.left = 'auto'; menu.style.right = '0'; }
     document.addEventListener('pointerdown', outside);
     remove.focus();
   });
   menu.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && !menu.hidden) { event.preventDefault(); event.stopPropagation(); close(); avatar.focus(); }
+    if (event.key === 'Escape' && !menu.hidden) { event.preventDefault(); event.stopPropagation(); close(); trigger.focus(); }
   });
-  avatar.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && !menu.hidden) { event.preventDefault(); event.stopPropagation(); close(); avatar.focus(); }
+  trigger.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !menu.hidden) { event.preventDefault(); event.stopPropagation(); close(); trigger.focus(); }
   });
   remove.addEventListener('click', async event => {
     event.preventDefault(); event.stopPropagation();
@@ -448,32 +508,56 @@ function avatarAccessMenu(article, destination, root, avatar, user, kind) {
     if (!window.confirm(`In ${destinationLabel(destination)}, ${action} @${user.login}? This does not delete their existing time records.`)) return;
     article.open = true;
     const feedback = article.querySelector('.repository-manage-feedback');
-    remove.disabled = true; feedback.textContent = 'Checking GitHub access…'; feedback.className = 'repository-manage-feedback form-feedback';
+    remove.disabled = true;
+    feedback.textContent = kind === 'pending' ? `Cancelling @${user.login}'s invitation on GitHub…` : `Removing @${user.login}'s access on GitHub…`;
+    feedback.className = 'repository-manage-feedback form-feedback';
     try {
       const outcome = await send({ type: 'REMOVE_REPOSITORY_USER', payload: {
         destinationId: destination.id, login: user.login, userId: user.id, kind,
       } });
       if (outcome.status !== (kind === 'pending' ? 'cancelled' : 'removed')) throw new Error('GitHub did not confirm removal.');
-      feedback.textContent = kind === 'pending' ? `Invitation for @${outcome.login} cancelled.` : `@${outcome.login} removed from the repository.`;
-      feedback.className = 'repository-manage-feedback form-feedback success';
       close();
-      await loadRepositoryCollaborators(article, destination, root);
+      const refreshed = await loadRepositoryCollaborators(article, destination, root);
+      const remaining = kind === 'pending'
+        ? [...(refreshed?.pendingUsers || []), ...(refreshed?.pendingMoreUsers || [])]
+        : [...(refreshed?.users || []), ...(refreshed?.moreUsers || [])];
+      const stillListed = remaining.some(member => member.id === user.id);
+      if (!refreshed) {
+        feedback.textContent = `GitHub accepted the change for @${outcome.login}, but Clockoli couldn't verify the updated list. Check Manage GitHub access.`;
+      } else if (stillListed) {
+        feedback.textContent = kind === 'pending'
+          ? `GitHub accepted the cancellation for @${outcome.login}, but the invitation still appears. GitHub may still be updating it; check Manage GitHub access.`
+          : `GitHub accepted the removal of @${outcome.login}, but they still have repository access. This may come from a GitHub team or organization, or access may still be updating. Check Manage GitHub access.`;
+      } else {
+        feedback.textContent = kind === 'pending' ? `Invitation for @${outcome.login} cancelled.` : `@${outcome.login} removed from the repository.`;
+      }
+      feedback.className = `repository-manage-feedback form-feedback ${!refreshed || stillListed ? 'warning' : 'success'}`;
+      if (!refreshed || stillListed) showGitHubAccessLink(feedback);
       feedback.focus();
     } catch (error) {
-      feedback.textContent = error.message; feedback.className = 'repository-manage-feedback form-feedback error';
+      feedback.textContent = error.message;
+      feedback.className = 'repository-manage-feedback form-feedback error';
+      showGitHubAccessLink(feedback);
+      feedback.focus();
     } finally { remove.disabled = false; }
   });
-  wrapper.append(avatar, menu);
+  wrapper.append(trigger, menu);
   return wrapper;
 }
 
 function renderRemoval(container, destination) {
   const panel = document.createElement('section'); panel.className = 'repository-removal notice'; panel.hidden = true;
-  const title = document.createElement('h4'); title.textContent = `Remove ${destinationLabel(destination)} from Clockoli?`;
+  const title = document.createElement('h4'); title.textContent = 'Disconnect time repository?';
+  const name = document.createElement('p'); name.className = 'repository-removal-name';
+  const repository = document.createElement('strong'); repository.textContent = destinationLabel(destination); name.append(repository);
   const body = document.createElement('p');
-  body.textContent = 'This removes the repository from this browser. Repository data, GitHub App access, and Git history will not be deleted.';
+  body.textContent = 'This will remove the repository from Clockoli in this browser.';
+  const retained = document.createElement('p');
+  retained.textContent = "Your tracked time and GitHub repository will not be deleted. Other team members won't be affected.";
+  const reconnect = document.createElement('p');
+  reconnect.textContent = 'You can reconnect this repository later.';
   const error = document.createElement('p'); error.className = 'form-feedback error'; error.setAttribute('role', 'alert');
-  const confirm = document.createElement('button'); confirm.type = 'button'; confirm.className = 'danger'; confirm.textContent = 'Remove from Clockoli';
+  const confirm = document.createElement('button'); confirm.type = 'button'; confirm.className = 'danger'; confirm.textContent = 'Disconnect repository';
   const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'secondary'; cancel.textContent = 'Cancel';
   const blockers = Array.isArray(destination.removalBlockers) ? destination.removalBlockers : [];
   confirm.addEventListener('click', async () => {
@@ -482,7 +566,7 @@ function renderRemoval(container, destination) {
       await send({ type: 'REMOVE_DESTINATION', destinationId: destination.id });
       await refreshState();
       await refreshLocalPreferences();
-      message(`${destinationLabel(destination)} was removed from this browser.`, 'success');
+      message(`${destinationLabel(destination)} was disconnected from Clockoli in this browser. The repository and tracked time remain in GitHub.`, 'success');
     } catch (reason) {
       error.textContent = reason.message || String(reason);
       confirm.disabled = false; cancel.disabled = false;
@@ -491,7 +575,7 @@ function renderRemoval(container, destination) {
   cancel.addEventListener('click', () => { panel.hidden = true; });
   if (blockers.length) { error.textContent = blockers.join(' '); confirm.hidden = true; }
   const actions = document.createElement('div'); actions.className = 'actions'; actions.append(confirm, cancel);
-  panel.append(title, body, error, actions); container.append(panel);
+  panel.append(title, name, body, retained, reconnect, error, actions); container.append(panel);
   return panel;
 }
 
@@ -505,30 +589,40 @@ function renderDestinationCard(destination, isDefault) {
   disclosure.setAttribute('class', 'repository-disclosure-icon');
   disclosure.setAttribute('viewBox', '0 0 16 16'); disclosure.setAttribute('aria-hidden', 'true');
   const chevron = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  chevron.setAttribute('d', 'M3 6l5 5 5-5');
-  chevron.setAttribute('fill', 'none'); chevron.setAttribute('stroke', 'currentColor');
-  chevron.setAttribute('stroke-width', '1.75'); chevron.setAttribute('stroke-linecap', 'round'); chevron.setAttribute('stroke-linejoin', 'round');
+  chevron.setAttribute('d', 'M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.939l3.72-3.719a.749.749 0 0 1 1.06 0Z'); chevron.setAttribute('fill', 'currentColor');
   disclosure.append(chevron); headingTitle.append(disclosure, title);
   const people = document.createElement('div'); people.className = 'repository-people';
   const collaborators = document.createElement('div'); collaborators.className = 'repository-collaborators';
-  people.append(collaborators); headingMain.append(headingTitle, people);
+  headingMain.append(headingTitle);
   if (destination.initialized !== false && state?.auth?.mode === 'github_app'
       && /^github:[1-9]\d*$/.test(destination.id || '') && Number.isSafeInteger(destination.installationId)) {
     const add = document.createElement('button'); add.type = 'button'; add.className = 'repository-add-teammate';
-    add.title = 'Add teammate'; add.setAttribute('aria-label', `Add a teammate to ${destinationLabel(destination)}`);
+    add.title = 'Invite teammate'; add.setAttribute('aria-label', `Invite a teammate to ${destinationLabel(destination)}`);
     const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     icon.setAttribute('viewBox', '0 0 16 16'); icon.setAttribute('aria-hidden', 'true');
     const cross = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    cross.setAttribute('d', 'M8 3v10M3 8h10');
-    cross.setAttribute('fill', 'none'); cross.setAttribute('stroke', 'currentColor');
-    cross.setAttribute('stroke-width', '1.75'); cross.setAttribute('stroke-linecap', 'round');
-    icon.append(cross); add.append(icon);
-    add.addEventListener('click', event => {
+    cross.setAttribute('d', 'M7.75 2a.75.75 0 0 1 .75.75V7h4.25a.75.75 0 0 1 0 1.5H8.5v4.25a.75.75 0 0 1-1.5 0V8.5H2.75a.75.75 0 0 1 0-1.5H7V2.75A.75.75 0 0 1 7.75 2Z'); cross.setAttribute('fill', 'currentColor');
+    icon.append(cross);
+    const label = document.createElement('span'); label.textContent = 'Invite teammate';
+    add.append(icon, label);
+    add.addEventListener('click', async event => {
       event.preventDefault(); event.stopPropagation();
       article.open = true;
+      const feedback = article.querySelector('.repository-invite-feedback');
       const instructions = article.querySelector('.teammate-instructions');
-      instructions.open = true;
-      instructions.querySelector('.teammate-search').focus();
+      if (!instructions || add.disabled) return;
+      add.disabled = true; feedback.textContent = 'Checking invitation permissions…';
+      feedback.className = 'repository-invite-feedback form-feedback';
+      try {
+        await send({ type: 'CHECK_REPOSITORY_INVITE_ACCESS', destinationId: destination.id });
+        feedback.textContent = '';
+        instructions.hidden = false; instructions.open = true;
+        instructions.querySelector('.teammate-search').focus();
+      } catch (error) {
+        instructions.hidden = true; instructions.open = false;
+        feedback.textContent = `${error.message} Check the repository and Clockoli App permissions on GitHub.`;
+        feedback.className = 'repository-invite-feedback form-feedback error';
+      } finally { add.disabled = false; }
     });
     people.append(add);
   }
@@ -565,13 +659,27 @@ function renderDestinationCard(destination, isDefault) {
     });
     actions.append(makeDefault);
   }
-  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-destination'; remove.textContent = 'Remove from Clockoli'; actions.append(remove);
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-destination'; remove.textContent = 'Disconnect repository'; actions.append(remove);
   article.append(actions, feedback);
-  if (destination.initialized !== false) renderTeammateInstructions(article, destination);
+  const team = document.createElement('section'); team.className = 'repository-team';
+  const teamHeading = document.createElement('div'); teamHeading.className = 'repository-team-heading';
+  const teamTitle = document.createElement('h4'); teamTitle.textContent = 'Team';
+  teamHeading.append(teamTitle, people);
+  const teamNote = document.createElement('p'); teamNote.className = 'help';
+  teamNote.textContent = 'GitHub access determines who can read time records. Each person sets up Clockoli separately.';
+  const inviteFeedback = document.createElement('p'); inviteFeedback.className = 'repository-invite-feedback form-feedback';
+  inviteFeedback.setAttribute('role', 'status'); inviteFeedback.setAttribute('aria-live', 'polite');
   const teammateFeedback = document.createElement('p'); teammateFeedback.className = 'repository-manage-feedback form-feedback';
   teammateFeedback.tabIndex = -1;
   teammateFeedback.setAttribute('role', 'status'); teammateFeedback.setAttribute('aria-live', 'polite');
-  article.append(teammateFeedback);
+  team.append(teamHeading, teamNote, inviteFeedback, teammateFeedback, collaborators);
+  if (destination.initialized !== false) renderTeammateInstructions(team, destination, article);
+  const how = document.createElement('details'); how.className = 'repository-team-help';
+  const howTitle = document.createElement('summary'); howTitle.textContent = 'How team access works';
+  const howText = document.createElement('p'); howText.className = 'help';
+  howText.textContent = 'A GitHub invitation grants repository write access, but the recipient must accept it and join Clockoli themselves. Access to this repository also allows reading teammates’ stored time.';
+  how.append(howTitle, howText); team.append(how);
+  article.append(team);
   const removalPanel = renderRemoval(article, destination);
   remove.addEventListener('click', () => { removalPanel.hidden = false; removalPanel.focus?.(); });
   return article;
@@ -585,48 +693,103 @@ async function loadRepositoryCollaborators(article, destination, root) {
     if (!root.contains(article) || article.collaboratorLoadId !== loadId) return;
     const users = Array.isArray(result?.users) ? result.users : [];
     const pending = Array.isArray(result?.pendingUsers) ? result.pendingUsers : [];
+    const moreUsers = Array.isArray(result?.moreUsers) ? result.moreUsers : [];
+    const pendingMoreUsers = Array.isArray(result?.pendingMoreUsers) ? result.pendingMoreUsers : [];
     repositoryCollaborators.set(destination.id, new Map((result.avatarUsers || users).map(user => [user.login.toLowerCase(), user.avatarUrl])));
+    rateUserDirectories.set(destination.id, Promise.resolve(result));
+    if ($('rates-destination').value === destination.id) {
+      for (const row of $('rates-list').querySelectorAll('.rate-row')) {
+        if (row.rateSuggestionsOpen && !row.hidden) void showRateUserSuggestions(row);
+      }
+    }
     if ($('merge-task-destination').value === destination.id) updateMergePeopleAvatars();
+    const signature = JSON.stringify([users, pending, moreUsers, pendingMoreUsers, result.hasMore,
+      result.pendingHasMore, result.truncated, result.pendingTruncated, result.pendingUnavailable, result.readyUserIds]);
+    // Refreshing on tab return must not destroy an open menu, invitation form, or list.
+    if (article.collaboratorSignature === signature) return result;
+    const moreOpen = display.querySelector('.repository-collaborator-more')?.open || false;
+    const pendingOpen = display.querySelector('.repository-invitation-more')?.open || false;
+    article.collaboratorSignature = signature;
     const labels = users.map(user => `@${user.login}`);
     closeActiveAvatarMenu?.();
     display.replaceChildren();
     display.setAttribute('role', 'group');
     display.setAttribute('aria-label', `Repository collaborators: ${labels.join(', ')}${result?.hasMore ? ', and more' : ''}${pending.length || result?.pendingHasMore ? `; pending invitations: ${pending.map(user => `@${user.login}`).join(', ')}${result?.pendingHasMore ? ', and more' : ''}` : ''}`);
-    if (!users.length && !pending.length && !result?.pendingHasMore) {
+    if (!users.length && !pending.length && !result?.hasMore && !result?.pendingHasMore) {
       display.textContent = result?.pendingUnavailable ? 'No collaborators' : 'No collaborators or pending invitations';
-      return;
+      return result;
     }
-    for (const [user, isPending] of [...users.map(user => [user, false]), ...pending.map(user => [user, true])]) {
+    const readyIds = new Set(Array.isArray(result.readyUserIds) ? result.readyUserIds : []);
+    function createMember(user, isPending) {
+      const isSelf = Number.isSafeInteger(state.auth?.githubUserId) && state.auth.githubUserId > 0
+        ? user.id === state.auth.githubUserId
+        : user.login.toLowerCase() === state.auth?.githubLogin?.toLowerCase();
       const interactive = state?.auth?.mode === 'github_app' && destination.initialized !== false
         && /^github:[1-9]\d*$/.test(destination.id || '') && Number.isSafeInteger(destination.installationId)
-        && user.login.toLowerCase() !== state.auth.githubLogin?.toLowerCase();
-      const avatar = document.createElement(interactive ? 'button' : 'span');
+        && !isSelf;
+      const member = document.createElement('div'); member.className = 'repository-team-member';
+      const avatar = document.createElement('span');
       avatar.className = `repository-collaborator${isPending ? ' repository-invitation' : ''}`;
       avatar.dataset.login = `@${user.login}${isPending ? ' · pending invitation' : ''}`;
       avatar.dataset.clockoliTooltip = avatar.dataset.login;
-      if (interactive) { avatar.type = 'button'; avatar.setAttribute('aria-label', `Manage @${user.login}${isPending ? ' pending invitation' : ' repository access'}`); }
-      else { avatar.setAttribute('role', 'img'); avatar.setAttribute('aria-label', `@${user.login}${isPending ? ', pending invitation' : ''}`); }
+      avatar.setAttribute('role', 'img');
+      avatar.setAttribute('aria-label', `@${user.login}${isPending ? ', pending invitation' : ''}`);
       avatar.textContent = user.login[0].toUpperCase();
       if (user.avatarUrl) {
         const image = document.createElement('img'); image.src = user.avatarUrl; image.alt = '';
         image.referrerPolicy = 'no-referrer'; image.addEventListener('error', () => image.remove());
         avatar.append(image);
       }
-      display.append(interactive ? avatarAccessMenu(article, destination, root, avatar, user, isPending ? 'pending' : 'collaborator') : avatar);
+      const identity = document.createElement('div'); identity.className = 'repository-team-member-identity';
+      const login = document.createElement('strong'); login.textContent = `@${user.login}${isSelf ? ' (you)' : ''}`;
+      const status = document.createElement('span'); status.className = 'repository-team-member-status';
+      status.textContent = isPending ? 'GitHub invitation pending'
+        : readyIds.has(user.id) ? 'Clockoli storage ready' : 'GitHub access granted';
+      identity.append(login, status); member.append(avatar, identity);
+      if (interactive) member.append(avatarAccessMenu(article, destination, root, user, isPending ? 'pending' : 'collaborator'));
+      return member;
     }
-    if (result.hasMore) {
-      const extra = document.createElement('span'); extra.className = 'repository-collaborator repository-collaborator-more';
-      extra.title = 'More collaborators'; extra.setAttribute('aria-hidden', 'true'); extra.textContent = '…'; display.append(extra);
+    for (const user of users) display.append(createMember(user, false));
+    for (const user of pending) display.append(createMember(user, true));
+
+    function appendOverflow(more, isPending, truncated, wasOpen) {
+      const details = document.createElement('details');
+      details.className = isPending ? 'repository-more-members repository-invitation-more'
+        : 'repository-more-members repository-collaborator-more';
+      details.open = wasOpen;
+      const summary = document.createElement('summary');
+      summary.textContent = isPending ? `More pending invitations (${more.length || 'view on GitHub'})`
+        : `More collaborators (${more.length || 'view on GitHub'})`;
+      details.append(summary);
+      for (const user of more) details.append(createMember(user, isPending));
+      if (truncated || !more.length) {
+        const link = document.createElement('a'); link.className = 'repository-view-all';
+        link.href = `https://github.com/${encodeURIComponent(destination.owner)}/${encodeURIComponent(destination.repo)}/settings/access`;
+        link.target = '_blank'; link.rel = 'noreferrer';
+        link.textContent = isPending ? 'View all invitations on GitHub' : 'View all collaborators on GitHub';
+        details.append(link);
+      }
+      display.append(details);
     }
-    if (result.pendingHasMore) {
-      const extra = document.createElement('span'); extra.className = 'repository-collaborator repository-invitation repository-invitation-more';
-      extra.title = 'More pending invitations'; extra.setAttribute('aria-hidden', 'true'); extra.textContent = '…'; display.append(extra);
-    }
+    if (result.hasMore) appendOverflow(moreUsers, false, result.truncated, moreOpen);
+    if (result.pendingHasMore) appendOverflow(pendingMoreUsers, true, result.pendingTruncated, pendingOpen);
+    return result;
   } catch {
     if (root.contains(article) && article.collaboratorLoadId === loadId) {
       repositoryCollaborators.delete(destination.id);
+      rateUserDirectories.delete(destination.id);
+      if ($('rates-destination').value === destination.id) {
+        for (const row of $('rates-list').querySelectorAll('.rate-row')) {
+          if (!row.rateSuggestionsOpen || row.hidden) continue;
+          row.rateSuggestionRequest = (row.rateSuggestionRequest || 0) + 1;
+          row.rateUsers = [];
+          renderRateUserChoices(row);
+          row.querySelector('.rate-login-note').textContent = 'Could not load repository users. You can still enter a login manually.';
+        }
+      }
       if ($('merge-task-destination').value === destination.id) updateMergePeopleAvatars();
       display.replaceChildren(); display.textContent = 'Collaborators unavailable';
+      article.collaboratorSignature = null;
       closeActiveAvatarMenu?.();
     }
   }
@@ -646,10 +809,43 @@ function canFinishRepositorySetup() {
     && readySetupDestination(configuredDestinations().find(destination => destination.id === defaultDestinationId()));
 }
 
+function destinationCardIdentity(destination, isDefault) {
+  return JSON.stringify([
+    state?.auth?.mode || '', state?.auth?.githubUserId || state?.auth?.githubLogin?.toLowerCase() || '',
+    destination.id, destination.owner, destination.repo, destination.installationId,
+    destination.initialized, destination.label, isDefault,
+    destination.settingsUrl, destination.manageAccessUrl, destination.installationSettingsUrl,
+    destination.repositoryUrl, destination.url, destination.removalBlockers,
+  ]);
+}
+
+function refreshDestinationCardSummary(article, destination, isDefault) {
+  const badges = article.querySelector('.repository-badges');
+  const replacement = document.createElement('div');
+  appendBadge(replacement, destinationStatus(destination), destinationNeedsAttention(destination) ? 'attention' : 'ready');
+  if (isDefault) appendBadge(replacement, 'Default', 'default');
+  badges.replaceChildren(...replacement.children);
+  const metadata = article.querySelector('.repository-metadata');
+  const updated = repositoryMetadata(destination);
+  metadata.replaceChildren(...updated.children);
+}
+
+function restoreDestinationCardDisclosure(previous, current) {
+  current.open = previous.open;
+  for (const selector of ['.teammate-instructions', '.teammate-setup', '.teammate-permissions',
+    '.repository-team-help', '.repository-removal']) {
+    const prior = previous.querySelector(selector), next = current.querySelector(selector);
+    if (!prior || !next) continue;
+    next.open = prior.open;
+    // Keep the explicitly opened invitation form visible after a harmless status update.
+    if (selector === '.teammate-instructions') next.hidden = prior.hidden;
+  }
+}
+
 function renderDestinationCards() {
   const destinations = configuredDestinations();
-  closeActiveAvatarMenu?.();
-  const root = $('time-repository-list'); root.replaceChildren();
+  const root = $('time-repository-list');
+  const previous = new Map([...root.children].map(article => [article.dataset.destinationId, article]));
   $('time-repositories-empty').hidden = destinations.length > 0;
   $('add-time-repository').hidden = state?.auth?.mode === 'pat';
   $('pat-repository-limitation').hidden = state?.auth?.mode !== 'pat';
@@ -664,16 +860,38 @@ function renderDestinationCards() {
   chooser.disabled = repositoryActionApplying || Boolean(state?.candidateAuth);
   $('finish-setup').hidden = !showOnboarding || destinations.length === 0;
   $('finish-setup').disabled = !canFinishRepositorySetup();
-  $('setup-ready-summary').hidden = !destinations.length && !authorizationBlock
+  $('setup-ready-summary').hidden = !destinations.length && !(authorizationBlock && !isAuthTimerWarning(authorizationBlock.message))
     && !repositoryInputDirty && repositoryCanBeSelected(selectedRepository);
-  $('setup-ready-summary').textContent = state?.candidateAuth && authorizationBlock
+  $('setup-ready-summary').textContent = state?.candidateAuth && authorizationBlock && !isAuthTimerWarning(authorizationBlock.message)
     ? authorizationBlock.message
     : destinations.length
       ? `Connected repositories are listed above with their status. Default: ${destinationLabel(destinations.find(destination => destination.id === fallback))}. Choose a ready default, or check another repository.`
       : 'Check a repository first, then choose the offered setup action. Repository changes require confirmation.';
+  const articles = [];
   for (const destination of [...destinations].sort((a, b) => destinationLabel(a).localeCompare(destinationLabel(b)))) {
-    const article = renderDestinationCard(destination, destination.id === fallback);
-    root.append(article);
+    const isDefault = destination.id === fallback;
+    const identity = destinationCardIdentity(destination, isDefault);
+    const old = previous.get(destination.id);
+    const article = old?.dataset.cardIdentity === identity ? old : renderDestinationCard(destination, isDefault);
+    article.dataset.cardIdentity = identity;
+    if (old && old !== article && old.dataset.destinationId === destination.id) {
+      // Only restore expansion for the same GitHub account and repository.
+      if (old.dataset.repositoryAccount === `${state?.auth?.mode || ''}:${state?.auth?.githubUserId || state?.auth?.githubLogin?.toLowerCase() || ''}`
+          && old.dataset.repositoryCoordinates === `${destination.owner}/${destination.repo}`) {
+        restoreDestinationCardDisclosure(old, article);
+      }
+    }
+    article.dataset.repositoryAccount = `${state?.auth?.mode || ''}:${state?.auth?.githubUserId || state?.auth?.githubLogin?.toLowerCase() || ''}`;
+    article.dataset.repositoryCoordinates = `${destination.owner}/${destination.repo}`;
+    if (article === old) refreshDestinationCardSummary(article, destination, isDefault);
+    articles.push(article);
+  }
+  if (articles.length !== root.children.length || articles.some((article, index) => article !== root.children[index])) {
+    closeActiveAvatarMenu?.();
+    root.replaceChildren(...articles);
+  }
+  for (const [article, destination] of articles.map(article => [article,
+    destinations.find(value => value.id === article.dataset.destinationId)])) {
     if (state?.auth) void loadRepositoryCollaborators(article, destination, root);
   }
 }
@@ -681,6 +899,12 @@ function renderDestinationCards() {
 function deviceKeyboardShortcut(key) {
   const platform = String(globalThis.navigator?.userAgentData?.platform || globalThis.navigator?.platform || '');
   return /mac|iphone|ipad|ipod/i.test(platform) ? `⌘${key}` : `Ctrl+${key}`;
+}
+
+function cancelScheduledDeviceOpen() {
+  clearTimeout(deviceAutoOpenTimer);
+  deviceAutoOpenTimer = null;
+  deviceOpeningGitHubAutomatically = false;
 }
 
 function renderDeviceHandoff(attempt) {
@@ -691,18 +915,141 @@ function renderDeviceHandoff(attempt) {
     : clipboard === 'selection' ? `Clipboard copying is blocked. The code is selected; press ${deviceKeyboardShortcut('C')} to copy it.`
       : clipboard === 'failed' ? 'Code not copied yet. Select Copy before opening GitHub.'
         : 'Code ready. Select Copy to put it on your clipboard.';
-  const paste = `press ${deviceKeyboardShortcut('V')} to paste the code.`;
+  const paste = `paste the code with ${deviceKeyboardShortcut('V')} and authorize Clockoli.`;
   $('device-handoff-status').textContent = clipboard === 'copied'
-    ? deviceOpeningGitHubAutomatically ? `Next: When GitHub opens, ${paste}`
-      : deviceGitHubOpened ? `Next: On GitHub, ${paste}`
-        : `Next: Open GitHub, then ${paste}`
-    : clipboard === 'selection' ? 'Next: Copy the selected code, then open GitHub.'
-      : 'Next: Copy the code, then open GitHub.';
+    ? deviceOpeningGitHubAutomatically ? `When GitHub opens, ${paste}`
+      : deviceGitHubOpened ? `On GitHub, ${paste}`
+        : deviceAutoOpenFailed ? `GitHub could not open automatically. Open GitHub below, then ${paste}`
+          : `Open GitHub below, then ${paste}`
+    : clipboard === 'selection' ? 'Copy the selected code, then open GitHub.'
+      : 'Copy the code, then open GitHub.';
+  $('device-handoff-countdown').hidden = !deviceOpeningGitHubAutomatically;
+  $('open-device-page').textContent = deviceOpeningGitHubAutomatically ? 'Open GitHub now'
+    : deviceGitHubOpened ? 'Reopen GitHub' : 'Open GitHub to enter code';
+}
+
+function scheduleAutomaticDeviceOpen(attempt) {
+  cancelScheduledDeviceOpen();
+  deviceOpeningGitHubAutomatically = true;
+  renderDeviceHandoff(attempt);
+  deviceAutoOpenTimer = setTimeout(async () => {
+    deviceAutoOpenTimer = null;
+    if (state?.deviceAttempt?.attemptId !== attempt.attemptId || !deviceOpeningGitHubAutomatically) return;
+    deviceOpeningGitHubAutomatically = false;
+    deviceGitHubOpened = true;
+    githubHandoff = true;
+    renderDeviceHandoff(attempt);
+    try {
+      await send({ type: 'OPEN_DEVICE_FLOW_PAGE', attemptId: attempt.attemptId });
+    } catch (error) {
+      if (state?.deviceAttempt?.attemptId !== attempt.attemptId) return;
+      deviceGitHubOpened = false;
+      deviceAutoOpenFailed = true;
+      githubHandoff = false;
+      message(error.message, 'error');
+    } finally {
+      if (state?.deviceAttempt?.attemptId === attempt.attemptId) renderDeviceAttempt(state.deviceAttempt);
+    }
+  }, DEVICE_HANDOFF_PAUSE_MS);
+}
+
+// Never assume a link is proof of GitHub access. The open invitation tab only
+// transports owner/repository through extension installation.
+function isConnectedJoinRepository(repository) {
+  return configuredDestinations().some(destination => (destination.owner && destination.repo
+    && `${destination.owner}/${destination.repo}`.toLowerCase() === repository.toLowerCase()));
+}
+
+async function scanOpenJoinInvitations() {
+  const [saved, ignored, tabs] = await Promise.all([
+    choiceStore.getJoinInvitation(),
+    choiceStore.getIgnoredJoinInvitations(),
+    chrome.tabs.query({}).catch(() => []),
+  ]);
+  const blocked = new Set(ignored.map(name => name.toLowerCase()));
+  const values = [...(saved ? [saved] : []), ...discoverClockoliInvitations(tabs)];
+  const unique = new Map();
+  for (const name of values) {
+    if (!blocked.has(name.toLowerCase()) && !isConnectedJoinRepository(name)
+        && !unique.has(name.toLowerCase())) unique.set(name.toLowerCase(), name);
+  }
+  joinChoices = [...unique.values()].slice(0, 20).sort((a, b) => a.localeCompare(b));
+  selectedJoinInvitation = saved && joinChoices.some(name => name.toLowerCase() === saved.toLowerCase()) ? saved
+    : joinChoices.length === 1 ? joinChoices[0] : '';
+  if (selectedJoinInvitation && !saved) await choiceStore.saveJoinInvitation(selectedJoinInvitation);
+  if (joinChoices.length && !setupPathTouched) setupPath = 'join';
+  if (state) renderState();
+}
+
+async function selectJoinInvitation(name) {
+  const repository = validateJoinRepository(name);
+  if (!repository) return;
+  selectedJoinInvitation = repository;
+  if (!joinChoices.some(item => item.toLowerCase() === repository.toLowerCase())) joinChoices.push(repository);
+  setupPath = 'join';
+  setupPathTouched = true;
+  await choiceStore.saveJoinInvitation(repository);
+  if (isAppAuthorized()) await rememberRepositoryTarget(repository);
+  renderState();
+}
+
+async function dismissJoinInvitation() {
+  const name = selectedJoinInvitation;
+  if (!name) return;
+  await choiceStore.ignoreJoinInvitation(name);
+  if (repositoryTarget.toLowerCase() === name.toLowerCase()) await rememberRepositoryTarget('');
+  joinChoices = joinChoices.filter(item => item.toLowerCase() !== name.toLowerCase());
+  selectedJoinInvitation = joinChoices.length === 1 ? joinChoices[0] : '';
+  if (selectedJoinInvitation) await choiceStore.saveJoinInvitation(selectedJoinInvitation);
+  else { setupPath = 'choose'; setupPathTouched = false; }
+  renderState();
+}
+
+function renderJoinSetup() {
+  const isJoin = setupPath === 'join';
+  const isCreate = setupPath === 'create';
+  $('repository-path-choices').hidden = setupPath !== 'choose';
+  $('existing-repository-option').hidden = !isJoin && !(isCreate && repositoryTarget);
+  $('new-repository-option').hidden = !isCreate;
+  $('change-repository-path').hidden = setupPath === 'choose';
+  const suggestions = joinChoices.filter(name => !isConnectedJoinRepository(name));
+  const select = $('join-invitation-picker');
+  const signature = JSON.stringify(suggestions);
+  if (signature !== joinChoicesSignature) {
+    joinChoicesSignature = signature;
+    select.replaceChildren();
+    if (suggestions.length > 1) {
+      const empty = document.createElement('option'); empty.value = ''; empty.textContent = 'Choose an invitation'; select.append(empty);
+    }
+    for (const name of suggestions) {
+      const option = document.createElement('option'); option.value = name; option.textContent = name; select.append(option);
+    }
+  }
+  select.value = selectedJoinInvitation && suggestions.some(item => item.toLowerCase() === selectedJoinInvitation.toLowerCase())
+    ? selectedJoinInvitation : '';
+  $('join-invitation-picker-label').hidden = suggestions.length <= 1;
+  $('join-invitation-status').textContent = suggestions.length > 1 && !selectedJoinInvitation
+    ? 'Several Clockoli invitations are open. Choose the repository you want to join.'
+    : selectedJoinInvitation
+      ? `Invitation for ${selectedJoinInvitation}. GitHub will verify your access; accept any pending GitHub repository invitation first.`
+      : '';
+  $('join-invitation-panel').hidden = !isJoin || suggestions.length === 0;
+  $('use-join-invitation').disabled = !selectedJoinInvitation;
+  $('use-join-invitation').textContent = isAppAuthorized() ? 'Check this invitation' : 'Connect GitHub to continue';
+  $('dismiss-join-invitation').hidden = !selectedJoinInvitation;
+
+  const showResume = Boolean(state?.ready && suggestions.length && !showOnboarding);
+  $('invitation-resume').hidden = !showResume;
+  $('invitation-resume-text').textContent = selectedJoinInvitation
+    ? `Clockoli invitation for ${selectedJoinInvitation}`
+    : 'Clockoli invitations found — choose a team to join';
 }
 
 function renderOnboardingProgress() {
   const authorized = isAppAuthorized();
-  const step = onboardingStep({ authorized });
+  const step = authExpired && state?.candidateAuth ? 2
+    : authExpired || reconnectingGitHub || (state?.auth?.mode === 'github_app' && state?.deviceAttempt)
+    ? 1 : onboardingStep({ authorized });
   $('current-step').textContent = String(step);
   $('current-step-name').textContent = ['Connect GitHub', 'Connect time repositories'][step - 1];
   $('progress-fill').style.width = `${(step / 2) * 100}%`;
@@ -721,11 +1068,22 @@ function renderOnboardingProgress() {
 function renderState() {
   const account = `${state?.auth?.mode || ''}:${state?.auth?.githubLogin?.toLowerCase() || ''}`;
   const accountChanged = account !== collaboratorAccount;
-  if (accountChanged) { repositoryCollaborators.clear(); collaboratorAccount = account; }
+  if (accountChanged) {
+    repositoryCollaborators.clear(); rateUserDirectories.clear(); clearRateUserSuggestions();
+    collaboratorAccount = account;
+  }
   const accountConnected = Boolean(state?.auth);
   const destinations = configuredDestinations();
-  const repositoryFlowOpen = Boolean(state?.candidateAuth) || (state?.auth?.mode === 'github_app' && (showOnboarding || destinations.length === 0));
-  $('connected').hidden = !accountConnected;
+  const initialSetup = !state.config && destinations.length === 0 && state.appConfigured
+    && !setupCancelled && !authExpired && !showAdvancedSetup && (!state.auth || state.auth.mode === 'github_app');
+  const deviceActive = Boolean(state.deviceAttempt);
+  const welcome = initialSetup && !accountConnected && !state.candidateAuth && !deviceActive;
+  document.documentElement.dataset.clockoliOnboarding = initialSetup
+    ? welcome ? 'welcome' : deviceActive ? 'authorization' : 'setup' : '';
+  const repositoryFlowOpen = Boolean(state?.candidateAuth || authExpired || reconnectingGitHub || state?.deviceAttempt)
+    || (state?.auth?.mode === 'github_app' && (showOnboarding || destinations.length === 0));
+  $('connected').hidden = !accountConnected || authExpired;
+  $('connected-actions').hidden = $('connected').hidden;
   $('onboarding').hidden = accountConnected && !repositoryFlowOpen;
   $('time-repositories').hidden = !accountConnected;
   $('display-settings').hidden = !state.config && destinations.length === 0;
@@ -737,12 +1095,27 @@ function renderState() {
   $('more-settings-toggle').hidden = Boolean(accountConnected);
   $('onboarding-flow').hidden = setupCancelled;
   $('setup-cancelled').hidden = !setupCancelled;
+  $('setup-progress').hidden = authExpired;
   $('build-warning').hidden = state.appConfigured;
   $('authorize').disabled = !state.appConfigured;
+  $('reconnect-github').hidden = state.auth?.mode !== 'github_app' || authExpired;
+  $('reconnect-github').disabled = !state.appConfigured || Boolean(state.deviceAttempt) || reconnectingGitHub;
   $('device-initial-paste-shortcut').textContent = deviceKeyboardShortcut('V');
-  $('connection-status').textContent = accountConnected ? (state.auth?.mode === 'pat' ? 'Connected with PAT' : 'Connected') : (state.candidateAuth ? 'Setup in progress' : 'Not connected');
-  $('connection-status').className = `badge${accountConnected ? ' ready' : ''}`;
-  $('connection-title').textContent = accountConnected ? 'GitHub account' : 'Set up Clockoli';
+  $('connection-status').textContent = authExpired && state.candidateAuth ? 'Checking repository access'
+    : authExpired ? 'Sign-in required' : accountConnected ? (state.auth?.mode === 'pat' ? 'Connected with PAT' : 'Connected') : (state.candidateAuth ? 'Setup in progress' : 'Not connected');
+  $('connection-status').className = `badge${accountConnected && !authExpired ? ' ready' : ''}`;
+  $('connection-status').hidden = initialSetup;
+  $('reauth-required').hidden = !authExpired || Boolean(state.deviceAttempt || state.candidateAuth);
+  $('authorize').textContent = authExpired ? 'Sign in again with GitHub' : 'Connect GitHub';
+  $('connection-title').textContent = welcome ? selectedJoinInvitation ? 'Join your team on Clockoli' : 'Welcome to Clockoli!'
+    : initialSetup && deviceActive ? 'Connect to GitHub'
+      : accountConnected ? 'GitHub account' : 'Set up Clockoli';
+  $('connection-description').textContent = welcome
+    ? selectedJoinInvitation ? `You've been invited to use ${selectedJoinInvitation}. Connect GitHub to continue.` : 'Track time with one click. Keep your records in a private GitHub repository you control.'
+    : initialSetup && deviceActive ? 'Paste the one-time code on GitHub to authorize Clockoli.'
+      : initialSetup ? 'Next, choose a private repository for your time records.'
+        : accountConnected ? 'Manage your GitHub account and time repositories.'
+          : 'Connect your GitHub account to find private time repositories.';
 
   if (state.config) {
     $('owner').value = state.config.owner || '';
@@ -763,20 +1136,34 @@ function renderState() {
   if (accountChanged) updateMergePeopleAvatars();
 
   if (state.deviceAttempt) renderDeviceAttempt(state.deviceAttempt);
-  else $('device-panel').hidden = true;
+  else { cancelScheduledDeviceOpen(); $('device-panel').hidden = true; $('device-step').classList.toggle('device-code-active', false); }
   $('authorize-panel').hidden = Boolean(state.deviceAttempt || state.candidateAuth);
   renderOnboardingProgress();
+  renderJoinSetup();
   scheduleRepositoryPolling();
 }
 
 function renderDeviceAttempt(attempt) {
+  if (document.documentElement.dataset.clockoliOnboarding === 'welcome') {
+    document.documentElement.dataset.clockoliOnboarding = 'authorization';
+    $('connection-title').textContent = 'Connect to GitHub';
+    $('connection-description').textContent = 'Paste the one-time code on GitHub to authorize Clockoli.';
+  }
+  if (deviceClipboardAttemptId && deviceClipboardAttemptId !== attempt.attemptId) {
+    cancelScheduledDeviceOpen();
+    deviceClipboardAttemptId = attempt.attemptId;
+    deviceClipboardState = 'unknown';
+    deviceGitHubOpened = false;
+    deviceAutoOpenFailed = false;
+  }
+  $('device-step').classList.toggle('device-code-active', true);
   $('device-panel').hidden = false;
   $('authorize-panel').hidden = true;
   if (attempt.status === 'requesting') {
     $('device-code').value = 'Requesting code…';
     $('copy-code').disabled = true;
-    $('device-done').hidden = true;
-    setLink('open-device-page', '');
+    $('open-device-page').hidden = true;
+    $('device-handoff-countdown').hidden = true;
     $('device-copy-status').textContent = 'Getting your one-time code…';
     $('device-copy-status').dataset.state = 'unknown';
     $('device-handoff-status').textContent = '';
@@ -787,31 +1174,15 @@ function renderDeviceAttempt(attempt) {
   // Keep the user's selection intact when polling refreshes the same code.
   if ($('device-code').value !== attempt.userCode) $('device-code').value = attempt.userCode;
   $('copy-code').disabled = false;
-  $('device-done').hidden = false;
-  $('device-done').disabled = false;
+  $('open-device-page').hidden = false;
   setLink('open-device-page', attempt.verificationUri);
-  $('open-device-page').textContent = deviceGitHubOpened ? 'Open GitHub again' : 'Open GitHub to enter code';
   renderDeviceHandoff(attempt);
   const seconds = Math.max(0, Math.ceil((attempt.expiresAt - Date.now()) / 1000));
-  $('device-wait').textContent = `Clockoli checks automatically every few seconds · code expires in ${Math.ceil(seconds / 60)} min`;
+  const expiry = `code expires in ${Math.ceil(seconds / 60)} min`;
+  $('device-wait').textContent = deviceGitHubOpened
+    ? `Waiting for GitHub authorization… Clockoli checks automatically · ${expiry}`
+    : `Clockoli checks automatically after you authorize · ${expiry}`;
   schedulePoll(attempt);
-}
-
-async function revealDeviceCode(attempt) {
-  const code = $('device-code');
-  code.value = '';
-  $('copy-code').disabled = true;
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    code.value = attempt.userCode;
-  } else {
-    for (let i = 1; i <= attempt.userCode.length; i++) {
-      await new Promise(resolve => setTimeout(resolve, 2000 / attempt.userCode.length));
-      if (state.deviceAttempt?.attemptId !== attempt.attemptId) return false;
-      code.value = attempt.userCode.slice(0, i);
-    }
-  }
-  $('copy-code').disabled = false;
-  return state.deviceAttempt?.attemptId === attempt.attemptId;
 }
 
 function schedulePoll(attempt) {
@@ -824,18 +1195,31 @@ async function poll(attemptId) {
   try {
     const result = await send({ type: 'POLL_DEVICE_FLOW', attemptId });
     if (result.status === 'authorized') {
+      cancelScheduledDeviceOpen();
+      reconnectingGitHub = false;
+      state.deviceAttempt = null;
       message(`Device activation complete for ${result.githubLogin}. Connect your time repositories below.`, 'success');
       discoveryStatus = 'idle';
-      await refreshState();
+      try {
+        await refreshState();
+      } catch (error) {
+        // Authorization consumed this attempt; retry only the durable read, never the poll.
+        try { await refreshState(); }
+        catch { renderState(); message(`${error.message} Reload Settings to retry.`, 'error'); return; }
+      }
+      try { await refreshRunningStatus?.(); }
+      catch (error) { message(`${error.message} Reload Settings to retry.`, 'error'); }
       return;
     }
+    if (result.attemptId !== attemptId) cancelScheduledDeviceOpen();
     state.deviceAttempt = result;
     renderDeviceAttempt(result);
   } catch (error) {
-    if (['auth_denied', 'device_code_expired', 'device_flow_superseded', 'device_attempt_missing'].includes(error.code)) {
+    if (['auth_denied', 'device_code_expired', 'device_flow_superseded', 'device_attempt_missing', 'invalid_device_flow'].includes(error.code)) {
+      cancelScheduledDeviceOpen();
       state.deviceAttempt = null;
-      $('device-panel').hidden = true;
-      $('authorize-panel').hidden = false;
+      reconnectingGitHub = false;
+      renderState();
       message(error.message, 'error');
       return;
     }
@@ -906,9 +1290,12 @@ function renderRepositoryAccess() {
   } else setLink('modal-new-time-repository', '');
   $('repository-access-target').textContent = repositoryTarget;
   $('repository-access-name').textContent = repositoryTarget;
-  $('repository-access-instruction').textContent = missing
-    ? 'Clockoli cannot access this repository. Check its name and your GitHub access; its existence is not confirmed.'
-    : 'Clockoli needs Contents: Read and write permission for this repository.';
+  const teamInvite = setupPath === 'join' && selectedJoinInvitation
+    && selectedJoinInvitation.toLowerCase() === repositoryTarget.toLowerCase();
+  $('repository-access-instruction').textContent = missing && teamInvite
+    ? 'Clockoli cannot access this team repository yet. Accept the GitHub invitation first. If access is still missing, ask the repository owner to grant Clockoli GitHub App access, then select Check again.'
+    : missing ? 'Clockoli cannot access this repository. Check its name and your GitHub access; its existence is not confirmed.'
+      : 'Clockoli needs Contents: Read and write permission for this repository.';
   const targetStatus = $('repository-target-status');
   const input = $('repository-target');
   renderRepositoryCheckButton();
@@ -1134,6 +1521,11 @@ async function confirmRepositoryAction() {
       repoId: confirmation.repoId,
       action: confirmation.intent.startsWith('initialize_') ? 'initialize' : confirmation.intent,
     } });
+    if (selectedJoinInvitation && selectedJoinInvitation.toLowerCase() === confirmation.fullName.toLowerCase()) {
+      await choiceStore.ignoreJoinInvitation(selectedJoinInvitation);
+      joinChoices = joinChoices.filter(name => name.toLowerCase() !== selectedJoinInvitation.toLowerCase());
+      selectedJoinInvitation = '';
+    }
     stopRepositoryMonitoring();
     await rememberRepositoryTarget('');
     repositoryCheckFeedback = '';
@@ -1273,9 +1665,10 @@ async function discoverRepositories({ silent = false } = {}) {
     if (result.blocked) {
       if (!silent) { discoveryStatus = 'error'; renderRepositoryLoading(); }
       renderDestinationCards();
-      if (!silent) message(result.blocked.message, 'error');
+      if (!silent || isAuthTimerWarning(result.blocked.message)) message(result.blocked.message, 'error');
       return result;
     }
+    if (silent && $('message').className === 'error auth-guard') message('');
     if (silent) {
       if (pendingConfirmation || repositoryActionApplying || !repositoryPollingActive()) return;
       repositories = result.repositories.map(repository => {
@@ -1366,12 +1759,97 @@ $('clockify-addon-enabled').addEventListener('click', async () => {
   finally { $('clockify-addon-enabled').disabled = false; }
 });
 
-function addRateRow(login = '', period = null) {
+const rateUserDirectories = new Map();
+let nextRateLoginListId = 0;
+
+function clearRateUserSuggestions() {
+  for (const row of $('rates-list').querySelectorAll('.rate-row')) {
+    row.rateSuggestionRequest = (row.rateSuggestionRequest || 0) + 1;
+    row.rateUsers = [];
+    row.rateSuggestionsOpen = false;
+    const choices = row.querySelector('.rate-user-choices'); choices.replaceChildren(); choices.hidden = true;
+    row.querySelector('.rate-login').setAttribute('aria-expanded', 'false');
+    row.querySelector('.rate-login-note').textContent = '';
+  }
+}
+
+function renderRateUserChoices(row) {
+  const input = row.querySelector('.rate-login'), choices = row.querySelector('.rate-user-choices');
+  const query = input.value.trim().toLowerCase();
+  choices.replaceChildren();
+  for (const user of (row.rateUsers || []).filter(user => user.login.toLowerCase().includes(query)).slice(0, 100)) {
+    const choice = document.createElement('button'); choice.type = 'button'; choice.className = 'rate-user-choice';
+    choice.setAttribute('role', 'option'); choice.textContent = user.login;
+    choice.addEventListener('click', () => {
+      input.value = user.login; input.focus();
+      row.rateSuggestionRequest = (row.rateSuggestionRequest || 0) + 1;
+      row.rateSuggestionsOpen = false; choices.hidden = true;
+      input.setAttribute('aria-expanded', 'false'); row.querySelector('.rate-login-note').textContent = '';
+    });
+    choices.append(choice);
+  }
+  choices.hidden = !row.rateSuggestionsOpen || !choices.children.length;
+  input.setAttribute('aria-expanded', String(!choices.hidden));
+}
+
+async function showRateUserSuggestions(row) {
+  const destinationId = $('rates-destination').value;
+  if (!destinationId) return;
+  const request = row.rateSuggestionRequest = (row.rateSuggestionRequest || 0) + 1;
+  const note = row.querySelector('.rate-login-note');
+  row.rateSuggestionsOpen = true;
+  renderRateUserChoices(row);
+  note.textContent = 'Loading repository users…';
+  try {
+    if (!rateUserDirectories.has(destinationId)) {
+      const known = repositoryCollaborators.get(destinationId);
+      const loading = known
+        ? Promise.resolve({ avatarUsers: [...known.keys()].map(login => ({ login })), truncated: known.size >= 100 })
+        : send({ type: 'LOAD_REPOSITORY_COLLABORATORS', destinationId });
+      rateUserDirectories.set(destinationId, loading);
+    }
+    const result = await rateUserDirectories.get(destinationId);
+    if (request !== row.rateSuggestionRequest || destinationId !== $('rates-destination').value || !$('rates-list').contains(row)) return;
+    const profiles = Array.isArray(result.avatarUsers) ? result.avatarUsers : [...(result.users || []), ...(result.moreUsers || [])];
+    row.rateUsers = profiles;
+    renderRateUserChoices(row);
+    note.textContent = result.truncated ? 'Only the first 100 repository users are shown. You can enter a login manually.'
+      : profiles.length ? '' : 'No repository users found. You can enter a login manually.';
+  } catch {
+    rateUserDirectories.delete(destinationId);
+    if (request === row.rateSuggestionRequest && destinationId === $('rates-destination').value && $('rates-list').contains(row)) {
+      note.textContent = 'Could not load repository users. You can still enter a login manually.';
+    }
+  }
+}
+
+function addRateRow(login = '', period = null, clientId = $('rates-client').value) {
+  if (!clientId) return;
+
   const rate = period || { amountMinorPerHour: 0, currency: '$', currencyPosition: 'prefix', startDate: '', endDate: '' };
-  const row = document.createElement('div'); row.className = 'rate-row';
+  const row = document.createElement('div'); row.className = 'rate-row'; row.dataset.clientId = clientId;
+  row.hidden = clientId !== $('rates-client').value;
+  const loginField = document.createElement('div'); loginField.className = 'rate-login-field';
   const loginLabel = document.createElement('label'); loginLabel.textContent = 'GitHub user';
   const loginInput = document.createElement('input'); loginInput.className = 'rate-login'; loginInput.required = true; loginInput.maxLength = 39; loginInput.autocomplete = 'off'; loginInput.placeholder = 'octocat'; loginInput.value = login;
-  loginLabel.append(loginInput);
+  const loginChoices = document.createElement('div'); loginChoices.id = `rate-login-choices-${++nextRateLoginListId}`;
+  loginChoices.className = 'rate-user-choices'; loginChoices.hidden = true; loginChoices.setAttribute('role', 'listbox');
+  loginInput.setAttribute('aria-controls', loginChoices.id); loginInput.setAttribute('aria-expanded', 'false');
+  const loginNote = document.createElement('span'); loginNote.className = 'rate-login-note help';
+  loginInput.addEventListener('focus', () => { void showRateUserSuggestions(row); });
+  loginInput.addEventListener('input', () => renderRateUserChoices(row));
+  loginInput.addEventListener('keydown', event => {
+    if (event.key === 'ArrowDown' && !loginChoices.hidden) { event.preventDefault(); loginChoices.querySelector('.rate-user-choice')?.focus(); }
+  });
+  loginField.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { row.rateSuggestionsOpen = false; loginChoices.hidden = true; loginInput.setAttribute('aria-expanded', 'false'); }
+  });
+  loginField.addEventListener('focusout', event => {
+    if (!loginField.contains(event.relatedTarget)) {
+      row.rateSuggestionsOpen = false; loginChoices.hidden = true; loginInput.setAttribute('aria-expanded', 'false');
+    }
+  });
+  loginLabel.append(loginInput); loginField.append(loginLabel, loginChoices, loginNote);
   const rateLabel = document.createElement('label'); rateLabel.textContent = 'Hourly rate';
   const rateInput = document.createElement('input'); rateInput.className = 'rate-value'; rateInput.required = true; rateInput.inputMode = 'decimal'; rateInput.maxLength = 16; rateInput.autocomplete = 'off'; rateInput.placeholder = '15.50'; rateInput.value = Number.isFinite(Number(rate.amountMinorPerHour)) ? (Number(rate.amountMinorPerHour) / 100).toFixed(2).replace(/\.00$/, '') : '';
   rateLabel.append(rateInput);
@@ -1386,16 +1864,53 @@ function addRateRow(login = '', period = null) {
   const endInput = document.createElement('input'); endInput.className = 'rate-end'; endInput.type = 'date'; endInput.value = rate.endDate || ''; endInput.setAttribute('aria-describedby', 'rate-date-help'); endLabel.append(endInput);
   const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-rate'; remove.textContent = 'Remove'; remove.setAttribute('aria-label', login ? `Remove rate for ${login}` : 'Remove this rate');
   remove.addEventListener('click', () => row.remove());
-  row.append(loginLabel, rateLabel, currencyLabel, startLabel, endLabel, remove); $('rates-list').append(row);
+  row.append(loginField, rateLabel, currencyLabel, startLabel, endLabel, remove); $('rates-list').append(row);
 }
 
 function nextClientId() {
-  const used = new Set([...$('clients-list').querySelectorAll('.client-row')].map(row => row.dataset.clientId));
+  const used = new Set([...(localPreferences?.invoicing?.clients || []).map(client => client.id),
+    ...[...$('clients-list').querySelectorAll('.client-row')].map(row => row.dataset.clientId)]);
   // Missing links must not silently attach to a newly created client.
   for (const select of [$('other-project-client'), ...$('projects-list').querySelectorAll('.project-client')]) used.add(select.value);
   let index = 1;
   while (used.has(`client-${index}`)) index += 1;
   return `client-${index}`;
+}
+
+function nextBankAccountId() {
+  const used = new Set([...(localPreferences?.invoicing?.bankAccounts || []).map(account => account.id),
+    ...[...$('bank-accounts-list').querySelectorAll('.bank-account-row')].map(row => row.dataset.bankAccountId)]);
+  let index = 1;
+  while (used.has(`bank-${index}`)) index += 1;
+  return `bank-${index}`;
+}
+
+function refreshBankAccountOptions() {
+  const select = $('default-bank-account'), selected = select.value;
+  select.replaceChildren();
+  const empty = document.createElement('option'); empty.value = ''; empty.textContent = 'None'; select.append(empty);
+  for (const row of $('bank-accounts-list').querySelectorAll('.bank-account-row')) {
+    const option = document.createElement('option'); option.value = row.dataset.bankAccountId;
+    option.textContent = row.querySelector('.bank-account-label').value.trim() || 'Unnamed bank account'; select.append(option);
+  }
+  select.value = [...select.children].some(option => option.value === selected) ? selected : '';
+  $('add-bank-account').disabled = $('bank-accounts-list').querySelectorAll('.bank-account-row').length >= 20;
+}
+
+function addBankAccountRow(account = null) {
+  const row = document.createElement('div'); row.className = 'bank-account-row';
+  row.dataset.bankAccountId = account?.id || nextBankAccountId();
+  const label = document.createElement('label'); label.textContent = 'Account label';
+  const name = document.createElement('input'); name.className = 'bank-account-label'; name.maxLength = 200; name.required = true; name.value = account?.label || '';
+  name.placeholder = 'EUR account'; name.addEventListener('input', refreshBankAccountOptions); label.append(name);
+  const detailsLabel = document.createElement('label'); detailsLabel.textContent = 'Payment instructions';
+  const details = document.createElement('textarea'); details.className = 'bank-account-details'; details.maxLength = 1000; details.rows = 3; details.required = true;
+  details.placeholder = 'Bank name, account holder, IBAN, routing or SWIFT details'; details.value = account?.details || '';
+  detailsLabel.append(details);
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-bank-account'; remove.textContent = 'Remove';
+  remove.setAttribute('aria-label', `Remove bank account ${account?.label || 'draft'}`);
+  remove.addEventListener('click', () => { row.remove(); refreshBankAccountOptions(); });
+  row.append(label, detailsLabel, remove); $('bank-accounts-list').append(row); refreshBankAccountOptions();
 }
 
 function refreshProjectClients() {
@@ -1427,9 +1942,9 @@ function addClientRow(client = null) {
     input.addEventListener('input', () => { row.dataset.touched = 'true'; if (className === 'client-name') refreshProjectClients(); });
     label.append(input); row.append(label);
   }
-  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-client'; remove.textContent = '✕'; remove.setAttribute('aria-label', value.name ? `Remove client ${value.name}` : 'Remove this client');
-  const save = document.createElement('button'); save.type = 'submit'; save.className = 'primary save-client'; save.textContent = 'Save';
-  remove.addEventListener('click', () => { row.remove(); refreshProjectClients(); }); row.append(remove, save); $('clients-list').append(row); refreshProjectClients();
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-client'; remove.append(removeIcon()); remove.setAttribute('aria-label', value.name ? `Remove client ${value.name}` : 'Remove this client');
+  const save = document.createElement('button'); save.type = 'submit'; save.formNoValidate = true; save.className = 'primary save-client'; save.textContent = 'Save';
+  remove.addEventListener('click', () => { row.remove(); for (const rateRow of $('rates-list').querySelectorAll('.rate-row')) if (rateRow.dataset.clientId === value.id) rateRow.remove(); refreshProjectClients(); refreshRateClients(); }); row.append(remove, save); $('clients-list').append(row); refreshProjectClients(); refreshRateClients();
 }
 
 function addProjectRow(project = { name: '', substrings: [], client: '' }) {
@@ -1453,7 +1968,7 @@ function addProjectRow(project = { name: '', substrings: [], client: '' }) {
   const actions = document.createElement('div'); actions.className = 'project-actions';
   const up = document.createElement('button'); up.type = 'button'; up.className = 'secondary move-project-up'; up.textContent = '↑'; up.setAttribute('aria-label', `Move project ${project.name || 'row'} up`); up.addEventListener('click', () => moveProjectRow(row, -1));
   const down = document.createElement('button'); down.type = 'button'; down.className = 'secondary move-project-down'; down.textContent = '↓'; down.setAttribute('aria-label', `Move project ${project.name || 'row'} down`); down.addEventListener('click', () => moveProjectRow(row, 1));
-  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-project'; remove.textContent = '✕'; remove.setAttribute('aria-label', project.name ? `Remove project ${project.name}` : 'Remove this project');
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-project'; remove.append(removeIcon()); remove.setAttribute('aria-label', project.name ? `Remove project ${project.name}` : 'Remove this project');
   remove.addEventListener('click', () => { row.remove(); refreshProjectOrderControls(); });
   actions.append(up, down, remove); row.append(nameLabel, substringsLabel, destinationLabelElement, clientLabel, actions); $('projects-list').append(row); wireAutoGrow(substrings); renderDestinationControls(localPreferences || {}); refreshProjectOrderControls(); refreshProjectClients();
 
@@ -1517,6 +2032,10 @@ function fillDestinationSelect(select, selectedId) {
 function renderDestinationControls(preferences = {}) {
   const destinations = configuredDestinations(), fallback = preferences.defaultDestinationId || defaultDestinationId();
   fillDestinationSelect($('default-destination'), fallback);
+  const ratesDestination = $('rates-destination'), previousRatesDestination = ratesDestination.value;
+  fillDestinationSelect(ratesDestination, destinations.some(destination => destination.id === previousRatesDestination) ? previousRatesDestination : fallback);
+  ratesDestination.disabled = destinations.length < 2;
+  if (previousRatesDestination !== ratesDestination.value) clearRateUserSuggestions();
   $('default-destination').disabled = state?.auth?.mode === 'pat' || destinations.length < 2;
   $('default-destination-label').hidden = state?.auth?.mode === 'pat' || destinations.length === 0;
   $('pat-routing-summary').hidden = state?.auth?.mode !== 'pat';
@@ -1532,6 +2051,7 @@ function renderDestinationControls(preferences = {}) {
 function renderDisplayPreferences(preferences) {
   $('recent-days').value = state?.config?.recentDays || preferences.recentDays || 7;
   $('interface-width').value = preferences.interfaceWidth === 'full' ? 'full' : 'contained';
+  $('toolbar-click-mode').value = preferences.toolbarClickMode === 'popup' ? 'popup' : 'tab';
   $('other-project-name').value = preferences.otherProjectName || 'Other';
   $('show-queue-diagnostics').checked = preferences.showQueueDiagnostics === true;
   $('projects-list').replaceChildren();
@@ -1541,24 +2061,62 @@ function renderDisplayPreferences(preferences) {
   renderDestinationControls(preferences);
 }
 
-function renderBillingPreferences(preferences) {
+function refreshRateClients() {
+  const select = $('rates-client'), previous = select.value;
+  const clients = [...$('clients-list').querySelectorAll('.client-row')].map(row => ({ id: row.dataset.clientId, name: row.querySelector('.client-name').value.trim() }));
+  select.replaceChildren();
+  const empty = document.createElement('option'); empty.value = ''; empty.textContent = '— Choose a client —'; select.append(empty);
+  for (const client of clients) {
+    const option = document.createElement('option'); option.value = client.id; option.textContent = client.name || client.id; select.append(option);
+  }
+  select.value = clients.some(client => client.id === previous) ? previous : (clients.length === 1 ? clients[0].id : '');
+  const savedClients = new Set((localPreferences?.invoicing?.clients || []).map(client => client.id));
+  for (const row of $('rates-list').querySelectorAll('.rate-row')) {
+    row.hidden = row.dataset.clientId !== select.value;
+    // Hidden required inputs must not prevent a different client's rate card
+    // from passing the browser's native form validation.
+    for (const input of row.querySelectorAll('input')) input.disabled = row.hidden;
+  }
+  const editable = Boolean(select.value) && savedClients.has(select.value);
+  $('add-rate').disabled = !editable;
+  $('save-billing').disabled = !editable;
+}
 
-  $('rates-list').replaceChildren();
-  for (const [login, periods] of Object.entries(preferences.rates || {})) {
-    for (const period of (Array.isArray(periods) ? periods : [{ amountMinorPerHour: periods, startDate: '', endDate: '' }])) {
-      addRateRow(login, typeof period === 'object' ? period : { amountMinorPerHour: period, currency: 'USD', currencyPosition: 'suffix', startDate: '', endDate: '' });
+function renderBillingPreferences(preferences, { preserveOtherDrafts = false } = {}) {
+  // Saving one client's rate card must not destroy drafts for other clients.
+  const selected = $('rates-client').value, list = $('rates-list');
+  const otherRows = preserveOtherDrafts
+    ? [...list.querySelectorAll('.rate-row')].filter(row => row.dataset.clientId !== selected) : [];
+  list.replaceChildren(...otherRows);
+  for (const [clientId, card] of Object.entries(preferences.clientRates || {})) {
+    if (preserveOtherDrafts && clientId !== selected) continue;
+    for (const [login, periods] of Object.entries(card)) {
+      for (const period of periods) addRateRow(login, period, clientId);
     }
   }
-  if (!Object.keys(preferences.rates || {}).length) addRateRow(state?.auth?.githubLogin || '', 0);
+  $('rates-client').value = selected;
+  refreshRateClients();
+}
+
+function renderClientPreferences(preferences) {
+  const clients = invoicingSettings(preferences).clients;
+  $('clients-list').replaceChildren();
+  for (const client of clients) addClientRow(client);
+  refreshProjectClients();
 }
 
 function renderInvoicingPreferences(preferences) {
+  renderClientPreferences(preferences);
+  renderInvoiceDefaults(preferences);
+}
+
+function renderInvoiceDefaults(preferences) {
   const invoicing = invoicingSettings(preferences);
   $('seller-name').value = invoicing.seller.name; $('seller-address').value = invoicing.seller.address;
   $('seller-email').value = invoicing.seller.email; $('seller-tax-id').value = invoicing.seller.taxId;
-  $('clients-list').replaceChildren();
-  for (const client of invoicing.clients) addClientRow(client);
-  refreshProjectClients();
+  $('bank-accounts-list').replaceChildren();
+  for (const account of invoicing.bankAccounts) addBankAccountRow(account);
+  $('default-bank-account').value = invoicing.defaultBankAccountId;
   $('invoice-next-number').value = String(invoicing.nextNumber); $('invoice-number-format').value = invoicing.numberFormat;
   $('invoice-payment-terms').value = String(invoicing.paymentTermsDays); $('invoice-tax-percent').value = String(invoicing.taxPercent); $('invoice-notes').value = invoicing.notes;
   autoGrowTextarea($('seller-address')); autoGrowTextarea($('invoice-notes'));
@@ -1567,8 +2125,8 @@ function renderInvoicingPreferences(preferences) {
 function renderLocalPreferences(preferences) {
   localPreferences = preferences;
   renderDisplayPreferences(preferences);
-  renderBillingPreferences(preferences);
   renderInvoicingPreferences(preferences);
+  renderBillingPreferences(preferences);
   if (!preferences.exportRecommended) $('settings-export-reminder').hidden = true;
   else if (!backupReminderShown) {
     $('settings-export-reminder').hidden = false;
@@ -1701,7 +2259,7 @@ function renderMergeQueue() {
     const targetTitle = document.createElement('span'); targetTitle.textContent = mergeTaskLabel(pair.target);
     const targetUrl = document.createElement('small'); targetUrl.className = 'merge-queue-task-url'; targetUrl.textContent = pair.target.taskUrl;
     target.append(targetTitle, targetUrl);
-    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-project merge-pair-remove'; remove.textContent = '✕';
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary remove-project merge-pair-remove'; remove.append(removeIcon());
     remove.setAttribute('aria-label', `Remove merge pair ${mergeTaskLabel(pair.source)} to ${mergeTaskLabel(pair.target)}`);
     remove.addEventListener('click', () => { mergePairs = mergePairs.filter(item => item !== pair); renderMergeQueue(); });
     row.append(source, arrow, target, remove); list.append(row);
@@ -1764,8 +2322,14 @@ async function refreshMergeTasks() {
 }
 
 function ratesPayload() {
-  const rates = {};
+  const selected = $('rates-client').value;
+  const clients = new Set((localPreferences?.invoicing?.clients || []).map(client => client.id));
+  if (!clients.has(selected)) throw new Error('Save this client before assigning billable rates.');
+  const clientRates = Object.fromEntries(Object.entries(localPreferences?.clientRates || {})
+    .filter(([id]) => clients.has(id) && id !== selected));
   for (const row of $('rates-list').querySelectorAll('.rate-row')) {
+    const clientId = row.dataset.clientId;
+    if (clientId !== selected) continue;
     const login = row.querySelector('.rate-login').value.trim();
     const value = row.querySelector('.rate-value').value.trim();
     const currency = row.querySelector('.rate-currency').value.trim();
@@ -1774,29 +2338,50 @@ function ratesPayload() {
     const parsed = parseRateFields(value, currency);
     const currencyPosition = currency === row.querySelector('.rate-currency').dataset.initialValue
       ? row.dataset.currencyPosition : parsed.currencyPosition;
-    rates[login] ||= [];
-    rates[login].push({ ...parsed, currencyPosition, startDate: row.querySelector('.rate-start').value, endDate: row.querySelector('.rate-end').value });
+    clientRates[clientId] ||= {};
+    clientRates[clientId][login] ||= [];
+    clientRates[clientId][login].push({ ...parsed, currencyPosition, startDate: row.querySelector('.rate-start').value, endDate: row.querySelector('.rate-end').value });
   }
-  return rates;
+  return clientRates;
+}
+
+function clientsPayload(onlyClientId = '') {
+  const rows = [...$('clients-list').querySelectorAll('.client-row')];
+  const clientFromRow = row => ({
+    id: row.dataset.clientId, name: row.querySelector('.client-name').value,
+    address: row.querySelector('.client-address').value, email: row.querySelector('.client-email').value,
+    taxId: row.querySelector('.client-tax-id').value, defaultCurrency: row.querySelector('.client-currency').value,
+  });
+  if (onlyClientId) {
+    const edited = rows.find(row => row.dataset.clientId === onlyClientId);
+    if (!edited) throw new Error('Client to save was not found.');
+    const saved = invoicingSettings(localPreferences).clients, client = clientFromRow(edited);
+    return saved.some(item => item.id === onlyClientId)
+      ? saved.map(item => item.id === onlyClientId ? client : item)
+      : [...saved, client];
+  }
+  const selectedClients = new Set([$('other-project-client'), ...$('projects-list').querySelectorAll('.project-client')].map(select => select.value));
+  return rows.filter(row => row.dataset.persisted === 'true' || row.dataset.touched === 'true' || selectedClients.has(row.dataset.clientId)
+    || ['.client-name', '.client-email', '.client-address', '.client-tax-id', '.client-currency'].some(selector => row.querySelector(selector).value.trim())).map(clientFromRow);
 }
 
 function invoicingPayload() {
-  const selectedClients = new Set([$('other-project-client'), ...$('projects-list').querySelectorAll('.project-client')].map(select => select.value));
-  const invoicing = normalizeInvoicingSettings({
+  return normalizeInvoicingSettings({
     seller: {
       name: $('seller-name').value, address: $('seller-address').value,
       email: $('seller-email').value, taxId: $('seller-tax-id').value,
     },
-    clients: [...$('clients-list').querySelectorAll('.client-row')].filter(row => row.dataset.persisted === 'true' || row.dataset.touched === 'true' || selectedClients.has(row.dataset.clientId)
-      || ['.client-name', '.client-email', '.client-address', '.client-tax-id', '.client-currency'].some(selector => row.querySelector(selector).value.trim())).map(row => ({
-      id: row.dataset.clientId, name: row.querySelector('.client-name').value,
-      address: row.querySelector('.client-address').value, email: row.querySelector('.client-email').value,
-      taxId: row.querySelector('.client-tax-id').value, defaultCurrency: row.querySelector('.client-currency').value,
+    // Clients have their own Save action. Never commit that form's unsaved rows
+    // when the user only saves seller details or invoice defaults.
+    clients: invoicingSettings(localPreferences).clients,
+    bankAccounts: [...$('bank-accounts-list').querySelectorAll('.bank-account-row')].map(row => ({
+      id: row.dataset.bankAccountId, label: row.querySelector('.bank-account-label').value,
+      details: row.querySelector('.bank-account-details').value,
     })),
+    defaultBankAccountId: $('default-bank-account').value,
     nextNumber: Number($('invoice-next-number').value), numberFormat: $('invoice-number-format').value,
     paymentTermsDays: $('invoice-payment-terms').value.trim() ? Number($('invoice-payment-terms').value) : NaN, taxPercent: Number($('invoice-tax-percent').value), notes: $('invoice-notes').value,
   });
-  return invoicing;
 }
 
 function downloadText(text, filename) {
@@ -1821,21 +2406,83 @@ async function refreshState() {
   if (account !== choiceAccount) {
     choiceAccount = account;
     const saved = account ? await choiceStore.getOnboardingRepositoryChoice(account) : '';
-    try { repositoryTarget = saved ? parseRepositoryTarget(saved) : ''; } catch { repositoryTarget = ''; }
+    // A recognized invitation wins on first run, but never silently changes
+    // an already configured default repository or a dirty user input.
+    const incoming = selectedJoinInvitation && !state?.ready && !configuredDestinations().length && !repositoryInputDirty
+      ? selectedJoinInvitation : '';
+    try { repositoryTarget = incoming || (saved ? parseRepositoryTarget(saved) : ''); }
+    catch { repositoryTarget = ''; }
     $('repository-target').value = repositoryTarget;
     selectedRepository = null;
     discoveryStatus = 'idle';
     if (repositoryTarget) showOnboarding = true;
+    if (incoming && account) await rememberRepositoryTarget(incoming);
   }
   renderState();
+  if (isAppAuthorized() && !state?.ready && !state?.candidateAuth && setupPath === 'join'
+      && selectedJoinInvitation && !repositoryInputDirty
+      && repositoryTarget.toLowerCase() === selectedJoinInvitation.toLowerCase() && discoveryStatus === 'idle') {
+    const key = `${account}:${selectedJoinInvitation.toLowerCase()}`;
+    if (invitationAutoCheckKey !== key) {
+      invitationAutoCheckKey = key;
+      await checkRepositoryTarget(selectedJoinInvitation, false, true);
+      return;
+    }
+  }
   if (isAppAuthorized() && !setupCancelled && (repositoryTarget || state?.candidateAuth) && discoveryStatus === 'idle') {
     await discoverRepositories().catch(() => {});
   }
 }
 
+$('choose-create-repository').addEventListener('click', () => {
+  setupPath = 'create'; setupPathTouched = true; showOnboarding = true; renderState();
+  $('new-time-repository').focus();
+});
+for (const id of ['choose-join-team', 'choose-existing-repository']) $(id).addEventListener('click', () => {
+  setupPath = 'join'; setupPathTouched = true; showOnboarding = true; renderState();
+  $('repository-target').focus();
+});
+$('change-repository-path').addEventListener('click', () => {
+  setupPath = 'choose'; setupPathTouched = true; renderState();
+  $('choose-create-repository').focus();
+});
+$('resume-join-invitation').addEventListener('click', () => {
+  setupPath = 'join'; setupPathTouched = true; showOnboarding = true; renderState();
+  $('repository-step-title').scrollIntoView({ block: 'start' });
+});
+$('join-invitation-picker').addEventListener('change', async () => {
+  const name = $('join-invitation-picker').value;
+  if (!name) {
+    selectedJoinInvitation = ''; renderState(); return;
+  }
+  try { await selectJoinInvitation(name); }
+  catch (error) { message(error.message, 'error'); }
+});
+$('use-join-invitation').addEventListener('click', async () => {
+  if (!selectedJoinInvitation) return;
+  try {
+    await selectJoinInvitation(selectedJoinInvitation);
+    if (isAppAuthorized()) await checkRepositoryTarget(selectedJoinInvitation, false, true);
+    else $('authorize').focus();
+  } catch (error) { message(error.message, 'error'); }
+});
+$('dismiss-join-invitation').addEventListener('click', async () => {
+  try { await dismissJoinInvitation(); }
+  catch (error) { message(error.message, 'error'); }
+});
+
+$('use-pat-instead').addEventListener('click', () => {
+  showAdvancedSetup = true;
+  renderState();
+  $('more-settings').open = true;
+  $('advanced-settings').open = true;
+  $('advanced-pat').open = true;
+  $('advanced-pat').scrollIntoView({ block: 'start' });
+});
+
 $('authorize').addEventListener('click', async () => {
   setupCancelled = false; $('authorize').disabled = true; message('Requesting a one-time device code from GitHub…');
-  $('device-code').classList.remove('code-reveal');
+  cancelScheduledDeviceOpen();
   try {
     // Safari and Firefox grant host permissions only after the user approves them; Chrome resolves this at once.
     if (!await chrome.permissions.request({ origins: chrome.runtime.getManifest().host_permissions })) throw new Error('GitHub access was not granted.');
@@ -1844,50 +2491,41 @@ $('authorize').addEventListener('click', async () => {
     message('');
     deviceClipboardAttemptId = attempt.attemptId;
     deviceClipboardState = 'unknown';
-    deviceOpeningGitHubAutomatically = false;
     deviceGitHubOpened = false;
+    deviceAutoOpenFailed = false;
     renderDeviceAttempt(attempt);
     $('device-panel').scrollIntoView({ block: 'center' });
-    $('device-code').classList.add('code-reveal');
     try {
       await navigator.clipboard.writeText(attempt.userCode);
       deviceClipboardState = 'copied';
-      deviceOpeningGitHubAutomatically = true;
     } catch {
       // A denied clipboard write must not send the user to GitHub without a pasteable code.
       deviceClipboardState = 'failed';
     }
     if (state.deviceAttempt?.attemptId !== attempt.attemptId) return;
-    renderDeviceHandoff(attempt);
-    if (!await revealDeviceCode(attempt)) return;
-    if (deviceClipboardState !== 'copied') return;
-    renderDeviceHandoff(attempt);
-    await new Promise(resolve => setTimeout(resolve, 4000));
-    if (state.deviceAttempt?.attemptId !== attempt.attemptId || deviceGitHubOpened || deviceClipboardState !== 'copied') return;
-    githubHandoff = true;
-    try {
-      await send({ type: 'OPEN_DEVICE_FLOW_PAGE', attemptId: attempt.attemptId });
-      deviceGitHubOpened = true;
-      $('open-device-page').textContent = 'Open GitHub again';
-    } finally {
-      deviceOpeningGitHubAutomatically = false;
-      renderDeviceHandoff(attempt);
-    }
+    if (deviceClipboardState === 'copied' && !deviceGitHubOpened) scheduleAutomaticDeviceOpen(attempt);
+    else renderDeviceAttempt(attempt);
   } catch (error) {
-    if (!$('device-panel').hidden) $('device-handoff-status').textContent = `Could not open GitHub automatically. Select Open GitHub to enter code, then press ${deviceKeyboardShortcut('V')}.`;
+    if (!state.deviceAttempt) { reconnectingGitHub = false; renderState(); }
     message(error.message, 'error');
-  }
-  finally { $('authorize').disabled = !state?.appConfigured; }
+  } finally { $('authorize').disabled = !state?.appConfigured; }
+});
+
+$('reconnect-github').addEventListener('click', () => {
+  reconnectingGitHub = true;
+  setupCancelled = false;
+  renderState();
+  $('authorize').click();
 });
 
 $('open-device-page').addEventListener('click', () => {
   const attempt = state?.deviceAttempt;
   if (!attempt?.verificationUri) return;
   // A manually opened GitHub tab must not be followed by the scheduled automatic one.
+  cancelScheduledDeviceOpen();
   deviceGitHubOpened = true;
-  deviceOpeningGitHubAutomatically = false;
-  $('open-device-page').textContent = 'Open GitHub again';
-  renderDeviceHandoff(attempt);
+  deviceAutoOpenFailed = false;
+  renderDeviceAttempt(attempt);
 });
 
 $('copy-code').addEventListener('click', async () => {
@@ -1908,22 +2546,6 @@ $('copy-code').addEventListener('click', async () => {
   }
 });
 
-$('device-done').addEventListener('click', async () => {
-  const attemptId = state?.deviceAttempt?.attemptId;
-  if (!attemptId) return;
-  clearTimeout(pollTimer);
-  $('device-done').disabled = true;
-  $('device-wait').textContent = 'Checking GitHub authorization now…';
-  message('Checking GitHub authorization now…');
-  try {
-    await poll(attemptId);
-    if (state?.deviceAttempt?.attemptId === attemptId && !$('message').classList.contains('error')) {
-      $('device-wait').textContent = 'GitHub has not confirmed authorization yet. Clockoli will check again automatically.';
-      message('GitHub has not confirmed authorization yet. Clockoli will check again automatically.');
-    }
-  } finally { $('device-done').disabled = !state?.deviceAttempt; }
-});
-
 function beginRepositoryChange() {
   if (state?.auth?.mode === 'pat') {
     $('more-settings').open = true;
@@ -1935,6 +2557,8 @@ function beginRepositoryChange() {
   }
   setupCancelled = false;
   showOnboarding = true;
+  setupPath = 'choose';
+  setupPathTouched = false;
   discoveryStatus = 'idle';
   renderState();
   if (repositoryTarget || state?.candidateAuth) void discoverRepositories().catch(() => {});
@@ -2013,7 +2637,13 @@ async function checkRepositoryTarget(rawTarget, fromList = false, keepInput = fa
   const account = repositoryChoiceAccount();
   let completed = false;
   try {
-    const target = parseRepositoryTarget(rawTarget);
+    const invited = parseClockoliInvitationUrl(rawTarget);
+    const target = invited || parseRepositoryTarget(rawTarget);
+    if (invited) {
+      await selectJoinInvitation(invited);
+      // Switch from the website URL to validated owner/repository coordinates.
+      $('repository-target').value = invited;
+    }
     checkingRepositoryTarget = target;
     repositorySuggestionsOpen = false;
     repositoryCheckError = '';
@@ -2023,6 +2653,9 @@ async function checkRepositoryTarget(rawTarget, fromList = false, keepInput = fa
     updateRepositoryConfirmation();
     $('repository-access-panel').hidden = true;
     const savedChoice = rememberRepositoryTarget(target, !fromList);
+    // The creation path exposes the same Check/review controls once GitHub
+    // has created a repository, without requiring another scenario selection.
+    if (setupPath === 'create') renderJoinSetup();
     if (fromList) $('repository-target').value = '';
     renderRepositoryList(); renderRepositoryAccess();
     await savedChoice;
@@ -2076,9 +2709,10 @@ async function checkRepositoryTarget(rawTarget, fromList = false, keepInput = fa
 }
 function checkEnteredRepositoryTarget() {
   const input = $('repository-target');
-  try { parseRepositoryTarget(input.value); }
-  catch {
-    repositoryCheckFeedback = 'Enter a valid GitHub repository URL or owner/name.';
+  try {
+    if (!parseClockoliInvitationUrl(input.value)) parseRepositoryTarget(input.value);
+  } catch {
+    repositoryCheckFeedback = 'Enter a valid Clockoli invitation link, GitHub repository URL, or owner/name.';
     repositoryCheckFeedbackError = true;
     repositoryCheckError = '';
     renderRepositoryAccess();
@@ -2216,11 +2850,14 @@ $('add-time-repository').addEventListener('click', async event => {
   repositories = [];
   setupCancelled = false;
   showOnboarding = true;
+  setupPath = 'choose';
+  setupPathTouched = true;
   selectedRepository = null;
   discoveryStatus = 'idle';
   try {
     await rememberRepositoryTarget('');
     renderState();
+    $('repository-step-title').scrollIntoView({ block: 'start' });
     if (state?.candidateAuth) await discoverRepositories();
   } catch (error) { message(error.message, 'error'); }
 });
@@ -2297,7 +2934,10 @@ function markRepositoryGrantDeparture() {
   clearTimeout(repositoryGrantReturnTimer); repositoryGrantReturnTimer = null;
 }
 window.addEventListener('blur', markRepositoryGrantDeparture);
-window.addEventListener('focus', () => void rediscoverAfterGitHubHandoff());
+window.addEventListener('focus', () => {
+  void rediscoverAfterGitHubHandoff();
+  void scanOpenJoinInvitations().catch(() => {});
+});
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') markRepositoryGrantDeparture();
   else void rediscoverAfterGitHubHandoff();
@@ -2361,11 +3001,29 @@ $('interface-width').addEventListener('change', async () => {
     const result = await send({ type: 'SET_INTERFACE_WIDTH', width: control.value });
     localPreferences = result.preferences;
     control.value = localPreferences.interfaceWidth;
-    document.documentElement.dataset.clockoliWidth = control.value;
+    try { localStorage.setItem('clockoli-interface-width', control.value); }
+    catch { /* Other pages can still read the saved preference from the worker. */ }
     formFeedback('interface-width-feedback', 'Interface width saved.', 'success');
   } catch (error) {
     control.value = previous;
     formFeedback('interface-width-feedback', error.message || 'Could not save interface width.', 'error');
+  } finally { control.disabled = false; }
+});
+
+$('toolbar-click-mode').addEventListener('change', async () => {
+  const control = $('toolbar-click-mode');
+  const previous = localPreferences?.toolbarClickMode === 'popup' ? 'popup' : 'tab';
+  if (!localPreferences) { control.value = previous; return; }
+  control.disabled = true;
+  formFeedback('toolbar-click-mode-feedback', 'Saving toolbar behavior…');
+  try {
+    const result = await send({ type: 'SET_TOOLBAR_CLICK_MODE', mode: control.value });
+    localPreferences = result.preferences;
+    control.value = localPreferences.toolbarClickMode;
+    formFeedback('toolbar-click-mode-feedback', 'Toolbar behavior saved.', 'success');
+  } catch (error) {
+    control.value = previous;
+    formFeedback('toolbar-click-mode-feedback', error.message || 'Could not save toolbar behavior.', 'error');
   } finally { control.disabled = false; }
 });
 
@@ -2392,43 +3050,69 @@ $('display-form').addEventListener('submit', async event => {
 
 $('add-project').addEventListener('click', () => addProjectRow());
 $('add-rate').addEventListener('click', () => addRateRow());
+$('rates-client').addEventListener('change', () => refreshRateClients());
+$('rates-destination').addEventListener('change', clearRateUserSuggestions);
 $('add-client').addEventListener('click', () => addClientRow());
+$('add-bank-account').addEventListener('click', () => addBankAccountRow());
 $('billing-form').addEventListener('submit', async event => {
   event.preventDefault(); const button = $('save-billing'), operation = saveButtonFeedback(button); formFeedback('billing-feedback', 'Saving billable rates…');
   try {
-    const result = await send({ type: 'SAVE_BILLING_SETTINGS', payload: { rates: ratesPayload() }, expectedRevision: localPreferences.revision });
-    localPreferences = { ...localPreferences, rates: result.rates, revision: result.revision, exportRecommended: true };
-    renderBillingPreferences(localPreferences);
+    const result = await send({ type: 'SAVE_BILLING_SETTINGS', payload: { clientRates: ratesPayload() }, expectedRevision: localPreferences.revision });
+    localPreferences = { ...localPreferences, clientRates: result.clientRates, revision: result.revision, exportRecommended: true };
+    renderBillingPreferences(localPreferences, { preserveOtherDrafts: true });
     formFeedback('billing-feedback', ''); saveButtonFeedback(button, 'saved', operation);
   } catch (error) { formFeedback('billing-feedback', error.message || 'Could not save billable rates.', 'error'); saveButtonFeedback(button, 'error', operation); }
 });
-$('invoicing-form').addEventListener('submit', async event => {
+for (const formId of ['clients-form', 'invoicing-form']) $(formId).addEventListener('submit', async event => {
   event.preventDefault();
   if (invoicingSaveInFlight) return;
-  const clicked = event.submitter?.className.split(' ').includes('save-client') ? event.submitter : $('save-invoicing');
+  const clicked = event.submitter?.className.split(' ').includes('save-client') ? event.submitter : (formId === 'clients-form' ? $('save-clients') : $('save-invoicing'));
   const clientId = clicked.className.split(' ').includes('save-client') ? clicked.parentNode.dataset.clientId : '';
+  if (clientId) {
+    // formNoValidate lets one client save despite an invalid draft for
+    // another client, but the selected client's own fields still need
+    // native validation.
+    for (const selector of ['.client-name', '.client-email', '.client-address', '.client-tax-id', '.client-currency']) {
+      const input = clicked.parentNode.querySelector(selector);
+      if (input?.checkValidity && !input.checkValidity()) { input.reportValidity(); return; }
+    }
+  }
   const operation = saveButtonFeedback(clicked); invoicingSaveInFlight = true;
-  for (const button of [$('save-invoicing'), ...$('clients-list').querySelectorAll('.save-client')]) button.disabled = true;
-  let confirmationButton = null; formFeedback('invoicing-feedback', 'Saving invoicing settings…');
+  for (const button of [$('save-clients'), $('save-invoicing'), ...$('clients-list').querySelectorAll('.save-client')]) button.disabled = true;
+  const feedbackId = formId === 'clients-form' ? 'clients-feedback' : 'invoicing-feedback';
+  let confirmationButton = null; formFeedback(feedbackId, 'Saving settings…');
   try {
+    const clientSave = formId === 'clients-form';
+    const invoicing = clientSave
+      ? normalizeInvoicingSettings({ ...invoicingSettings(localPreferences), clients: clientsPayload(clientId) })
+      : invoicingPayload();
     const result = await send({
-      type: 'SAVE_BILLING_SETTINGS', payload: { invoicing: invoicingPayload() },
-      projectLinks: projectClientLinksPayload(), expectedRevision: localPreferences.revision,
+      type: 'SAVE_BILLING_SETTINGS', payload: { invoicing },
+      // Project assignments are saved in Projects & routing, not Invoicing.
+      projectLinks: null, expectedRevision: localPreferences.revision,
     });
     localPreferences = {
-      ...localPreferences, invoicing: result.invoicing, projects: result.projects,
+      ...localPreferences, invoicing: result.invoicing, clientRates: result.clientRates, projects: result.projects,
       otherProjectClient: result.otherProjectClient, revision: result.revision, exportRecommended: true,
     };
-    renderInvoicingPreferences(localPreferences);
+    if (formId === 'clients-form') {
+      if (clientId) {
+        // Saving one client must leave other draft edits and pending removals untouched.
+        const row = [...$('clients-list').querySelectorAll('.client-row')].find(item => item.dataset.clientId === clientId);
+        if (row) row.dataset.persisted = 'true';
+        refreshProjectClients();
+      } else renderClientPreferences(localPreferences);
+    } else { renderInvoiceDefaults(localPreferences); refreshProjectClients(); }
     confirmationButton = clientId ? [...$('clients-list').querySelectorAll('.client-row')].find(row => row.dataset.clientId === clientId)?.querySelector('.save-client') || clicked : clicked;
-    formFeedback('invoicing-feedback', ''); saveButtonFeedback(confirmationButton, 'saved', operation);
-  } catch (error) { formFeedback('invoicing-feedback', error.message || 'Could not save invoicing settings.', 'error'); saveButtonFeedback(clicked, 'error', operation); }
+    refreshRateClients();
+    formFeedback(feedbackId, ''); saveButtonFeedback(confirmationButton, 'saved', operation);
+  } catch (error) { formFeedback(feedbackId, error.message || 'Could not save settings.', 'error'); saveButtonFeedback(clicked, 'error', operation); }
   finally {
     invoicingSaveInFlight = false;
-    for (const button of [$('save-invoicing'), ...$('clients-list').querySelectorAll('.save-client')]) if (button !== confirmationButton && !saveButtonStates.has(button)) button.disabled = false;
+    for (const button of [$('save-clients'), $('save-invoicing'), ...$('clients-list').querySelectorAll('.save-client')]) if (button !== confirmationButton && !saveButtonStates.has(button)) button.disabled = false;
   }
 });
-for (const [form, feedback] of [['display-form', 'display-feedback'], ['billing-form', 'billing-feedback'], ['invoicing-form', 'invoicing-feedback']]) {
+for (const [form, feedback] of [['display-form', 'display-feedback'], ['billing-form', 'billing-feedback'], ['clients-form', 'clients-feedback'], ['invoicing-form', 'invoicing-feedback']]) {
   $(form).addEventListener('input', () => formFeedback(feedback, ''));
 }
 for (const id of ['seller-address', 'invoice-notes']) wireAutoGrow($(id));
@@ -2445,11 +3129,11 @@ $('export-settings').addEventListener('click', async () => {
 });
 function settingsImportMessage(result) {
   const issues = Array.isArray(result?.notRestored) ? result.notRestored : [];
-  if (!issues.length) return 'Local settings restored from backup. GitHub remains connected only if it was already connected.';
+  if (!issues.length) return 'Local settings restored from backup.';
   const details = issues.map(issue => issue.type === 'project'
     ? `project “${issue.name}” — its route was not restored because repository ${issue.repository} is ${issue.reason}`
     : `repository ${issue.repository} — dependent settings were not restored because it is ${issue.reason}`);
-  return `Local settings restored where possible. Not restored: ${details.join('; ')}. Connect the missing time repositories, then import the backup again. GitHub remains connected only if it was already connected.`;
+  return `Local settings restored where possible. Not restored: ${details.join('; ')}. Connect the missing time repositories, then import the backup again.`;
 }
 
 $('import-settings-file').addEventListener('change', async () => {
@@ -2528,6 +3212,46 @@ $('settings-form').addEventListener('submit', async event => {
   finally { $('save').disabled = false; }
 });
 
-refreshState().then(refreshLocalPreferences).then(refreshAddonSettings).then(refreshMergeTasks).catch(error => message(error.message, 'error'));
+function showSignInRequired() {
+  if (authExpired) return;
+  authExpired = true;
+  authRecoveryKnown = `${state?.auth?.accessTokenExpiresAt || ''}:${state?.auth?.refreshTokenExpiresAt || ''}`;
+  authRecoveryTried = '';
+  setupCancelled = false;
+  if (state?.auth?.mode === 'github_app') renderState();
+}
 
-mountRunningStatus($('running-status'), { send });
+function clearSignInRequired() {
+  if (!authExpired) return;
+  authExpired = false;
+  authRecoveryKnown = '';
+  void refreshState().catch(error => message(error.message, 'error'));
+}
+
+async function checkSignInRecovery() {
+  if (!authExpired || document.hidden || state?.deviceAttempt || authRecoveryChecking) return;
+  authRecoveryChecking = true;
+  try {
+    // A new authorization in another tab changes stored credentials. Do not retry
+    // the same rejected refresh token every five seconds.
+    const current = await send({ type: 'GET_ONBOARDING_STATE' });
+    const auth = current.auth;
+    const key = `${auth?.accessTokenExpiresAt || ''}:${auth?.refreshTokenExpiresAt || ''}`;
+    if (authExpired && !state?.deviceAttempt && auth?.mode === 'github_app'
+        && Number(auth.accessTokenExpiresAt) > Date.now()
+        && key !== authRecoveryKnown
+        && key !== authRecoveryTried) {
+      authRecoveryTried = key;
+      await refreshRunningStatus?.();
+      if (authExpired) authRecoveryKnown = key;
+    }
+  } catch { /* Keep sign-in available when the local state cannot be checked. */ }
+  finally { authRecoveryChecking = false; }
+}
+
+scanOpenJoinInvitations().then(refreshState).then(refreshLocalPreferences).then(refreshAddonSettings).then(refreshMergeTasks).catch(error => message(error.message, 'error'));
+
+const disposeRunningStatus = mountRunningStatus($('running-status'), { send, onAuthExpired: showSignInRequired, onAuthRestored: clearSignInRequired });
+refreshRunningStatus = disposeRunningStatus.refresh;
+const authRecoveryTimer = setInterval(() => void checkSignInRecovery(), 5_000);
+window.addEventListener('pagehide', () => clearInterval(authRecoveryTimer));

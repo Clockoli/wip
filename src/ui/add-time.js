@@ -1,14 +1,30 @@
-import { normalizeTaskUrl } from '../domain/values.js';
+import { isUrlTaskIdentity, normalizeTaskUrl } from '../domain/values.js';
 import { dateValue, timeValue, parseTime, localTimestamp } from './local-time.js';
 
 /** One extension-page time-entry form for creating and editing records. */
-export function mountAddTime(button, { send, onAdded = () => location.reload(), container = document.body }) {
+const CHECK_PATH = 'M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z';
+const X_PATH = 'M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z';
+const CHEVRON_LEFT_PATH = 'M9.78 12.78a.75.75 0 0 1-1.06 0L4.47 8.53a.75.75 0 0 1 0-1.06l4.25-4.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042L6.06 8l3.72 3.72a.75.75 0 0 1 0 1.06Z';
+const CHEVRON_RIGHT_PATH = 'M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z';
+const OCTICON_NS = 'http://www.w3.org/2000/svg';
+function octicon(path) {
+  const svg = document.createElementNS(OCTICON_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16'); svg.setAttribute('width', '16'); svg.setAttribute('height', '16');
+  svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('fill', 'currentColor');
+  const shape = document.createElementNS(OCTICON_NS, 'path'); shape.setAttribute('d', path); svg.append(shape);
+  return svg;
+}
+
+export function mountAddTime(button, { send, onAdded = () => location.reload(), container = document.body,
+  searchIsCompleteCatalog = true }) {
   const dialog = document.createElement('dialog'); dialog.className = 'add-time-dialog';
   dialog.setAttribute('aria-labelledby', 'add-time-title');
   const heading = document.createElement('h2'); heading.id = 'add-time-title'; heading.textContent = 'Add new time';
   const close = document.createElement('button'); close.type = 'button'; close.className = 'add-time-close';
-  close.textContent = '×'; close.setAttribute('aria-label', 'Close Add time');
-  const intro = document.createElement('p'); intro.className = 'add-time-hint'; intro.textContent = 'Find a tracked task from any person in your time repositories or paste a task URL.';
+  close.append(octicon(X_PATH)); close.setAttribute('aria-label', 'Close Add time');
+  const intro = document.createElement('p'); intro.className = 'add-time-hint'; intro.textContent = searchIsCompleteCatalog
+    ? 'Find a tracked task from any person in your time repositories or paste a task URL.'
+    : 'Find a tracked imported task in this entry’s time repository or paste a task URL.';
   const taskLabel = document.createElement('label'); taskLabel.textContent = 'Task'; taskLabel.htmlFor = 'add-time-task';
   const search = document.createElement('input'); search.id = 'add-time-task'; search.type = 'search'; search.autocomplete = 'off';
   search.placeholder = 'Search title or URL, or paste a URL'; search.setAttribute('role', 'combobox');
@@ -21,16 +37,55 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   searchStatus.append(searchSpinner, document.createTextNode('Searching tasks…'));
   const suggestions = document.createElement('div'); suggestions.id = 'add-time-suggestions'; suggestions.className = 'add-time-suggestions';
   suggestions.setAttribute('aria-label', 'Matching tasks');
+  const searchPopup = document.createElement('div'); searchPopup.className = 'add-time-search-popup'; searchPopup.hidden = true;
+  searchPopup.append(searchStatus, suggestions);
+  const searchContainer = document.createElement('div'); searchContainer.className = 'add-time-task-search';
+  searchContainer.append(search, searchPopup);
+  const dayRangeLabel = document.createElement('label'); dayRangeLabel.className = 'add-time-day-range-toggle';
+  const dayRange = document.createElement('input'); dayRange.type = 'checkbox'; dayRange.id = 'add-time-day-range';
+  dayRangeLabel.append(dayRange, document.createTextNode('Multiple days'));
   const times = document.createElement('div'); times.className = 'add-time-times';
   times.setAttribute('role', 'group'); times.setAttribute('aria-label', 'Time range');
-  const makeField = (text, id, type) => {
-    const label = document.createElement('label'); label.textContent = text;
-    const input = document.createElement('input'); input.type = type; input.id = id;
-    label.htmlFor = id; label.append(input); times.append(label); return input;
+  const makeSection = (name, className) => {
+    const section = document.createElement('div'); section.className = className;
+    const title = document.createElement('h3'); title.textContent = name;
+    const fields = document.createElement('div'); fields.className = 'add-time-date-time';
+    section.append(title, fields); times.append(section);
+    return { section, fields };
   };
-  const start = makeField('Start', 'add-time-start', 'text');
-  const end = makeField('End (optional)', 'add-time-end', 'text');
-  const date = makeField('Date', 'add-time-date', 'date');
+  const startSection = makeSection('Start', 'add-time-time-section-start');
+  const endSection = makeSection('End (optional)', 'add-time-time-section-end');
+  const makeField = (text, id, type, parent, accessibleName) => {
+    const label = document.createElement('label');
+    const caption = document.createElement('span'); caption.textContent = text;
+    const input = document.createElement('input'); input.type = type; input.id = id;
+    input.setAttribute('aria-label', accessibleName);
+    label.htmlFor = id; label.append(caption, input); parent.append(label); return input;
+  };
+  const date = makeField('Date', 'add-time-date', 'date', startSection.fields, 'Start date');
+  const start = makeField('Time', 'add-time-start', 'text', startSection.fields, 'Start');
+  const endDate = makeField('Date', 'add-time-end-date', 'date', endSection.fields, 'End date');
+  const end = makeField('Time', 'add-time-end', 'text', endSection.fields, 'End (optional)');
+  const rangeFields = document.createElement('div'); rangeFields.className = 'add-time-range-fields'; rangeFields.hidden = true;
+  const calendar = document.createElement('div'); calendar.className = 'add-time-calendar';
+  calendar.setAttribute('role', 'group'); calendar.setAttribute('aria-label', 'Select days');
+  const calendarHeader = document.createElement('div'); calendarHeader.className = 'add-time-calendar-header';
+  const previousMonth = document.createElement('button'); previousMonth.type = 'button';
+  previousMonth.append(octicon(CHEVRON_LEFT_PATH)); previousMonth.setAttribute('aria-label', 'Previous month');
+  const monthTitle = document.createElement('strong'); monthTitle.setAttribute('aria-live', 'polite');
+  const nextMonth = document.createElement('button'); nextMonth.type = 'button';
+  nextMonth.append(octicon(CHEVRON_RIGHT_PATH)); nextMonth.setAttribute('aria-label', 'Next month');
+  calendarHeader.append(previousMonth, monthTitle, nextMonth);
+  const days = document.createElement('div'); days.className = 'add-time-calendar-days';
+  const selectedCount = document.createElement('p'); selectedCount.className = 'add-time-selected-count';
+  selectedCount.setAttribute('role', 'status');
+  calendar.append(calendarHeader, days, selectedCount);
+  const hoursLabel = document.createElement('label'); hoursLabel.textContent = 'Hours per day';
+  const hours = document.createElement('input'); hours.type = 'number'; hours.id = 'add-time-daily-hours';
+  hours.min = '0'; hours.max = '24'; hours.step = 'any'; hours.required = true; hours.placeholder = 'e.g. 8';
+  hoursLabel.htmlFor = hours.id; hoursLabel.append(hours);
+  const rangeDetails = document.createElement('div'); rangeDetails.className = 'add-time-range-details';
+  rangeDetails.append(hoursLabel); rangeFields.append(calendar, rangeDetails);
   for (const input of [start, end]) {
     input.inputMode = 'numeric'; input.placeholder = 'HH:MM'; input.autocomplete = 'off'; input.maxLength = 5;
     input.addEventListener('click', () => input.select());
@@ -39,16 +94,76 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
       if (normalized) input.value = normalized;
     });
   }
-  const refreshDateMax = () => { date.max = dateValue(new Date()); };
+  const refreshDateMax = () => { date.max = endDate.max = dateValue(new Date()); };
   date.addEventListener('focus', refreshDateMax);
-  const hint = document.createElement('p'); hint.className = 'add-time-hint'; hint.textContent = 'Leave End empty to start a timer. One entry can be at most 24 hours.';
+  endDate.addEventListener('focus', refreshDateMax);
+  const hint = document.createElement('p'); hint.className = 'add-time-hint'; hint.textContent = 'Leave End time empty to start a timer. Max 24 hours.';
+  const rangeHint = document.createElement('p'); rangeHint.className = 'add-time-hint'; rangeHint.hidden = true;
+  rangeHint.textContent = 'Choose days in the calendar, including nonconsecutive days. Click a selected day to remove it. Up to a 500-day span. Enter 0 hours to record a day without tracked time.';
+  const selectedDays = new Set();
+  let calendarMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const renderCalendar = () => {
+    const today = dateValue(new Date());
+    monthTitle.textContent = calendarMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    nextMonth.disabled = calendarMonth.getFullYear() === new Date().getFullYear()
+      && calendarMonth.getMonth() === new Date().getMonth();
+    days.replaceChildren();
+    for (const name of ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']) {
+      const heading = document.createElement('span'); heading.textContent = name;
+      heading.setAttribute('aria-hidden', 'true'); days.append(heading);
+    }
+    const firstWeekday = calendarMonth.getDay();
+    for (let index = 0; index < firstWeekday; index++) days.append(document.createElement('span'));
+    const count = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0).getDate();
+    for (let day = 1; day <= count; day++) {
+      const current = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), day);
+      const key = dateValue(current);
+      const cell = document.createElement('button'); cell.type = 'button'; cell.textContent = String(day);
+      cell.setAttribute('aria-label', current.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }));
+      cell.setAttribute('aria-pressed', String(selectedDays.has(key)));
+      cell.disabled = key > today;
+      cell.addEventListener('click', () => {
+        if (selectedDays.has(key)) selectedDays.delete(key);
+        else {
+          const all = [...selectedDays, key].sort();
+          const span = (Date.parse(`${all.at(-1)}T00:00:00Z`) - Date.parse(`${all[0]}T00:00:00Z`)) / 86400000;
+          if (all.length > 500 || span >= 500) { setError('Select days within a 500-day span.'); return; }
+          selectedDays.add(key);
+        }
+        cell.setAttribute('aria-pressed', String(selectedDays.has(key)));
+        selectedCount.textContent = `${selectedDays.size} ${selectedDays.size === 1 ? 'day' : 'days'} selected`;
+        setError('');
+      });
+      days.append(cell);
+    }
+  };
+  previousMonth.addEventListener('click', () => { calendarMonth.setMonth(calendarMonth.getMonth() - 1); renderCalendar(); });
+  nextMonth.addEventListener('click', () => { calendarMonth.setMonth(calendarMonth.getMonth() + 1); renderCalendar(); });
+  const showDayRange = () => {
+    const enabled = dayRange.checked;
+    dialog.dataset.multipleDays = String(enabled);
+    times.hidden = enabled;
+    rangeFields.hidden = !enabled; rangeHint.hidden = !enabled; hint.hidden = enabled;
+    if (enabled) rangeDetails.append(descriptionFields);
+    else duration.after(descriptionFields);
+    if (enabled) renderCalendar();
+    resizeDescription();
+    updateEndUI();
+  };
+  dayRange.addEventListener('change', showDayRange);
+  const boundaryHint = document.createElement('p'); boundaryHint.className = 'add-time-hint'; boundaryHint.hidden = true;
+  const overlapProgress = document.createElement('progress'); overlapProgress.className = 'add-time-progress';
+  overlapProgress.setAttribute('aria-label', 'Resolving overlap and syncing time'); overlapProgress.hidden = true;
+  const overlapStatus = document.createElement('p'); overlapStatus.className = 'add-time-status';
+  overlapStatus.setAttribute('role', 'status'); overlapStatus.textContent = 'Checking overlap and syncing queued time with GitHub…';
+  overlapStatus.hidden = true;
   const descriptionLabel = document.createElement('label'); descriptionLabel.textContent = 'Description (optional)'; descriptionLabel.htmlFor = 'add-time-description';
-  const description = document.createElement('textarea'); description.id = 'add-time-description'; description.rows = 3; description.maxLength = 2000;
+  const description = document.createElement('textarea'); description.id = 'add-time-description'; description.rows = 2; description.maxLength = 2000;
   const moreDescription = document.createElement('small');
   moreDescription.className = 'add-time-description-more'; moreDescription.textContent = '↓ More lines — scroll'; moreDescription.hidden = true;
   const resizeDescription = () => {
     const count = description.value.split('\n').length;
-    description.rows = Math.min(9, Math.max(3, count));
+    description.rows = Math.min(9, Math.max(dayRange.checked ? 3 : 2, count));
     description.style.height = 'auto';
     const height = Number(description.scrollHeight) || 0;
     const clipped = count > 9 || height > 240 + 1;
@@ -57,23 +172,103 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     moreDescription.hidden = !clipped;
   };
   description.addEventListener('input', resizeDescription);
+  const descriptionFields = document.createElement('div'); descriptionFields.className = 'add-time-description-fields';
+  descriptionFields.append(descriptionLabel, description, moreDescription);
   const preview = document.createElement('div'); preview.className = 'add-time-preview'; preview.setAttribute('aria-live', 'polite'); preview.hidden = true;
   const error = document.createElement('p'); error.className = 'add-time-error'; error.setAttribute('role', 'alert'); error.hidden = true;
+  const duration = document.createElement('p'); duration.className = 'add-time-duration';
+  duration.setAttribute('role', 'status'); duration.hidden = true;
   const actions = document.createElement('div'); actions.className = 'add-time-actions';
   const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
   const add = document.createElement('button'); add.type = 'button'; add.className = 'add-time-submit'; add.textContent = 'Add';
   actions.append(cancel, add);
-  dialog.append(close, heading, intro, taskLabel, search, searchStatus, suggestions, times, hint, descriptionLabel, description, moreDescription, preview, error, actions);
+  dialog.append(close, heading, intro, taskLabel, searchContainer, dayRangeLabel, times, rangeFields,
+    hint, duration, rangeHint, boundaryHint, descriptionFields, preview, error, actions);
   container.append(dialog);
   const saved = document.createElement('span');
-  saved.className = 'add-time-success'; saved.textContent = '✓ Saved'; saved.setAttribute('role', 'status'); saved.hidden = true;
+  saved.className = 'add-time-success'; saved.textContent = 'Saved'; saved.prepend(octicon(CHECK_PATH)); saved.setAttribute('role', 'status'); saved.hidden = true;
   button.insertAdjacentElement('afterend', saved);
   let savedTimer = null;
 
   let tasks = [], selected = null, generation = 0, busy = false, searching = false, searchTimer = null;
-  let lastSearch = '', searchIncomplete = false, editing = null, showRepository = false;
+  let returnTrigger = null, returnFallback = null;
+  let lastSearch = '', searchIncomplete = false, catalogLoaded = false, editing = null, showRepository = false;
+  let defaultStart = '', defaultDate = '', startEdited = false, dateEdited = false, endDateManuallyEdited = false;
+  let editStartInstant = null, editEndInstant = null, endShifted = false;
+  const inferredEndDate = () => {
+    const startTime = parseTime(start.value), endTime = parseTime(end.value);
+    if (!startTime || !endTime || !localTimestamp(date.value, '12:00')) return null;
+    if (endTime >= startTime) return date.value;
+    const next = new Date(`${date.value}T12:00:00`);
+    next.setDate(next.getDate() + 1);
+    return dateValue(next);
+  };
+  const updateEndUI = () => {
+    const hasEnd = Boolean(end.value.trim());
+    endDate.disabled = Boolean(editing?.running) || Boolean(editing?.boundary);
+    if (!editing) add.textContent = dayRange.checked ? 'Add' : hasEnd ? 'Add time' : 'Start timer';
+    duration.hidden = true;
+    if (dayRange.checked || editing?.running || editing?.boundary || !hasEnd) return;
+    const startInstant = localTimestamp(date.value, parseTime(start.value));
+    const endInstant = localTimestamp(endDate.value, parseTime(end.value));
+    if (!startInstant || !endInstant || endInstant <= startInstant) return;
+    const totalMinutes = Math.floor((endInstant - startInstant) / 60000);
+    duration.textContent = `Duration: ${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m`;
+    duration.hidden = false;
+  };
+  const moveEditedRange = () => {
+    if (!editing || editing.running || editing.boundary) return;
+    const nextStart = localTimestamp(date.value, parseTime(start.value));
+    if (!nextStart || !editStartInstant || !editEndInstant) return;
+    if (!parseTime(end.value)) { editStartInstant = nextStart; return; }
+    editEndInstant = new Date(editEndInstant.getTime() + nextStart.getTime() - editStartInstant.getTime());
+    editStartInstant = nextStart;
+    endDate.value = dateValue(editEndInstant);
+    end.value = timeValue(editEndInstant);
+    endShifted = true;
+  };
+  const syncEndDate = () => {
+    if (endDateManuallyEdited) return;
+    const inferred = inferredEndDate();
+    if (inferred) endDate.value = inferred;
+  };
+  const startChanged = () => {
+    if (editing && !editing.running && !editing.boundary) moveEditedRange();
+    else if (!end.value.trim() && !endDateManuallyEdited) endDate.value = date.value;
+    else syncEndDate();
+    updateEndUI();
+  };
+  start.addEventListener('input', () => { startEdited = true; startChanged(); });
+  date.addEventListener('input', () => { dateEdited = true; startChanged(); });
+  end.addEventListener('input', () => {
+    endShifted = false;
+    if (!end.value.trim()) {
+      endDateManuallyEdited = false;
+      endDate.value = date.value;
+    } else syncEndDate();
+    if (editing && !editing.running && !editing.boundary) {
+      editEndInstant = localTimestamp(endDate.value, parseTime(end.value)) || editEndInstant;
+    }
+    updateEndUI();
+  });
+  endDate.addEventListener('input', () => {
+    endDateManuallyEdited = true;
+    endShifted = false;
+    if (editing && !editing.running && !editing.boundary) {
+      editEndInstant = localTimestamp(endDate.value, parseTime(end.value)) || editEndInstant;
+    }
+    updateEndUI();
+  });
   const setError = text => { error.textContent = text; error.hidden = !text; };
-  const setSearchBusy = value => { searchStatus.hidden = !value; search.setAttribute('aria-busy', String(value)); };
+  const hasTaskUrl = () => {
+    try { normalizeTaskUrl(search.value.trim()); return true; } catch { return false; }
+  };
+  const updateSearchPopup = () => {
+    searchPopup.hidden = hasTaskUrl() || (searchStatus.hidden && !suggestions.childElementCount);
+  };
+  const setSearchBusy = value => {
+    searchStatus.hidden = !value; search.setAttribute('aria-busy', String(value)); updateSearchPopup();
+  };
   const taskIdentity = () => {
     if (selected && search.value.trim() === (selected.title || selected.taskUrl)) return selected;
     try {
@@ -84,7 +279,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   };
   const update = () => {
     suggestions.replaceChildren();
-    if (taskSearch.query && !selected) {
+    if (taskSearch.query && !selected && !hasTaskUrl()) {
       for (const task of taskSearch.matches(tasks, () => true, 8)) {
         const option = document.createElement('button'); option.type = 'button'; option.className = 'add-time-option';
         const optionTitle = document.createElement('strong'); optionTitle.textContent = task.title || task.taskUrl;
@@ -99,6 +294,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
       }
     }
     search.setAttribute('aria-expanded', String(suggestions.childElementCount > 0));
+    updateSearchPopup();
     preview.replaceChildren();
     const task = taskIdentity();
     preview.hidden = !task || Boolean(editing?.running);
@@ -112,7 +308,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     selected = null; setError(''); update();
     clearTimeout(searchTimer);
     const query = search.value.trim();
-    if (!query || (!searchIncomplete && taskSearch.matches(tasks, () => true, 1).length)) {
+    if (!query || (searchIsCompleteCatalog && catalogLoaded && !searchIncomplete && taskSearch.matches(tasks, () => true, 1).length)) {
       if (!query) lastSearch = '';
       setSearchBusy(false); return;
     }
@@ -124,11 +320,13 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
       try {
         const data = await send({ type: 'SEARCH_TASKS', query });
         if (request !== generation || !dialog.open) return;
-        if (!data?.configured) { lastSearch = ''; searchIncomplete = true; setError('Set up Clockoli before adding time.'); return; }
-        tasks = Array.isArray(data.tasks) ? data.tasks : [];
+        if (!data?.configured) { lastSearch = ''; searchIncomplete = true; catalogLoaded = false; setError('Set up Clockoli before adding time.'); return; }
+        tasks = Array.isArray(data.tasks) ? data.tasks.filter(task =>
+          !searchIsCompleteCatalog || isUrlTaskIdentity(task.taskUrl)) : [];
         showRepository = Array.isArray(data.readStatus) ? data.readStatus.length > 1
           : new Set(tasks.map(task => task.timeRepository).filter(Boolean)).size > 1;
         searchIncomplete = Boolean(data.partial || data.conflicts?.length);
+        catalogLoaded = searchIsCompleteCatalog && !searchIncomplete;
         if (searchIncomplete) {
           lastSearch = '';
           setError('Some tracked tasks could not be searched. Results may be incomplete.');
@@ -139,7 +337,7 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
         if (request === generation) {
           searching = false; setSearchBusy(false);
           if (query !== search.value.trim() && search.value.trim()
-              && (searchIncomplete || !taskSearch.matches(tasks, () => true, 1).length)) onSearchInput();
+              && (searchIncomplete || !searchIsCompleteCatalog || !taskSearch.matches(tasks, () => true, 1).length)) onSearchInput();
         }
       }
     }, 180);
@@ -157,70 +355,177 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
   dialog.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
   dialog.addEventListener('close', () => {
     if (dialog.open) return; // A later edit may already have reopened the dialog.
-    generation++; clearTimeout(searchTimer); setSearchBusy(false); editing?.trigger?.focus?.(); editing = null;
+    generation++; clearTimeout(searchTimer); setSearchBusy(false);
+    const target = editing?.trigger || returnTrigger;
+    const replacement = target?.isConnected === false ? returnFallback?.() : target;
+    replacement?.focus?.({ preventScroll: true });
+    editing = null; returnTrigger = null; returnFallback = null;
   });
-  const open = (entry = null, onEdit = null, trigger = button) => {
+  const open = (entry = null, onEdit = null, trigger = button, prefilledTask = null, focusFallback = null) => {
     saved.hidden = true;
     clearTimeout(savedTimer);
     generation++;
-    const runningEdit = Boolean(entry && (entry._active || entry.endedAt == null));
-    editing = entry ? { entry, onEdit, trigger, running: runningEdit } : null;
+    const boundary = entry?._overlapBoundary === 'end' || entry?._overlapBoundary === 'start'
+      ? entry._overlapBoundary : null;
+    if (boundary) boundaryHint.after(overlapProgress, overlapStatus);
+    else { overlapProgress.remove(); overlapStatus.remove(); }
+    const runningEdit = Boolean(entry && !boundary && (entry._active || entry.endedAt == null));
+    editing = entry ? { entry, onEdit, trigger, running: runningEdit, boundary } : null;
+    returnTrigger = prefilledTask ? trigger : null; returnFallback = focusFallback;
     const now = new Date();
-    tasks = []; selected = null; lastSearch = ''; searchIncomplete = false; searching = false; showRepository = false;
+    tasks = []; selected = null; lastSearch = ''; searchIncomplete = false; catalogLoaded = false; searching = false; showRepository = false;
     busy = false; search.value = ''; setSearchBusy(false);
-    heading.textContent = runningEdit ? 'Edit timer start' : entry ? 'Edit time' : 'Add new time';
+    overlapProgress.hidden = true; overlapStatus.hidden = true;
+    heading.textContent = runningEdit ? 'Edit timer start' : boundary ? 'Resolve time overlap' : entry ? 'Edit time' : 'Add new time';
     close.setAttribute('aria-label', runningEdit ? 'Close Edit timer start' : entry ? 'Close Edit time' : 'Close Add time');
-    add.textContent = entry ? 'Save' : 'Add';
+    add.textContent = entry ? 'Save' : 'Start timer';
+    dayRange.checked = false; dayRangeLabel.hidden = Boolean(entry);
+    selectedDays.clear(); selectedCount.textContent = '0 days selected';
+    calendarMonth = new Date(now.getFullYear(), now.getMonth(), 1); hours.value = '';
+    showDayRange();
     hint.hidden = Boolean(entry);
+    boundaryHint.hidden = !boundary;
+    boundaryHint.textContent = boundary === 'end'
+      ? 'Change the End time. The Start time stays unchanged.'
+      : 'Change the Start time. The End time stays unchanged.';
     times.dataset.runningEdit = String(runningEdit);
+    if (boundary) { times.dataset.overlapBoundary = boundary; dialog.dataset.overlapBoundary = boundary; }
+    else { delete times.dataset.overlapBoundary; delete dialog.dataset.overlapBoundary; }
     times.setAttribute('aria-label', runningEdit ? 'Timer start' : 'Time range');
-    intro.hidden = runningEdit; taskLabel.hidden = runningEdit; search.hidden = runningEdit;
-    suggestions.hidden = runningEdit; end.parentElement.hidden = runningEdit;
-    descriptionLabel.hidden = runningEdit; description.hidden = runningEdit;
+    startSection.section.hidden = boundary === 'end';
+    endSection.section.hidden = runningEdit || boundary === 'start';
+    intro.hidden = true; taskLabel.hidden = runningEdit || Boolean(boundary);
+    searchContainer.hidden = runningEdit || Boolean(boundary);
+    search.hidden = runningEdit || Boolean(boundary);
+    suggestions.hidden = runningEdit || Boolean(boundary);
+    start.parentElement.hidden = boundary === 'end';
+    end.parentElement.hidden = runningEdit || boundary === 'start';
+    date.parentElement.hidden = Boolean(boundary);
+    endDate.parentElement.hidden = Boolean(boundary);
+    start.parentElement.children[0].textContent = boundary === 'start' ? 'Start' : 'Time';
+    end.parentElement.children[0].textContent = boundary === 'end' ? 'End' : 'Time';
+    end.setAttribute('aria-label', boundary === 'end' ? 'End' : 'End (optional)');
+    descriptionLabel.hidden = runningEdit || Boolean(boundary); description.hidden = runningEdit || Boolean(boundary);
+    date.disabled = Boolean(boundary);
+    start.disabled = boundary === 'end'; end.disabled = boundary === 'start';
+    for (const input of [start, end]) {
+      input.placeholder = 'HH:MM';
+      input.maxLength = 5;
+    }
     refreshDateMax();
     date.value = dateValue(entry ? new Date(entry.startedAt) : now);
     start.value = timeValue(entry ? new Date(entry.startedAt) : now);
+    defaultDate = date.value; defaultStart = start.value;
+    startEdited = false; dateEdited = false; endDateManuallyEdited = false;
     end.value = entry && !runningEdit ? timeValue(new Date(entry.endedAt)) : '';
+    endDate.value = entry && !runningEdit ? dateValue(new Date(entry.endedAt)) : date.value;
+    editStartInstant = entry && !runningEdit ? new Date(entry.startedAt) : null;
+    editEndInstant = entry && !runningEdit ? new Date(entry.endedAt) : null;
+    endShifted = false;
+    updateEndUI();
     description.value = entry?.description || '';
-    if (entry) {
-      selected = { taskUrl: entry.taskUrl, title: entry.taskTitle || '', destinationId: entry.destinationId };
+    if (entry || prefilledTask) {
+      selected = entry ? { taskUrl: entry.taskUrl, title: entry.taskTitle || '', destinationId: entry.destinationId }
+        : { taskUrl: prefilledTask.taskUrl, title: prefilledTask.title || '',
+          destinationId: prefilledTask.destinationId || prefilledTask.destinationIds?.[0] };
       tasks = [selected]; search.value = selected.title || selected.taskUrl;
     }
     resizeDescription();
-    if (runningEdit) moreDescription.hidden = true;
+    if (runningEdit || boundary) moreDescription.hidden = true;
     setError('');
-    update(); dialog.showModal(); (runningEdit ? start : search).focus();
+    update(); preview.hidden = Boolean(boundary) || preview.hidden;
+    dialog.showModal(); (boundary === 'end' ? end : runningEdit || boundary || prefilledTask ? start : search).focus();
   };
   button.addEventListener('click', () => open());
   const submit = async () => {
     if (busy) return;
+    if (editing?.boundary) {
+      const { entry, boundary } = editing;
+      const originalStart = new Date(entry.startedAt), originalEnd = new Date(entry.endedAt);
+      const input = boundary === 'start' ? start : end;
+      const original = boundary === 'start' ? originalStart : originalEnd;
+      const parsed = parseTime(input.value);
+      const candidate = parsed && localTimestamp(dateValue(original), parsed);
+      if (!candidate) { setError('Enter a valid time (HH:MM).'); return; }
+      candidate.setSeconds(boundary === 'start' ? 1 : 0, 0);
+      const startedAt = boundary === 'start' && parsed !== timeValue(originalStart)
+        ? candidate.toISOString() : entry.startedAt;
+      const endedAt = boundary === 'end' && parsed !== timeValue(originalEnd)
+        ? candidate.toISOString() : entry.endedAt;
+      const now = new Date();
+      if (new Date(startedAt) > now || new Date(endedAt) > now) {
+        setError('Start and End cannot be in the future.'); return;
+      }
+      if (new Date(endedAt) <= new Date(startedAt)) { setError('End time must be after start time.'); return; }
+      if (new Date(endedAt) - new Date(startedAt) > 24 * 60 * 60 * 1000) {
+        setError('One entry cannot exceed 24 hours. Split the time into separate entries.'); return;
+      }
+      busy = true; add.disabled = true; cancel.disabled = true; close.disabled = true; setError('');
+      overlapProgress.hidden = false; overlapStatus.hidden = false;
+      try {
+        await editing.onEdit({ taskUrl: entry.taskUrl, taskTitle: entry.taskTitle || '', startedAt, endedAt,
+          description: entry.description || '' });
+        dialog.close();
+      } catch (cause) { setError(cause?.message || 'Could not save time.'); }
+      finally {
+        busy = false; add.disabled = false; cancel.disabled = false; close.disabled = false;
+        overlapProgress.hidden = true; overlapStatus.hidden = true;
+      }
+      return;
+    }
     const runningEdit = Boolean(editing?.running);
     const task = runningEdit ? null : taskIdentity();
     if (!runningEdit && !task) { setError('Select a task or enter an HTTP(S) URL.'); return; }
+    if (!editing && dayRange.checked) {
+      refreshDateMax();
+      const dates = [...selectedDays].sort(), daily = hours.value.trim();
+      const durationSeconds = Number(daily) * 3600;
+      if (!dates.length) { setError('Select at least one day.'); return; }
+      if (!daily) { setError('Enter hours per day (0–24). Use 0 for a day without tracked hours.'); hours.focus(); return; }
+      if (dates.at(-1) > date.max || !Number.isSafeInteger(durationSeconds)
+          || durationSeconds < 0 || durationSeconds > 86400) { setError('Choose past days and 0–24 hours per day.'); return; }
+      busy = true; add.disabled = true; cancel.disabled = true; setError('');
+      try {
+        const result = await send({ type: 'ADD_DAY_RANGE', taskUrl: task.taskUrl, taskTitle: task.title || '',
+          description: description.value.trim(), dates, durationSeconds,
+          ...(!/^https?:\/\//i.test(task.taskUrl) ? { destinationId: task.destinationId } : {}) });
+        dialog.close(); saved.hidden = false;
+        clearTimeout(savedTimer); savedTimer = setTimeout(() => { saved.hidden = true; }, 3000);
+        await onAdded(result);
+      } catch (cause) {
+        const message = cause?.message || '';
+        setError(/^Message ADD_DAY_RANGE is not allowed from this sender$|^Unknown extension message$/.test(message)
+          ? 'Reload Clockoli in your browser’s Extensions page, then reopen Activity or Top tasks and try again. No days were added.'
+          : message || 'Could not add the selected days.');
+      }
+      finally { busy = false; add.disabled = false; cancel.disabled = false; }
+      return;
+    }
     if (runningEdit && !start.value) { setError('Enter a start time.'); return; }
     if (!runningEdit && end.value && !start.value) { setError('Enter a start time before an end.'); return; }
     const now = new Date();
     const startTime = start.value ? parseTime(start.value) : null;
     const endTime = !runningEdit && end.value ? parseTime(end.value) : null;
     const startDate = localTimestamp(date.value, startTime);
-    if (!date.value || (start.value && !startDate) || (!runningEdit && end.value && !endTime)) {
+    const endInstant = endTime ? localTimestamp(endDate.value, endTime) : null;
+    if (!date.value || (start.value && !startDate) || (!runningEdit && end.value && !endInstant)) {
       setError(runningEdit ? 'Enter a valid Date and Start time (HH:MM or 1000).'
         : 'Enter a valid date and start/end time (HH:MM or 1000).'); return;
     }
     const initialStart = editing && new Date(editing.entry.startedAt);
     const initialEnd = editing && !runningEdit && new Date(editing.entry.endedAt);
-    const unchangedTimes = editing && date.value === dateValue(initialStart)
-      && startTime === timeValue(initialStart) && (runningEdit || endTime === timeValue(initialEnd));
-    const startedAt = unchangedTimes ? editing.entry.startedAt : startDate ? startDate.toISOString() : now.toISOString();
-    let endDate = null;
-    if (endTime && startDate) {
-      const day = new Date(`${date.value}T12:00:00`);
-      if (endTime < startTime) day.setDate(day.getDate() + 1);
-      endDate = localTimestamp(dateValue(day), endTime);
-    }
-    const keepOriginalEnd = editing && !runningEdit && startDate && date.value === dateValue(initialStart)
-      && endTime === timeValue(initialEnd) && initialEnd >= startDate;
-    const endedAt = unchangedTimes || keepOriginalEnd ? editing.entry.endedAt : endDate?.toISOString() ?? null;
+    const unchangedStart = editing && date.value === dateValue(initialStart) && startTime === timeValue(initialStart)
+      && (runningEdit || (!startEdited && !dateEdited));
+    const unchangedTimes = unchangedStart && (runningEdit || (endTime === timeValue(initialEnd)
+      && endDate.value === dateValue(initialEnd)));
+    const defaultRunningStart = !editing && !end.value && !startEdited && !dateEdited
+      && date.value === defaultDate && start.value === defaultStart;
+    const startedAt = unchangedStart ? editing.entry.startedAt
+      : defaultRunningStart ? now.toISOString() : startDate ? startDate.toISOString() : now.toISOString();
+    const keepOriginalEnd = editing && !runningEdit && endDate.value === dateValue(initialEnd)
+      && endTime === timeValue(initialEnd);
+    const endedAt = unchangedTimes || keepOriginalEnd && !endShifted ? editing.entry.endedAt
+      : endShifted ? editEndInstant?.toISOString() : endInstant?.toISOString() ?? null;
     if (end.value && !endedAt) { setError('Enter a valid date and start/end time (HH:MM or 1000).'); return; }
     if (new Date(startedAt) > now || (endedAt && new Date(endedAt) > now)) {
       setError(runningEdit ? 'Start cannot be in the future.' : 'Start and End cannot be in the future.'); return;
@@ -237,7 +542,8 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     try {
       const value = runningEdit ? { startedAt }
         : { taskUrl: task.taskUrl, taskTitle: task.title || '', startedAt, endedAt,
-          description: description.value.trim() };
+          description: description.value.trim(),
+          ...(!/^https?:\/\//i.test(task.taskUrl) ? { destinationId: task.destinationId } : {}) };
       const isEdit = Boolean(editing);
       const result = isEdit ? await editing.onEdit(value)
         : await send({ type: 'ADD_TIME', ...value,
@@ -264,5 +570,6 @@ export function mountAddTime(button, { send, onAdded = () => location.reload(), 
     event.preventDefault(); void submit();
   });
   dialog.openEdit = (entry, onEdit, trigger) => open(entry, onEdit, trigger);
+  dialog.openForTask = (task, trigger, focusFallback) => open(null, null, trigger, task, focusFallback);
   return dialog;
 }

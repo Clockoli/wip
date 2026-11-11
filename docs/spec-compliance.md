@@ -1,4 +1,4 @@
-# Version 1 specification compliance
+# Specification compliance
 
 Source analyzed: Clockoli's GitHub onboarding requirements plus the delivered URL-first task, personal-branch, Tasks, Reports, local-billing, durable-mutation, and work-record v1 requirements.
 
@@ -6,11 +6,11 @@ Source analyzed: Clockoli's GitHub onboarding requirements plus the delivered UR
 
 | Decision | Implementation |
 |---|---|
-| Browser | Manifest V3 from shared source: Chrome/Chromium development manifest (existing 102 baseline), Firefox 140+, Safari 18+ on macOS; see [browser release contracts](browser-releases.md) for compatibility and verification limits |
+| Browser | Manifest V3 from shared source: Chrome/Chromium development manifest (minimum version 102), Firefox 140+, Safari 18+ on macOS; see [browser release contracts](browser-releases.md) for compatibility and verification limits |
 | Tasks | Any canonical HTTP(S) URL; title optional; GitHub issue/PR metadata retained as enrichment |
 | Work actors | Human and agent identities use the same work-record schema |
 | Descriptions | Optional, maximum 2,000 characters |
-| Manual entries | Add one completed or running task with a selected local date on the Activity or Top tasks page; Add time intervals are limited to 24 hours at creation; all-or-nothing bulk creation of completed dated URL tasks remains on Activity |
+| Manual entries | Add one completed or running task with a selected local date on Activity or Top tasks, or select individual all-day calendar dates within a 500-day span with required 0–24 hours per day (enter 0 explicitly); Add time intervals are limited to 24 hours at creation; all-or-nothing bulk creation of completed dated URL tasks remains on Activity |
 | Offline behavior | Start is accepted durably in extension-local storage and reconciled to GitHub; Stop is queued and retried |
 | Recent entries | Seven browser-local calendar days by default, configurable from 1–31; one direct monthly JSONL read per represented month; globally sorted; maximum 50 returned |
 | Storage | Multiple private personal or organization time repositories; one explicit default destination plus ordered project URL routing; each repository keeps its shared marker on the default branch and work records on marked `clockoli/users/{stable-user-id}` branches |
@@ -57,7 +57,7 @@ Source analyzed: Clockoli's GitHub onboarding requirements plus the delivered UR
 
 - Git blob SHAs guard file rewrites; stable record IDs locate records independently of ordering or mutable content.
 - Start, Stop, and switch acceptance is persisted locally before asynchronous GitHub reconciliation.
-- Pending operations are FIFO and operation-ID-aware.
+- Pending operations are operation-ID-aware and FIFO for dependent edits, overlapping intervals, timer lifecycle work, and repository-wide failures. An independent completed-record mutation may bypass an unresolved completed-record conflict only after checking both original and proposed intervals and distinct record IDs; the conflicted operation remains durable and visible.
 - A matching concurrent completion is adopted by stable record ID instead of appended again.
 - A stale Stop never clears or resurrects a newer active timer.
 - Multi-file edits, boundary moves, and bulk imports preflight affected files and publish one atomic Git commit.
@@ -77,6 +77,8 @@ Source analyzed: Clockoli's GitHub onboarding requirements plus the delivered UR
 ## Acceptance coverage
 
 Automated tests cover strict v1 JSON/JSONL parsing, stable Start-to-Stop identity, unsupported-schema rejection, unknown-field preservation, actor/producer separation, metric validation, local-date/month partitioning, arbitrary HTTP(S) work items, lossless destination migration, explicit repository actions, organization permissions, ordered routing, one global timer, destination-pinned queues, cross-destination restart recovery, bounded and abortable multi-destination reads, conflict-safe deduplication and provenance, durable local mutations, MV3 restarts, concurrent Stops, stale-title races, pending projections, SHA conflicts, ID-safe edits/deletes after reordering, atomic linked and cross-month edits, bulk import, personal-branch discovery, report caching, sender trust boundaries, Tasks/Activity/Reports views, partial export guards, billing, credentials-free settings exports, and release-package validation. Packaging tests cover generated target manifests, deterministic Chrome/Firefox/Safari extension archives, runtime inventories, partial signing-configuration rejection, and Safari app ZIP modes and symlinks. Native browser, signing and store acceptance require separate verification.
+
+The public repository retains the basic data-format, sender-trust, packaging, and browser smoke contracts. The detailed state-machine, migration, billing, UI, and timeline regressions above run from the separately maintained private `Clockoli/tests` checkout. Public `npm test` alone does not establish complete acceptance coverage; maintainers use `npm run test:private` against the same source revision.
 
 The complete normative persistent format is [Data Format v1](data-format-v1.md).
 

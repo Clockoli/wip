@@ -4,23 +4,31 @@ import {
   periodRange, recordDate, reportFilename, reportPdfTitle, taskSource, timeRepository,
 } from '../domain/reporting.js';
 import { buildInvoice, invoiceExchangeRequest } from '../domain/invoicing.js';
-import { billableTotalsByCurrency, clientForProject, exchangeCurrencyCode, invoicingSettings, projectNameForUrl, rateForUser, rateMajorToMinor } from '../domain/local-settings.js';
+import { clientForProject, exchangeCurrencyCode, invoicingSettings, projectNameForUrl, rateForClient, rateForRecord, rateMajorToMinor } from '../domain/local-settings.js';
 import { taskUrlOf } from '../domain/values.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const FACET_KEYS = ['people', 'projects', 'repositories', 'timeRepositories'];
 const $ = id => document.getElementById(id);
-// Safari ignores print requests from extension pages, so Print would do nothing there.
 const SAFARI_EXTENSION_PROTOCOL = 'safari-web-extension:';
 const state = {
-  records: [], range: null, pendingRange: null, sourceRepository: '', branch: '', sourceRepositories: [], billing: { rates: {}, invoicing: invoicingSettings() }, loading: false, requestId: 0, analytics: null, partial: false, readStatus: [],
+  records: [], range: null, pendingRange: null, sourceRepository: '', branch: '', sourceRepositories: [], billing: { clientRates: {}, invoicing: invoicingSettings() }, loading: false, stale: false, requestId: 0, analytics: null, partial: false, readStatus: [], pendingCount: 0,
   people: new Set(), projects: new Set(), repositories: new Set(), timeRepositories: new Set(), projectDefinitions: [], peopleSearch: '', projectsSearch: '', repositoriesSearch: '', timeRepositoriesSearch: '',
-  allSelected: { people: false, projects: true, repositories: true, timeRepositories: true }, otherProjectName: 'Other', otherProjectClient: '',
+  allSelected: { people: false, projects: true, repositories: true, timeRepositories: true }, otherProjectName: 'Other', otherProjectClient: '', rateClientId: '__project__', clientIdFilter: '',
   exchangeRates: null, exchangeKey: '', analyticsRequestId: 0, progressRequestId: null, progressValue: 0,
-  invoice: null, invoiceExchangeRates: null, invoiceRequestId: 0, invoiceReservedSequence: null, invoiceCompositionKey: '', invoiceControlsReady: false, invoiceClientChosen: false,
+  invoice: null, invoiceExchangeRates: null, invoiceRequestId: 0, invoiceReservedSequence: null, invoiceCompositionKey: '', invoiceControlsReady: false, invoiceClientChosen: false, invoiceBankChosen: false, invoiceOutputInFlight: false,
   preset: 'last-week', reportingUtc: false, settingsRevision: 0, calendarMonth: '', focusedDay: '', savingBasis: false,
   invoiceExtraLines: [], invoiceProjects: new Set(), invoiceProjectOptions: [], exportingPdf: false,
 };
+
+function removeIcon() {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16'); svg.setAttribute('width', '16'); svg.setAttribute('height', '16');
+  svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('fill', 'currentColor');
+  const shape = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  shape.setAttribute('d', 'M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z'); svg.append(shape);
+  return svg;
+}
 
 function send(message) {
   return new Promise((resolve, reject) => chrome.runtime.sendMessage(message, response => {
@@ -167,12 +175,17 @@ function renderInvoiceDocument(container, invoice) {
   for (const item of invoice.unbilled) documentRoot.append(invoiceNode('p', 'invoice-unbilled', `Not billed: ${item.person} ${formatClockDuration(item.seconds)} (no hourly rate covers this time)`));
   if (invoice.converted) documentRoot.append(invoiceNode('p', 'invoice-footnote', "Exchange rates are from Frankfurter; each entry uses the exchange rate for that entry's own date."));
   documentRoot.append(invoiceNode('p', 'invoice-terms', `Payment terms: ${invoice.paymentTermsDays === 0 ? 'Due on receipt' : `Net ${invoice.paymentTermsDays}`}`));
+  if (invoice.bankAccount) {
+    const bank = invoiceNode('section', 'invoice-bank-details');
+    bank.append(invoiceNode('h2', '', `Bank details: ${invoice.bankAccount.label}`), invoiceNode('p', '', invoice.bankAccount.details));
+    documentRoot.append(bank);
+  }
   if (invoice.notes) documentRoot.append(invoiceNode('p', 'invoice-notes', invoice.notes));
   container.append(documentRoot);
 }
 
 const INVOICE_PDF_RENDER_SCALE = 3;
-// Lower than the invoice: a long timesheet renders to one canvas, and Safari caps canvas area.
+// Long timesheets render into a single canvas; keep the scale below the invoice scale.
 const TIMESHEET_PDF_RENDER_SCALE = 2;
 
 function replaceSellerNameWithRasterImage(source, value) {
@@ -235,7 +248,7 @@ async function saveInvoicePdf(invoice) {
       enableLinks: true,
       html2canvas: { backgroundColor: '#ffffff', scale: INVOICE_PDF_RENDER_SCALE, useCORS: true, logging: false },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-      pagebreak: { mode: ['css', 'legacy'], avoid: ['tr', '.invoice-document-heading', '.invoice-parties', '.invoice-total-row', '.invoice-unbilled', '.invoice-footnote', '.invoice-terms', '.invoice-notes'] },
+      pagebreak: { mode: ['css', 'legacy'], avoid: ['tr', '.invoice-document-heading', '.invoice-parties', '.invoice-total-row', '.invoice-unbilled', '.invoice-footnote', '.invoice-terms', '.invoice-bank-details', '.invoice-notes'] },
     }).from(source).save();
   } finally {
     restoreSellerName();
@@ -253,7 +266,7 @@ function formatMetricValue(value, metric, { tooltip = false } = {}) {
 }
 
 function setDownloadsAvailable(available) {
-  available = available && !state.loading && !state.partial;
+  available = available && !state.loading && !state.stale && !state.partial && !state.pendingCount;
   for (const id of ['download-csv', 'download-json', 'download-pdf', 'print-report']) {
     $(id).classList.toggle('disabled', !available);
     $(id).setAttribute('aria-disabled', String(!available));
@@ -261,14 +274,36 @@ function setDownloadsAvailable(available) {
 }
 
 function selectedFilters() {
-  return { people: [...state.people], projects: [...state.projects], repositories: [...state.repositories], timeRepositories: [...state.timeRepositories], projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName, emptyMeansNone: true };
+  return { people: [...state.people], projects: [...state.projects], repositories: [...state.repositories], timeRepositories: [...state.timeRepositories], projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName, otherProjectClient: state.otherProjectClient, clientIdFilter: state.clientIdFilter, emptyMeansNone: true };
 }
 
 function currentFilteredRecords() { return filterReportRecords(state.records, selectedFilters()); }
 
+function rateOptions(clientId = state.rateClientId) {
+  return { clientId, projects: state.projectDefinitions, otherProjectName: state.otherProjectName, otherProjectClient: state.otherProjectClient };
+}
+
+function recordRate(record, clientId = state.rateClientId) {
+  return rateForRecord(record, state.billing, { ...rateOptions(clientId), date: recordDate(record) });
+}
+
+function populateClientContextSelectors() {
+  const clients = state.billing.invoicing.clients;
+  for (const [id, options, requested, fallback] of [
+    ['report-client-filter', [{ id: '', name: 'All clients' }, ...clients, { id: '__unassigned__', name: 'Unassigned' }], state.clientIdFilter, ''],
+    ['rate-client', [{ id: '__project__', name: "Each project's client" }, ...clients], state.rateClientId, '__project__'],
+  ]) {
+    const select = $(id);
+    select.replaceChildren();
+    for (const client of options) { const option = document.createElement('option'); option.value = client.id; option.textContent = client.name || client.id; select.append(option); }
+    select.value = options.some(client => client.id === requested) ? requested : fallback;
+    if (id === 'rate-client') state.rateClientId = select.value; else state.clientIdFilter = select.value;
+  }
+}
+
 function invoiceCompositionKey(filtered) {
   const records = filtered.map(record => [record.id || record.taskUrl || record.issue?.url || record.url, record.user, recordDate(record), record.durationSeconds]);
-  return JSON.stringify({ range: state.range, filters: selectedFilters(), records, rates: state.billing.rates, invoicing: state.billing.invoicing });
+  return JSON.stringify({ range: state.range, filters: selectedFilters(), records, clientRates: state.billing.clientRates, invoicing: state.billing.invoicing });
 }
 
 function resetInvoiceReservation() {
@@ -285,19 +320,55 @@ function syncInvoiceComposition(filtered) {
 function setInvoiceAvailable(filtered) {
   const control = $('create-invoice');
   let reason = '';
-  if (!filtered.length) reason = 'No entries in this period to invoice';
-  else if (!filtered.some(record => rateForUser(record.user, state.billing.rates, recordDate(record)))) reason = 'No hourly rate covers these entries. Add rates in Settings.';
-  else if (state.loading) reason = 'Report is loading';
+  if (state.pendingCount) reason = 'Local changes are not included. Wait for GitHub sync before invoicing.';
+  else if (!filtered.length) reason = 'No entries in this period to invoice';
+  else if (!filtered.some(record => state.billing.invoicing.clients.some(client => rateForClient(client.id, state.billing, record.user, recordDate(record))))) reason = 'No client rate covers these entries. Add rates in Settings.';
+  else if (state.loading || state.stale) reason = 'Report is refreshing; wait for current data before invoicing';
   control.classList.toggle('disabled', Boolean(reason)); control.setAttribute('aria-disabled', String(Boolean(reason)));
   if (reason) control.setAttribute('data-clockoli-tooltip', reason); else control.removeAttribute('data-clockoli-tooltip');
 }
 
+function incompleteInvoiceExtraLine(line) {
+  return !line.description.trim() || !line.amount.trim();
+}
+
+function hasIncompleteInvoiceExtraLines() {
+  return state.invoiceExtraLines.some(incompleteInvoiceExtraLine);
+}
+
+function updateInvoiceExtraHint() {
+  $('invoice-extra-hint').hidden = !hasIncompleteInvoiceExtraLines();
+}
+
 function setInvoiceActionsAvailable(available) {
-  for (const id of ['invoice-print', 'invoice-save-pdf']) $(id).disabled = !available || state.loading;
+  for (const id of ['invoice-print', 'invoice-save-pdf']) $(id).disabled = !available || hasIncompleteInvoiceExtraLines() || state.invoiceOutputInFlight || state.loading || state.stale || state.partial || Boolean(state.pendingCount);
+}
+
+function renderPendingStatus(pendingWrites, pendingCount = 0) {
+  state.pendingCount = Math.max(pendingWrites.length, Number(pendingCount) || 0);
+  const conflicts = pendingWrites.filter(write => write.status === 'conflict').length;
+  $('pending-message').textContent = state.pendingCount
+    ? `This report is GitHub-only; local changes are not included. ${conflicts ? `${state.pendingCount} ${state.pendingCount === 1 ? 'operation' : 'operations'} waiting to sync; ${conflicts} ${conflicts === 1 ? 'conflict needs' : 'conflicts need'} review. ` : ''}Timesheet exports and invoices are unavailable until sync completes.` : '';
+  $('pending-status').hidden = !state.pendingCount;
+  $('pending-activity').hidden = !conflicts;
+}
+
+async function pendingSafeForAction() {
+  if (state.stale || state.loading || state.pendingCount) return false;
+  try {
+    const snapshot = await send({ type: 'GET_STATE' });
+    if (snapshot?.configured !== true || !Array.isArray(snapshot.pendingWrites)) throw new Error('Could not verify current local changes. Try again.');
+    if (!snapshot.pendingWrites.length) return true;
+    renderPendingStatus(snapshot.pendingWrites, snapshot.pendingCount);
+    setDownloadsAvailable(false);
+    setInvoiceAvailable(currentFilteredRecords());
+    setInvoiceActionsAvailable(false);
+    return false;
+  } catch (error) { setError(error); return false; }
 }
 
 function invoiceCurrencies(filtered) {
-  return [...new Set(filtered.map(record => rateForUser(record.user, state.billing.rates, recordDate(record))?.currency).filter(Boolean))].sort();
+  return [...new Set(filtered.map(record => recordRate(record, $('invoice-client').value)?.currency).filter(Boolean))].sort();
 }
 
 function selectedInvoiceClient() {
@@ -359,6 +430,17 @@ function populateInvoiceClients() {
   if (!state.invoiceClientChosen && !select.value && state.billing.invoicing.clients.length === 1) select.value = state.billing.invoicing.clients[0].id;
 }
 
+function populateInvoiceBankAccounts() {
+  const select = $('invoice-bank-account'), previous = state.invoiceControlsReady ? select.value : '';
+  select.replaceChildren();
+  const empty = document.createElement('option'); empty.value = ''; empty.textContent = 'No bank details'; select.append(empty);
+  for (const account of state.billing.invoicing.bankAccounts) {
+    const option = document.createElement('option'); option.value = account.id; option.textContent = account.label; select.append(option);
+  }
+  select.value = state.billing.invoicing.bankAccounts.some(account => account.id === previous) ? previous
+    : (state.invoiceBankChosen && !previous ? '' : state.billing.invoicing.defaultBankAccountId);
+}
+
 function populateInvoiceCurrencies(filtered, preferClient = false) {
   const select = $('invoice-currency'), previous = select.value, clientCurrency = selectedInvoiceClient()?.defaultCurrency || '';
   const currencies = invoiceCurrencies(filtered);
@@ -375,12 +457,18 @@ function populateInvoiceCurrencies(filtered, preferClient = false) {
 }
 
 function invoiceBuildOptions(sequence, exchangeRates) {
-  const extraLines = state.invoiceExtraLines.map(({ description, amount }) => {
+  // An unfinished additional line is a draft, not an invalid hourly rate.
+  // Keep the valid invoice preview visible, but disable print/save until the
+  // user completes or removes every draft.
+  const extraLines = state.invoiceExtraLines.filter(line => !incompleteInvoiceExtraLine(line)).map(({ description, amount }) => {
     const text = amount.trim(), negative = text.startsWith('-');
-    return { description, amountMinor: rateMajorToMinor(negative ? text.slice(1) : text) * (negative ? -1 : 1) };
+    let amountMinor;
+    try { amountMinor = rateMajorToMinor(negative ? text.slice(1) : text); }
+    catch { throw new Error('Enter a valid additional line amount (up to two decimal places).'); }
+    return { description, amountMinor: amountMinor * (negative ? -1 : 1) };
   });
   return {
-    rates: state.billing.rates, invoicing: state.billing.invoicing, clientId: $('invoice-client').value,
+    clientRates: state.billing.clientRates, invoicing: state.billing.invoicing, clientId: $('invoice-client').value, bankAccountId: $('invoice-bank-account').value,
     currency: $('invoice-currency').value, exchangeRates, groupBy: $('invoice-group-by').value,
     startDate: state.range.startDate, endDate: state.range.endDate, issueDate: $('invoice-issue-date').value,
     extraLines, sequence,
@@ -391,7 +479,8 @@ function renderInvoiceExtraLines() {
   const container = $('invoice-extra-lines'); container.replaceChildren();
   for (const line of state.invoiceExtraLines) {
     const row = invoiceNode('div', 'invoice-extra-row'), descriptionLabel = invoiceNode('label', '', 'Description'), amountLabel = invoiceNode('label', '', 'Amount');
-    const description = invoiceNode('textarea'), amount = invoiceNode('input'), remove = invoiceNode('button', 'button secondary', '✕');
+    const description = invoiceNode('textarea'), amount = invoiceNode('input'), remove = invoiceNode('button', 'button secondary');
+    remove.append(removeIcon());
     description.rows = 1; description.maxLength = 200; description.required = true; description.value = line.description;
     const more = invoiceNode('small', 'invoice-description-more', '↓ More lines — scroll'); more.hidden = true;
     const resizeDescription = () => {
@@ -415,7 +504,7 @@ function renderInvoiceExtraLines() {
       resetInvoiceReservation();
       applied.hidden = true;
       const success = await rebuildInvoicePreview();
-      if (success && line.description === value && description.value.replace(/\r\n?/g, '\n') === value) applied.hidden = false;
+      if (success && !incompleteInvoiceExtraLine(line) && line.description === value && description.value.replace(/\r\n?/g, '\n') === value) applied.hidden = false;
     };
     description.addEventListener('input', () => { resizeDescription(); applied.hidden = true; });
     description.addEventListener('change', applyDescription);
@@ -435,6 +524,7 @@ function renderInvoiceExtraLines() {
     resizeDescription();
   }
   $('invoice-add-line').disabled = state.invoiceExtraLines.length >= 20;
+  updateInvoiceExtraHint();
 }
 
 function prospectiveInvoiceSequence() { return state.invoiceReservedSequence ?? state.billing.invoicing.nextNumber; }
@@ -453,45 +543,49 @@ function showInvoiceError(error) {
 }
 
 async function rebuildInvoicePreview() {
-  if (!state.range || state.loading) return false;
+  if (!state.range || state.loading || state.stale || state.pendingCount) return false;
   $('invoice-billing-period').textContent = `Billing ${state.range.startDate} to ${state.range.endDate}`;
   const requestId = ++state.invoiceRequestId, filtered = invoiceFilteredRecords();
+  updateInvoiceExtraHint();
   $('invoice-feedback').textContent = ''; setInvoiceActionsAvailable(false); state.invoice = null; showInvoiceEmpty();
   try {
     let exchangeRates = null;
     const targetCurrency = $('invoice-currency').value;
     if (targetCurrency) {
-      const payload = invoiceExchangeRequest(filtered, state.billing.rates, targetCurrency);
+      const payload = invoiceExchangeRequest(filtered, state.billing.clientRates, $('invoice-client').value, targetCurrency);
       if (payload.sourceCurrencies.length) {
         showInvoiceLoading();
         const result = await send({ type: 'GET_EXCHANGE_RATES', payload: { ...payload, requestId: `invoice-${state.requestId}-${requestId}` } });
-        if (requestId !== state.invoiceRequestId) return false;
+        if (requestId !== state.invoiceRequestId || state.pendingCount) return false;
         exchangeRates = result.rates;
       }
     }
     const invoice = buildInvoice(filtered, invoiceBuildOptions(prospectiveInvoiceSequence(), exchangeRates));
-    if (requestId !== state.invoiceRequestId) return false;
-    state.invoice = invoice; state.invoiceExchangeRates = exchangeRates; renderInvoiceDocument($('invoice-preview'), invoice); setInvoiceActionsAvailable(true);
+    if (requestId !== state.invoiceRequestId || state.pendingCount) return false;
+    state.invoice = invoice; state.invoiceExchangeRates = exchangeRates; renderInvoiceDocument($('invoice-preview'), invoice);
+    if (state.partial) $('invoice-feedback').textContent = 'This report is incomplete. Preview only; printing and PDF saving are disabled until the report is complete.';
+    setInvoiceActionsAvailable(true);
     return true;
   } catch (error) { if (requestId === state.invoiceRequestId) showInvoiceError(error); return false; }
 }
 
 function prepareInvoiceControls(filtered) {
-  populateInvoiceClients(); resetInvoiceProjects(filtered); populateInvoiceCurrencies(invoiceFilteredRecords());
+  populateInvoiceClients(); populateInvoiceBankAccounts(); resetInvoiceProjects(filtered); populateInvoiceCurrencies(invoiceFilteredRecords());
   if (!state.invoiceControlsReady) {
     $('invoice-group-by').value = 'task'; $('invoice-issue-date').value = localDateValue(); state.invoiceControlsReady = true;
   }
 }
 
 async function ensureReservedInvoice() {
-  if (!state.invoice || state.loading) throw new Error('Invoice preview is not ready.');
+  if (hasIncompleteInvoiceExtraLines()) throw new Error('Complete or remove unfinished additional lines before printing or saving.');
+  if (!state.invoice || state.loading || state.stale || state.partial || state.pendingCount) throw new Error('Invoice preview is not ready.');
   if (state.invoiceReservedSequence === null) {
     const requestId = state.invoiceRequestId, compositionKey = state.invoiceCompositionKey;
     const result = await send({ type: 'RESERVE_INVOICE_NUMBER' });
     // Keep successful reservations for retries. A worker crash between commit and response can still leave a gap in v1, never a duplicate.
     state.invoiceReservedSequence = result.sequence;
     if (Number.isSafeInteger(result.revision) && result.revision >= 0) state.settingsRevision = result.revision;
-    if (requestId !== state.invoiceRequestId || compositionKey !== state.invoiceCompositionKey) throw new Error('Invoice changed while its number was being reserved. Try again.');
+    if (requestId !== state.invoiceRequestId || compositionKey !== state.invoiceCompositionKey || state.pendingCount) throw new Error('Invoice changed while its number was being reserved. Try again.');
   }
   state.invoice = buildInvoice(invoiceFilteredRecords(), invoiceBuildOptions(state.invoiceReservedSequence, state.invoiceExchangeRates));
   renderInvoiceDocument($('invoice-preview'), state.invoice);
@@ -555,7 +649,15 @@ function billableSummary(totals) {
 
 function renderCurrencySelector(filtered) {
   const select = $('billable-currency'), selected = select.value;
-  const totals = billableTotalsByCurrency(filtered, state.billing.rates);
+  const byCurrency = new Map();
+  for (const record of filtered) {
+    const rate = recordRate(record);
+    if (!rate) continue;
+    const item = byCurrency.get(rate.currency) || { currency: rate.currency, currencyPosition: rate.currencyPosition, amountMinor: 0 };
+    item.amountMinor += rate.amountMinorPerHour * Math.max(0, Number(record.durationSeconds) || 0) / 3600;
+    byCurrency.set(rate.currency, item);
+  }
+  const totals = [...byCurrency.values()].sort((a, b) => a.currency.localeCompare(b.currency));
   select.replaceChildren();
   for (const item of totals) {
     const option = document.createElement('option'); option.value = item.currency; option.textContent = item.currency;
@@ -569,8 +671,8 @@ function renderCurrencySelector(filtered) {
 function renderSummary(filtered, totals) {
   const total = filtered.reduce((sum, record) => sum + (Number(record.durationSeconds) || 0), 0);
   $('summary-time').textContent = formatClockDuration(total);
-  $('summary-billable').hidden = !Object.keys(state.billing.rates).some(user => rateForUser(user, state.billing.rates));
-  const missingRates = [...new Set(filtered.filter(record => !rateForUser(record.user, state.billing.rates, recordDate(record))).map(record => record.user))];
+  $('summary-billable').hidden = !Object.values(state.billing.clientRates).some(card => Object.keys(card).length);
+  const missingRates = [...new Set(filtered.filter(record => !recordRate(record)).map(record => record.user))];
   $('summary-money').textContent = `${billableSummary(totals)}${missingRates.length ? ` · No rate for ${missingRates.join(', ')}` : ''}`;
   const people = new Set(filtered.map(record => record.user)).size;
   const sources = new Set(filtered.map(record => taskSource(record))).size;
@@ -763,7 +865,7 @@ function renderPrintableTimesheet(filtered) {
 function exchangeRequest(filtered, targetCurrency) {
   const datedRates = filtered.map(record => ({
     date: recordDate(record),
-    rate: rateForUser(record.user, state.billing.rates, recordDate(record)),
+    rate: recordRate(record),
   })).filter(item => item.rate);
   const dates = [...new Set(datedRates.map(item => item.date))].sort();
   const sourceCurrencies = [...new Set(datedRates.map(item => item.rate.currency))].sort();
@@ -799,6 +901,7 @@ function render() {
   $('projects-all').textContent = allProjects.length && allProjects.every(value => state.projects.has(value)) ? 'Unselect all' : 'Select all';
   $('repositories-all').textContent = allRepositories.length && allRepositories.every(value => state.repositories.has(value)) ? 'Unselect all' : 'Select all';
   $('timeRepositories-all').textContent = allTimeRepositories.length && allTimeRepositories.every(value => state.timeRepositories.has(value)) ? 'Unselect all' : 'Select all';
+  populateClientContextSelectors();
   const filtered = filterReportRecords(state.records, selectedFilters());
   syncInvoiceComposition(filtered); setInvoiceAvailable(filtered);
   const billableTotals = renderCurrencySelector(filtered);
@@ -824,38 +927,31 @@ function render() {
   } else { state.analyticsRequestId += 1; state.exchangeRates = null; state.exchangeKey = ''; }
   state.analytics = buildAnalytics(filtered, {
     metric, horizontalAxis: $('horizontal-axis').value, stackBy: $('stack-by').value,
-    rates: state.billing.rates, currency: targetCurrency, exchangeRates,
+    clientRates: state.billing.clientRates, invoicing: state.billing.invoicing, rateClientId: state.rateClientId,
+    projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName, otherProjectClient: state.otherProjectClient,
+    currency: targetCurrency, exchangeRates,
   });
   renderChart(state.analytics); setError();
   if (!state.loading) hideProgress();
 }
 
-async function loadRange(range) {
-  const requestId = ++state.requestId, reportingUtc = state.reportingUtc;
-  resetInvoiceReservation(); state.invoiceCompositionKey = '';
-  state.progressRequestId = requestId; state.progressValue = 0; state.pendingRange = range; state.loading = true; state.analyticsRequestId += 1; setError();
-  setDownloadsAvailable(false); setInvoiceActionsAvailable(false); setInvoiceAvailable(currentFilteredRecords()); renderRangeContext();
-  showProgress('Loading time data…', 10); $('setup').hidden = true;
-  try {
-    const result = await send({ type: 'LOAD_REPORT', payload: { startDate: range.startDate, endDate: range.endDate, reportingUtc, requestId } });
-    if (requestId !== state.requestId) return;
-    if (!result.configured) {
-      $('setup').hidden = false; $('period-card').hidden = true; $('report-content').hidden = true;
-      state.range = null; state.records = []; return;
-    }
-    showProgress('Preparing report…', 80);
+function applyReportResult(result, range, reportingUtc, { cached = false } = {}) {
     const firstLoad = !state.range;
-    state.range = range; state.pendingRange = null; state.loading = false; state.exchangeRates = null; state.exchangeKey = '';
+    state.range = range; state.pendingRange = null; state.loading = false; state.stale = cached;
+    state.exchangeRates = null; state.exchangeKey = '';
     // Project the reporting date once so billing and invoice consumers share the report basis.
     state.records = result.records.map(record => ({ ...record, entryDate: recordDate(record, reportingUtc) }));
     state.sourceRepository = result.sourceRepository; state.branch = result.branch;
     state.sourceRepositories = result.sourceRepositories || (result.sourceRepository ? [result.sourceRepository] : []);
     state.partial = Boolean(result.partial); state.readStatus = result.readStatus || [];
+    const pendingWrites = Array.isArray(result.pendingWrites) ? result.pendingWrites : [];
+    renderPendingStatus(pendingWrites, result.pendingCount);
+    setInvoiceActionsAvailable(Boolean(state.invoice));
     const failed = state.readStatus.filter(item => item.status === 'error');
     const conflictCount = result.conflicts?.length || 0;
     $('partial-status').hidden = !state.partial;
     $('partial-status').textContent = !state.partial ? '' : [failed.length ? `${failed.length} time ${failed.length === 1 ? 'repository' : 'repositories'} could not be loaded.` : '', conflictCount ? `${conflictCount} conflicting ${conflictCount === 1 ? 'record was' : 'records were'} omitted.` : '', 'Exports are disabled until the report is complete.'].filter(Boolean).join(' ');
-    state.billing = { rates: result.billing?.rates || {}, invoicing: invoicingSettings(result.billing) };
+    state.billing = { clientRates: result.billing?.clientRates || {}, invoicing: invoicingSettings(result.billing) };
     state.projectDefinitions = result.billing?.projects || [];
     state.otherProjectName = result.billing?.otherProjectName || 'Other';
     state.otherProjectClient = result.billing?.otherProjectClient || '';
@@ -872,7 +968,29 @@ async function loadRange(range) {
     }
     $('period-card').hidden = false;
     $('report-content').hidden = false; render();
-  } catch (error) { if (requestId === state.requestId) setError(error); }
+    if (cached) {
+      $('partial-status').hidden = false;
+      $('partial-status').textContent = `${$('partial-status').textContent} Previously loaded report; refreshing. Exports and invoices are unavailable until the refresh finishes.`.trim();
+      setDownloadsAvailable(false); setInvoiceAvailable(currentFilteredRecords()); setInvoiceActionsAvailable(false);
+    }
+}
+
+async function loadRange(range) {
+  const requestId = ++state.requestId, reportingUtc = state.reportingUtc;
+  resetInvoiceReservation(); state.invoiceCompositionKey = '';
+  state.progressRequestId = requestId; state.progressValue = 0; state.pendingRange = range; state.loading = true; state.stale = Boolean(state.range); state.analyticsRequestId += 1; setError();
+  setDownloadsAvailable(false); setInvoiceActionsAvailable(false); setInvoiceAvailable(currentFilteredRecords()); renderRangeContext();
+  showProgress(state.range ? 'Refreshing time data…' : 'Loading time data…', 10); $('setup').hidden = true;
+  try {
+    const result = await send({ type: 'LOAD_REPORT', payload: { startDate: range.startDate, endDate: range.endDate, reportingUtc, requestId } });
+    if (requestId !== state.requestId) return;
+    if (!result.configured) {
+      $('setup').hidden = false; $('period-card').hidden = true; $('report-content').hidden = true;
+      state.range = null; state.records = []; state.pendingCount = 0; state.stale = false; $('pending-status').hidden = true; return;
+    }
+    showProgress('Preparing report…', 80);
+    applyReportResult(result, range, reportingUtc);
+  } catch (error) { if (requestId === state.requestId) { setError(error); state.stale = Boolean(state.range); } }
   finally {
     if (requestId === state.requestId) {
       state.loading = false; state.pendingRange = null; renderRangeContext();
@@ -933,6 +1051,8 @@ $('reporting-utc').addEventListener('change', async () => {
   finally { state.savingBasis = false; $('reporting-utc').disabled = false; }
 });
 for (const id of ['metric', 'billable-currency', 'horizontal-axis', 'stack-by']) $(id).addEventListener('change', render);
+$('rate-client').addEventListener('change', () => { state.rateClientId = $('rate-client').value; state.exchangeKey = ''; render(); });
+$('report-client-filter').addEventListener('change', () => { state.clientIdFilter = $('report-client-filter').value; render(); });
 $('analytics-details').addEventListener('toggle', () => { if (state.analytics) renderAnalyticsTable(state.analytics); });
 $('people-search').addEventListener('input', event => { state.peopleSearch = event.target.value; render(); });
 $('projects-search').addEventListener('input', event => { state.projectsSearch = event.target.value; render(); });
@@ -961,38 +1081,47 @@ $('reset-filters').addEventListener('click', () => {
     state[key] = new Set(facets[key].map(option => option.value));
     state[`${key}Search`] = ''; $(`${key}-search`).value = '';
   }
+  state.clientIdFilter = '';
   render();
 });
 $('setup-settings').addEventListener('click', () => send({ type: 'OPEN_OPTIONS' }));
-function downloadTimesheet(format, event) {
+async function downloadTimesheet(format, event) {
   event.preventDefault();
+  if (state.loading || state.stale || state.partial || state.pendingCount || !state.range) return;
+  const requestId = state.requestId;
+  if (!(await pendingSafeForAction()) || requestId !== state.requestId) return;
   const filtered = filterReportRecords(state.records, selectedFilters());
-  if (state.loading || state.partial || !state.range || !filtered.length) return;
+  if (state.loading || state.stale || state.partial || state.pendingCount || !state.range || !filtered.length) return;
   const content = exportTimesheet(filtered, {
     format, startDate: state.range.startDate, endDate: state.range.endDate,
-    rates: state.billing.rates,
+    clientRates: state.billing.clientRates, invoicing: state.billing.invoicing, rateClientId: state.rateClientId,
+    projectDefinitions: state.projectDefinitions, otherProjectName: state.otherProjectName, otherProjectClient: state.otherProjectClient,
   });
   const type = format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8';
   const url = URL.createObjectURL(new Blob([content], { type })), anchor = document.createElement('a');
   anchor.href = url; anchor.download = reportFilename(format, state.range.startDate, state.range.endDate); anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
-$('download-csv').addEventListener('click', event => downloadTimesheet('csv', event));
-$('download-json').addEventListener('click', event => downloadTimesheet('json', event));
+$('download-csv').addEventListener('click', event => downloadTimesheet('csv', event).catch(setError));
+$('download-json').addEventListener('click', event => downloadTimesheet('json', event).catch(setError));
 function pdfDocumentTitle() { return reportPdfTitle(state.range, state.people); }
 
 $('download-pdf').addEventListener('click', async event => {
   event.preventDefault();
-  if (state.loading || state.partial || state.exportingPdf || $('download-pdf').classList.contains('disabled')) return;
-  // html2pdf renders its own copy, so the hidden timesheet never flashes onto the page.
-  const copy = $('print-timesheet').cloneNode(true), filename = `${pdfDocumentTitle()}.pdf`;
-  copy.classList.add('timesheet-pdf-export');
+  // Lock before the asynchronous safety check so rapid clicks produce one PDF.
+  if (state.exportingPdf || state.loading || state.stale || state.partial || state.pendingCount || $('download-pdf').classList.contains('disabled')) return;
   state.exportingPdf = true;
   try {
+    const requestId = state.requestId;
+    if (!(await pendingSafeForAction()) || requestId !== state.requestId
+        || state.loading || state.stale || state.partial || state.pendingCount || $('download-pdf').classList.contains('disabled')) return;
     if (typeof globalThis.html2pdf !== 'function') throw new Error('PDF export is unavailable. Reload Clockoli and try again.');
+    // html2pdf uses an independent copy, leaving the hidden print view untouched.
+    const copy = $('print-timesheet').cloneNode(true);
+    copy.classList.add('timesheet-pdf-export');
     await globalThis.html2pdf().set({
       margin: [10, 10, 10, 10],
-      filename,
+      filename: `${pdfDocumentTitle()}.pdf`,
       image: { type: 'jpeg', quality: 0.98 },
       html2canvas: { backgroundColor: '#ffffff', scale: TIMESHEET_PDF_RENDER_SCALE, useCORS: true, logging: false },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
@@ -1002,18 +1131,24 @@ $('download-pdf').addEventListener('click', async event => {
 });
 
 $('print-report').hidden = location.protocol === SAFARI_EXTENSION_PROTOCOL;
-$('print-report').addEventListener('click', event => {
+$('print-report').addEventListener('click', async event => {
   event.preventDefault();
-  if (state.loading || state.partial || $('print-report').classList.contains('disabled')) return;
+  if ($('print-report').hidden || state.loading || state.stale || state.partial || state.pendingCount || $('print-report').classList.contains('disabled')) return;
+  const requestId = state.requestId;
+  if (!(await pendingSafeForAction()) || requestId !== state.requestId
+      || state.loading || state.stale || state.partial || state.pendingCount || $('print-report').classList.contains('disabled')) return;
   const previousTitle = document.title;
   document.title = pdfDocumentTitle();
   addEventListener('afterprint', () => { document.title = previousTitle; }, { once: true });
   window.print();
 });
 
-$('create-invoice').addEventListener('click', event => {
+$('create-invoice').addEventListener('click', async event => {
   event.preventDefault();
-  if (state.loading || $('create-invoice').classList.contains('disabled')) return;
+  if (state.loading || state.stale || state.pendingCount || $('create-invoice').classList.contains('disabled')) return;
+  const requestId = state.requestId;
+  if (!(await pendingSafeForAction()) || requestId !== state.requestId
+      || state.loading || state.stale || state.pendingCount || $('create-invoice').classList.contains('disabled')) return;
   const filtered = currentFilteredRecords(); prepareInvoiceControls(filtered); $('print-invoice').replaceChildren(); $('invoice-dialog').showModal(); void rebuildInvoicePreview();
 });
 $('invoice-add-line').addEventListener('click', () => {
@@ -1030,6 +1165,9 @@ for (const id of ['invoice-currency', 'invoice-group-by', 'invoice-issue-date'])
 $('invoice-client').addEventListener('change', () => {
   state.invoiceClientChosen = true; resetInvoiceReservation(); resetInvoiceProjects(currentFilteredRecords()); populateInvoiceCurrencies(invoiceFilteredRecords(), true); void rebuildInvoicePreview();
 });
+$('invoice-bank-account').addEventListener('change', () => {
+  state.invoiceBankChosen = true; resetInvoiceReservation(); void rebuildInvoicePreview();
+});
 function invoicePdfFilename(invoice) {
   const words = String(invoice.seller?.name || 'Seller').trim().split(/\s+/).filter(Boolean);
   const first = words.shift() || 'Seller', last = words.pop() || first;
@@ -1038,12 +1176,17 @@ function invoicePdfFilename(invoice) {
 }
 
 async function printInvoice({ saveAsPdf = false } = {}) {
-  setInvoiceActionsAvailable(false); $('invoice-feedback').textContent = '';
+  // Lock synchronously, before the first asynchronous pending-write check.
+  // Otherwise two quick clicks can reserve two numbers for one invoice.
+  if (state.invoiceOutputInFlight || state.loading || state.partial || state.pendingCount || !state.invoice) return;
+  state.invoiceOutputInFlight = true; setInvoiceActionsAvailable(false);
   try {
+    if (!(await pendingSafeForAction()) || state.loading || state.partial || state.pendingCount || !state.invoice) return;
+    $('invoice-feedback').textContent = '';
     const invoice = await ensureReservedInvoice();
+    if (!(await pendingSafeForAction()) || state.loading || state.partial || state.pendingCount || !state.invoice) return;
     if (saveAsPdf) {
       await saveInvoicePdf(invoice);
-      setInvoiceActionsAvailable(Boolean(state.invoice));
       return;
     }
     const previousTitle = document.title;
@@ -1051,16 +1194,24 @@ async function printInvoice({ saveAsPdf = false } = {}) {
     document.title = `invoice-${invoice.number.replace(/[^A-Za-z0-9._-]/g, '_')}`;
     addEventListener('afterprint', () => { document.body.classList.remove('printing-invoice'); document.title = previousTitle; }, { once: true });
     window.print();
-  } catch (error) { $('invoice-feedback').textContent = error?.message || 'Could not process invoice.'; setInvoiceActionsAvailable(Boolean(state.invoice)); }
+  } catch (error) {
+    $('invoice-feedback').textContent = error?.message || 'Could not process invoice.';
+  } finally {
+    state.invoiceOutputInFlight = false;
+    // Restore both controls on success, cancellation and failure, unless the
+    // invoice became invalid or the report is now incomplete.
+    setInvoiceActionsAvailable(Boolean(state.invoice));
+  }
 }
 
-$('invoice-print').addEventListener('click', () => void printInvoice());
-$('invoice-save-pdf').addEventListener('click', () => void printInvoice({ saveAsPdf: true }));
+$('invoice-print').addEventListener('click', () => printInvoice());
+$('invoice-save-pdf').addEventListener('click', () => printInvoice({ saveAsPdf: true }));
 
 async function refreshProjectDefinitions() {
   const preferences = await send({ type: 'GET_LOCAL_PREFERENCES' });
   if (Number.isSafeInteger(preferences.revision) && preferences.revision >= 0) state.settingsRevision = preferences.revision;
-  state.billing = { rates: preferences.rates || {}, invoicing: invoicingSettings(preferences) };
+  state.billing = { clientRates: preferences.clientRates || {}, invoicing: invoicingSettings(preferences) };
+  if ($('invoice-dialog').open) populateInvoiceBankAccounts();
   state.projectDefinitions = preferences.projects || [];
   state.otherProjectName = preferences.otherProjectName || 'Other';
   state.otherProjectClient = preferences.otherProjectClient || '';
@@ -1091,8 +1242,22 @@ async function initializePeriod() {
     if (Number.isSafeInteger(preferences.revision) && preferences.revision >= 0) state.settingsRevision = preferences.revision;
     state.reportingUtc = preferences.reportingUtc === true; renderReportingBasis();
     const initial = { ...periodRange('last-week', reportToday()), preset: 'last-week' };
+    let range = initial;
     $('start-date').value = initial.startDate; $('end-date').value = initial.endDate;
-    await loadRange(initial);
+    try {
+      const cached = await send({ type: 'GET_CACHED_VIEW', kind: 'reports', range: {
+        startDate: initial.startDate, endDate: initial.endDate, reportingUtc: state.reportingUtc,
+      } });
+      if (cached?.configured && Array.isArray(cached.records)) {
+        if (cached.cachedRange) {
+          range = { ...cached.cachedRange, preset: 'custom' }; state.preset = 'custom';
+          $('start-date').value = range.startDate; $('end-date').value = range.endDate;
+        }
+        applyReportResult(cached, range, state.reportingUtc, { cached: true });
+        renderRangeContext();
+      }
+    } catch { /* a missing or unreadable snapshot must not block the live read */ }
+    await loadRange(range);
   } catch (error) { setError(error); hideProgress(); }
 }
 void initializePeriod();

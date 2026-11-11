@@ -27,12 +27,16 @@ Unpacked extensions have no automatic update channel.
 
 ## GitHub connection
 
+### GitHub access expired or could not be renewed
+
+Clockoli normally renews its GitHub App access token automatically when it makes a GitHub request. If GitHub rejects that renewal, Settings shows **GitHub sign-in required** and the **Sign in again with GitHub** action instead of a raw renewal error. Complete the new one-time Device activation code; signing in to the GitHub website alone does not renew Clockoli's authorization. If another Clockoli tab completes authorization, Settings checks the changed credentials and closes the sign-in state after GitHub access succeeds. While a new authorization awaits repository validation, Settings shows that step instead of asking you to sign in again. Do not clear local data or sign out to retry: reconnection preserves configured time repositories and pending work. Use the same GitHub account; a replacement authorization for a different account cannot silently take over the existing repositories. If GitHub rejects the new code as well, check that the Clockoli GitHub App is available and try again with a fresh code.
+
 ### Device activation completed, but setup did not advance
 
 GitHub user authorization and GitHub App installation are separate.
 
 1. Return to Clockoli Settings.
-2. Use **Done on GitHub—check now** if automatic checking has not completed.
+2. Clockoli checks for authorization automatically. If it still shows **Waiting for GitHub authorization**, verify that you approved Clockoli on GitHub, then return to Settings. Use **Reopen GitHub** if you need to revisit the authorization page.
 3. After sign-in, type a repository name in **Connect time repositories** to choose an App-granted suggestion, or paste a GitHub URL or `owner/name` and select **Check** (or press Enter).
 4. Grant App access only if Clockoli reports that the target is missing or needs **Contents: Read and write**. Check a ready repository, then choose **Connect repository** and confirm separately. A replacement authorization is also confirmed automatically after Clockoli read-validates every configured destination; failures appear once at account level.
 
@@ -151,17 +155,21 @@ Clockoli warns before saving an entry longer than 12 hours. This catches forgott
 
 ## Synchronization and conflicts
 
+### Activity cannot reach GitHub
+
+Check your connection to GitHub and choose **Retry** in Activity when access returns. GitHub API requests have a 30-second timeout per attempt; a timeout is reported separately from a refused network connection. A read failure does not clear locally accepted timers or queued work. Other Activity load errors show technical details instead of assuming the network is offline.
+
 ### A stopped entry is still waiting to sync
 
-Clockoli has preserved the Stop operation in extension-local storage but could not finish the GitHub write yet. Until it does, a new Start can report that the previous timer was saved locally but must sync first.
+Clockoli has preserved the Stop operation in extension-local storage but could not finish the GitHub write yet. You can start another timer locally while the previous Stop waits in the queue; dependent GitHub writes follow it in order.
 
-Activity shows **Stop waiting to sync** instead of **Not tracking** while a completion is queued, or **Stop needs attention** if it has a conflict. The Stop has already been accepted locally: do not press Stop again or delete the extension to clear it. A separate GitHub timer warning appears in Timeline, Calendar, and List when the remote active record differs from local tracking; it does not turn a completed historical row into a running timer.
+Activity shows **Not tracking** after a locally accepted Stop, even while its GitHub write is queued. Only an actionable conflict changes this to **Stop needs attention** and offers review in Activity. The Stop has already been accepted locally: do not press Stop again or delete the extension to clear it.
 
 - Keep the extension installed and do not clear its data.
 - Restore network/repository access.
 - Wait: queued writes are pushed after 15 seconds without new changes, and Clockoli also retries at startup and approximately once per minute. There is no manual Sync button.
 - If the panel shows **Retry** or another recovery action, follow it.
-- In **Activity → List**, pending local changes are identified separately from queued conflicts. If a conflict appears, review its recovery action there; never discard an unsaved completion until you have verified the time is recorded elsewhere.
+- If a conflict appears, review it in Activity from any view; never discard an unsaved completion until you have verified the time is recorded elsewhere.
 
 See [Sync and offline work](sync.md) for the full model.
 
@@ -213,7 +221,7 @@ The represented intervals still intersect after correction. Endpoint-touching re
 
 This can happen even when both records track the same task: they are separate time intervals. The error shows the running timer's **Start** in its recorded timezone and as an exact UTC timestamp. An edit whose completed **End** is later than that Start is rejected before it is queued or saved; an End exactly at Start is allowed. A running timer is not a completed entry in List, so List alone may not reveal the overlap. If Activity says **Not tracking** while this error appears, check **Activity → List** for pending local changes or a queued conflict and follow the offered recovery action. A locally accepted Stop may still be waiting to remove the remote active timer; queued writes retry automatically when access is restored. Do not clear local data or discard a pending write to make the edit pass; first verify what the remote active record and pending operation represent. After synchronization, refresh Activity and retry. Existing overlaps are not silently shortened or deleted.
 
-Activity now checks GitHub for a running timer when the week loads and shows a separate warning in all three views if that remote timer differs from local tracking. **Recheck GitHub timer** repeats the read without stopping it or discarding queued writes. A completed row's **Start tracking** / **Stop tracking** control refers to the task URL, not to the row's historical interval: multiple rows for the same task can all offer Stop while one local timer for that task is running. If the remote warning persists after local tracking stops, inspect the pending operation and verify the completed time before taking any destructive recovery action.
+Activity does not show a warning just because a remote timer differs from local tracking. A completed row's **Start tracking** / **Stop tracking** control refers to the task URL, not to the row's historical interval: multiple rows for the same task can all offer Stop while one local timer for that task is running. If a write produces a conflict, review its pending operation and verify the completed time before taking any destructive recovery action.
 
 ### Inline edit or Delete reports a stale or changed record
 
@@ -265,9 +273,10 @@ Clockoli enforces bounded file, byte, and record budgets so one report cannot ma
 
 Open Settings and:
 
-- include a currency sign or 2–12 letter description in every hourly rate, such as `$15.50` or `750 RUB`;
-- add a non-negative hourly rate for each GitHub login (matching is case-insensitive);
-- save rates;
+- select the client whose rate card should be used in Reports;
+- assign hourly rates to the required GitHub users within that client;
+- check that each rate covers the relevant entry dates;
+- save the client's rates;
 - export an updated local settings backup.
 
 Rates are local to the current browser. They are not read from the shared repository or synchronized from a colleague's browser.
@@ -331,7 +340,7 @@ Clockoli blocks transitions that could strand active or pending work. Stop activ
 
 ### Settings import did not reconnect GitHub
 
-This is intentional. A version 6 JSON backup excludes credentials. It can carry destination references, the exported default destination, and project routes, but import restores project routes only for destinations already configured in this browser. References remain unverified, and the imported default does not replace this browser's current default. Add any missing repository first. Import does not inspect repositories or reconnect GitHub. Before connecting, open **More settings** → **Backup & restore** to reach **Import settings**.
+This is intentional. A settings JSON backup excludes credentials. It can carry destination references, the exported default destination, and project routes, but import restores project routes only for destinations already configured in this browser. References remain unverified, and the imported default does not replace this browser's current default. Add any missing repository first. Import does not inspect repositories or reconnect GitHub. Before connecting, open **More settings** → **Backup & restore** to reach **Import settings**.
 
 ### A task went to the wrong time repository
 

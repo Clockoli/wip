@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Reports · Clockoli</title>
   <script src="../ui/theme.js"></script>
+  <script src="../ui/interface-width.js"></script>
   <link rel="stylesheet" href="reports.css">
   <link rel="stylesheet" href="../styles/page-tabs.css">
   <link rel="stylesheet" href="../styles/running-status.css">
@@ -16,12 +17,19 @@
     <nav class="page-tabs" aria-label="Clockoli pages">
       <a class="page-brand" href="https://clockoli.com/" target="_blank" rel="noreferrer" aria-label="Clockoli website"><img src="../assets/clockoli-with-text.svg" alt="Clockoli"></a>
       <div class="page-tab-list">
-        <a class="page-tab" href="../tasks/tasks.html"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2.75A.75.75 0 0 1 2.75 2h1.5a.75.75 0 0 1 0 1.5h-1.5A.75.75 0 0 1 2 2.75Zm4 0A.75.75 0 0 1 6.75 2h6.5a.75.75 0 0 1 0 1.5h-6.5A.75.75 0 0 1 6 2.75ZM2 8a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5A.75.75 0 0 1 2 8Zm4 0a.75.75 0 0 1 .75-.75h6.5a.75.75 0 0 1 0 1.5h-6.5A.75.75 0 0 1 6 8Zm-4 5.25a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5a.75.75 0 0 1-.75-.75Zm4 0a.75.75 0 0 1 .75-.75h6.5a.75.75 0 0 1 0 1.5h-6.5a.75.75 0 0 1-.75-.75Z"/></svg>Top tasks</a>
-        <a class="page-tab" href="../reports/reports.html" aria-current="page"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.75 1.5a.75.75 0 0 0-.75.75v11.5c0 .414.336.75.75.75h12.5a.75.75 0 0 0 0-1.5H2.5V2.25a.75.75 0 0 0-.75-.75Zm3.5 8a.75.75 0 0 0-.75.75v1.5a.75.75 0 0 0 1.5 0v-1.5a.75.75 0 0 0-.75-.75Zm3-3a.75.75 0 0 0-.75.75v4.5a.75.75 0 0 0 1.5 0v-4.5a.75.75 0 0 0-.75-.75Zm3-3a.75.75 0 0 0-.75.75v7.5a.75.75 0 0 0 1.5 0v-7.5a.75.75 0 0 0-.75-.75Z"/></svg>Reports</a>
-        <a class="page-tab" href="../times/times.html"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5A6.5 6.5 0 1 1 1.5 8a.75.75 0 0 1 1.5 0A5 5 0 1 0 8 3a4.96 4.96 0 0 0-3.535 1.465L5.53 5.53A.75.75 0 0 1 4.47 6.59L2.14 4.26a.75.75 0 0 1 0-1.06L4.47.87A.75.75 0 1 1 5.53 1.93l-.79.79A6.46 6.46 0 0 1 8 1.5Zm.75 3.25v2.94l1.78 1.78a.75.75 0 1 1-1.06 1.06l-2-2A.75.75 0 0 1 7.25 8V4.75a.75.75 0 0 1 1.5 0Z"/></svg>Activity</a>
-        <a class="page-tab" href="../options/options.html"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0a8.2 8.2 0 0 1 .701.031C9.444.095 9.99.645 10.16 1.29l.288 1.107c.018.066.079.158.212.224.231.114.454.243.668.386.123.082.233.09.299.071l1.103-.303c.644-.176 1.392.021 1.82.63.27.385.506.792.704 1.218.315.675.111 1.422-.364 1.891l-.814.806c-.049.048-.098.147-.088.294.016.257.016.515 0 .772-.01.147.038.246.088.294l.814.806c.475.469.679 1.216.364 1.891a7.977 7.977 0 0 1-.704 1.217c-.428.61-1.176.807-1.82.63l-1.102-.302c-.067-.019-.177-.011-.3.071a5.909 5.909 0 0 1-.668.386c-.133.066-.194.158-.211.224l-.29 1.106c-.168.646-.715 1.196-1.458 1.26a8.006 8.006 0 0 1-1.402 0c-.743-.064-1.289-.614-1.458-1.26l-.289-1.106c-.018-.066-.079-.158-.212-.224a5.738 5.738 0 0 1-.668-.386c-.123-.082-.233-.09-.299-.071l-1.103.303c-.644.176-1.392-.021-1.82-.63a8.12 8.12 0 0 1-.704-1.218c-.315-.675-.111-1.422.363-1.891l.815-.806c.05-.048.098-.147.088-.294a6.214 6.214 0 0 1 0-.772c.01-.147-.038-.246-.088-.294l-.815-.806C.635 6.045.431 5.298.746 4.623a7.92 7.92 0 0 1 .704-1.217c.428-.61 1.176-.807 1.82-.63l1.102.302c.067.019.177.011.3-.071.214-.143.437-.272.668-.386.133-.066.194-.158.211-.224l.29-1.106C6.009.645 6.556.095 7.299.03 7.53.01 7.764 0 8 0Zm3 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM9.5 8a1.5 1.5 0 1 0-3.001.001A1.5 1.5 0 0 0 9.5 8Z"/></svg>Settings</a>
+        <a class="page-tab" href="../tasks/tasks.html"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.75 2.5h8.5a.75.75 0 0 1 0 1.5h-8.5a.75.75 0 0 1 0-1.5Zm0 5h8.5a.75.75 0 0 1 0 1.5h-8.5a.75.75 0 0 1 0-1.5Zm0 5h8.5a.75.75 0 0 1 0 1.5h-8.5a.75.75 0 0 1 0-1.5ZM2 14a1 1 0 1 1 0-2 1 1 0 0 1 0 2Zm1-6a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM2 4a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/></svg>Top tasks</a>
+        <a class="page-tab" href="../reports/reports.html" aria-current="page"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 1.75V13.5h13.75a.75.75 0 0 1 0 1.5H.75a.75.75 0 0 1-.75-.75V1.75a.75.75 0 0 1 1.5 0Zm14.28 2.53-5.25 5.25a.75.75 0 0 1-1.06 0L7 7.06 4.28 9.78a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042l3.25-3.25a.75.75 0 0 1 1.06 0L10 7.94l4.72-4.72a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042Z"/></svg>Reports</a>
+        <a class="page-tab" href="../times/times.html"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m.427 1.927 1.215 1.215a8.002 8.002 0 1 1-1.6 5.685.75.75 0 1 1 1.493-.154 6.5 6.5 0 1 0 1.18-4.458l1.358 1.358A.25.25 0 0 1 3.896 6H.25A.25.25 0 0 1 0 5.75V2.104a.25.25 0 0 1 .427-.177ZM7.75 4a.75.75 0 0 1 .75.75v2.992l2.028.812a.75.75 0 0 1-.557 1.392l-2.5-1A.751.751 0 0 1 7 8.25v-3.5A.75.75 0 0 1 7.75 4Z"/></svg>Activity</a>
+        <a class="page-tab" href="../options/options.html"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0a8.2 8.2 0 0 1 .701.031C9.444.095 9.99.645 10.16 1.29l.288 1.107c.018.066.079.158.212.224.231.114.454.243.668.386.123.082.233.09.299.071l1.103-.303c.644-.176 1.392.021 1.82.63.27.385.506.792.704 1.218.315.675.111 1.422-.364 1.891l-.814.806c-.049.048-.098.147-.088.294.016.257.016.515 0 .772-.01.147.038.246.088.294l.814.806c.475.469.679 1.216.364 1.891a7.977 7.977 0 0 1-.704 1.217c-.428.61-1.176.807-1.82.63l-1.102-.302c-.067-.019-.177-.011-.3.071a5.909 5.909 0 0 1-.668.386c-.133.066-.194.158-.211.224l-.29 1.106c-.168.646-.715 1.196-1.458 1.26a8.006 8.006 0 0 1-1.402 0c-.743-.064-1.289-.614-1.458-1.26l-.289-1.106c-.018-.066-.079-.158-.212-.224a5.738 5.738 0 0 1-.668-.386c-.123-.082-.233-.09-.299-.071l-1.103.303c-.644.176-1.392-.021-1.82-.63a8.12 8.12 0 0 1-.704-1.218c-.315-.675-.111-1.422.363-1.891l.815-.806c.05-.048.098-.147.088-.294a6.214 6.214 0 0 1 0-.772c.01-.147-.038-.246-.088-.294l-.815-.806C.635 6.045.431 5.298.746 4.623a7.92 7.92 0 0 1 .704-1.217c.428-.61 1.176-.807 1.82-.63l1.102.302c.067.019.177.011.3-.071.214-.143.437-.272.668-.386.133-.066.194-.158.211-.224l.29-1.106C6.009.645 6.556.095 7.299.03 7.53.01 7.764 0 8 0Zm-.571 1.525c-.036.003-.108.036-.137.146l-.289 1.105c-.147.561-.549.967-.998 1.189-.173.086-.34.183-.5.29-.417.278-.97.423-1.529.27l-1.103-.303c-.109-.03-.175.016-.195.045-.22.312-.412.644-.573.99-.014.031-.021.11.059.19l.815.806c.411.406.562.957.53 1.456a4.709 4.709 0 0 0 0 .582c.032.499-.119 1.05-.53 1.456l-.815.806c-.081.08-.073.159-.059.19.162.346.353.677.573.989.02.03.085.076.195.046l1.102-.303c.56-.153 1.113-.008 1.53.27.161.107.328.204.501.29.447.222.85.629.997 1.189l.289 1.105c.029.109.101.143.137.146a6.6 6.6 0 0 0 1.142 0c.036-.003.108-.036.137-.146l.289-1.105c.147-.561.549-.967.998-1.189.173-.086.34-.183.5-.29.417-.278.97-.423 1.529-.27l1.103.303c.109.029.175-.016.195-.045.22-.313.411-.644.573-.99.014-.031.021-.11-.059-.19l-.815-.806c-.411-.406-.562-.957-.53-1.456a4.709 4.709 0 0 0 0-.582c-.032-.499.119-1.05.53-1.456l.815-.806c.081-.08.073-.159.059-.19a6.464 6.464 0 0 0-.573-.989c-.02-.03-.085-.076-.195-.046l-1.102.303c-.56.153-1.113.008-1.53-.27a4.44 4.44 0 0 0-.501-.29c-.447-.222-.85-.629-.997-1.189l-.289-1.105c-.029-.11-.101-.143-.137-.146a6.6 6.6 0 0 0-1.142 0ZM11 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM9.5 8a1.5 1.5 0 1 0-3.001.001A1.5 1.5 0 0 0 9.5 8Z"/></svg>Settings</a>
       </div>
-      <div class="page-tab-actions"><button class="page-theme-toggle" type="button" aria-label="Switch theme" title="Switch theme"><svg class="page-theme-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><svg class="page-theme-moon" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.263 7.284 7.285 7.284.646 0 1.27-.084 1.865-.239a.768.768 0 0 1 .858.081.8.8 0 0 1-.023 1.198A8.07 8.07 0 0 1 8 16C3.58 16 0 12.418 0 8c0-3.136 1.805-5.85 4.432-7.162A.8.8 0 0 1 6 .278Z" fill="currentColor"/></svg></button></div>
+      <div class="page-tab-actions">
+        <div id="loading" class="loading-notice" role="status" aria-live="polite">
+          <strong id="loading-label">Loading time data…</strong>
+          <span id="loading-detail" class="visually-hidden">This can take a moment for larger repositories.</span>
+          <progress id="loading-progress" max="100" aria-label="Report loading progress">Loading reports…</progress>
+        </div>
+        <button class="page-theme-toggle" type="button" aria-label="Switch theme" title="Switch theme"><svg class="page-theme-sun" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 12a4 4 0 1 1 0-8 4 4 0 0 1 0 8Zm0-1.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Zm5.657-8.157a.75.75 0 0 1 0 1.061l-1.061 1.06a.749.749 0 0 1-1.275-.326.749.749 0 0 1 .215-.734l1.06-1.06a.75.75 0 0 1 1.06 0Zm-9.193 9.193a.75.75 0 0 1 0 1.06l-1.06 1.061a.75.75 0 1 1-1.061-1.06l1.06-1.061a.75.75 0 0 1 1.061 0ZM8 0a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0V.75A.75.75 0 0 1 8 0ZM3 8a.75.75 0 0 1-.75.75H.75a.75.75 0 0 1 0-1.5h1.5A.75.75 0 0 1 3 8Zm13 0a.75.75 0 0 1-.75.75h-1.5a.75.75 0 0 1 0-1.5h1.5A.75.75 0 0 1 16 8Zm-8 5a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0v-1.5A.75.75 0 0 1 8 13Zm3.536-1.464a.75.75 0 0 1 1.06 0l1.061 1.06a.75.75 0 0 1-1.06 1.061l-1.061-1.06a.75.75 0 0 1 0-1.061ZM2.343 2.343a.75.75 0 0 1 1.061 0l1.06 1.061a.751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018l-1.06-1.06a.75.75 0 0 1 0-1.06Z"/></svg><svg class="page-theme-moon" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.598 1.591a.749.749 0 0 1 .785-.175 7.001 7.001 0 1 1-8.967 8.967.75.75 0 0 1 .961-.96 5.5 5.5 0 0 0 7.046-7.046.75.75 0 0 1 .175-.786Zm1.616 1.945a7 7 0 0 1-7.678 7.678 5.499 5.499 0 1 0 7.678-7.678Z"/></svg></button>
+      </div>
     
     </nav>
   </div>
@@ -31,7 +39,7 @@
       <div class="period-picker">
         <h2 id="period-heading">Reporting period</h2>
         <button id="period-trigger" class="button" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="period-popover">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 0v2H2a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1h-2V0h-1v2H5V0H4ZM2 6h12v8H2V6Zm0-3h12v2H2V3Z"/></svg>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.75 0a.75.75 0 0 1 .75.75V2h5V.75a.75.75 0 0 1 1.5 0V2h1.25c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 13.25 16H2.75A1.75 1.75 0 0 1 1 14.25V3.75C1 2.784 1.784 2 2.75 2H4V.75A.75.75 0 0 1 4.75 0ZM2.5 7.5v6.75c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25V7.5Zm10.75-4H2.75a.25.25 0 0 0-.25.25V6h11V3.75a.25.25 0 0 0-.25-.25Z"/></svg>
           <span id="period-label">Last week</span>
         </button>
         <div id="period-popover" role="dialog" aria-labelledby="period-heading" hidden>
@@ -55,9 +63,9 @@
               <label>End <input id="end-date" type="date" required></label>
             </div>
             <div class="calendar-heading">
-              <button id="calendar-previous" class="text-button" type="button" aria-label="Previous month">‹</button>
+              <button id="calendar-previous" class="text-button" type="button" aria-label="Previous month"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.78 12.78a.75.75 0 0 1-1.06 0L4.47 8.53a.75.75 0 0 1 0-1.06l4.25-4.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042L6.06 8l3.72 3.72a.75.75 0 0 1 0 1.06Z"/></svg></button>
               <span id="calendar-month" aria-live="polite"></span>
-              <button id="calendar-next" class="text-button" type="button" aria-label="Next month">›</button>
+              <button id="calendar-next" class="text-button" type="button" aria-label="Next month"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z"/></svg></button>
             </div>
             <div role="grid" aria-labelledby="calendar-month">
               <div class="calendar-weekdays" role="row">
@@ -74,11 +82,11 @@
       </div>
       <div class="export-controls" aria-label="Timesheet downloads">
         <a id="download-csv" class="export-link disabled" aria-disabled="true" href="#" aria-label="Download CSV timesheet">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 1.75A1.75 1.75 0 0 1 4.75 0h4.69c.46 0 .9.18 1.23.51l2.82 2.82c.33.33.51.77.51 1.23v9.69A1.75 1.75 0 0 1 12.25 16h-7.5A1.75 1.75 0 0 1 3 14.25V1.75Zm1.5 0v12.5c0 .14.11.25.25.25h7.5c.14 0 .25-.11.25-.25V5H9.75A1.75 1.75 0 0 1 8 3.25V1.5H4.75a.25.25 0 0 0-.25.25ZM9.5 1.56v1.69c0 .14.11.25.25.25h1.69L9.5 1.56Z"/></svg>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0 1 14.25 16H1.75A1.75 1.75 0 0 1 0 14.25ZM6.5 6.5v8h7.75a.25.25 0 0 0 .25-.25V6.5Zm8-1.5V1.75a.25.25 0 0 0-.25-.25H6.5V5Zm-13 1.5v7.75c0 .138.112.25.25.25H5v-8ZM5 5V1.5H1.75a.25.25 0 0 0-.25.25V5Z"/></svg>
           <span>CSV</span>
         </a>
         <a id="download-json" class="export-link disabled" aria-disabled="true" href="#" aria-label="Download JSON timesheet">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.25 1.5A2.25 2.25 0 0 0 3 3.75v2c0 .83-.67 1.5-1.5 1.5a.75.75 0 0 0 0 1.5c.83 0 1.5.67 1.5 1.5v2a2.25 2.25 0 0 0 2.25 2.25H6a.75.75 0 0 0 0-1.5h-.75a.75.75 0 0 1-.75-.75v-2A3 3 0 0 0 3.63 8 3 3 0 0 0 4.5 5.75v-2A.75.75 0 0 1 5.25 3H6a.75.75 0 0 0 0-1.5h-.75Zm5.5 0A2.25 2.25 0 0 1 13 3.75v2c0 .83.67 1.5 1.5 1.5a.75.75 0 0 1 0 1.5c-.83 0-1.5.67-1.5 1.5v2a2.25 2.25 0 0 1-2.25 2.25H10a.75.75 0 0 1 0-1.5h.75a.75.75 0 0 0 .75-.75v-2A3 3 0 0 1 12.37 8a3 3 0 0 1-.87-2.25v-2a.75.75 0 0 0-.75-.75H10a.75.75 0 0 1 0-1.5h.75Z"/></svg>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.75C4 .784 4.784 0 5.75 0h5.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v8.586A1.75 1.75 0 0 1 14.25 15h-9a.75.75 0 0 1 0-1.5h9a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 10 4.25V1.5H5.75a.25.25 0 0 0-.25.25v2.5a.75.75 0 0 1-1.5 0Zm1.72 4.97a.75.75 0 0 1 1.06 0l2 2a.75.75 0 0 1 0 1.06l-2 2a.749.749 0 0 1-1.275-.326.749.749 0 0 1 .215-.734l1.47-1.47-1.47-1.47a.75.75 0 0 1 0-1.06ZM3.28 7.78 1.81 9.25l1.47 1.47a.751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018l-2-2a.75.75 0 0 1 0-1.06l2-2a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042Zm8.22-6.218V4.25c0 .138.112.25.25.25h2.688l-.011-.013-2.914-2.914-.013-.011Z"/></svg>
           <span>JSON</span>
         </a>
         <a id="download-pdf" class="export-link disabled" aria-disabled="true" href="#" aria-label="Download PDF timesheet">
@@ -90,7 +98,7 @@
           <span>Print</span>
         </a>
         <a id="create-invoice" class="export-link disabled" aria-disabled="true" href="#" aria-label="Create invoice">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.75 0A1.75 1.75 0 0 0 2 1.75v12.5C2 15.216 2.784 16 3.75 16h8.5A1.75 1.75 0 0 0 14 14.25V4.56c0-.46-.18-.9-.51-1.23L10.67.51A1.74 1.74 0 0 0 9.44 0H3.75ZM3.5 1.75a.25.25 0 0 1 .25-.25H9v2.75C9 5.216 9.784 6 10.75 6h1.75v8.25a.25.25 0 0 1-.25.25h-8.5a.25.25 0 0 1-.25-.25V1.75Zm7 .81 1.94 1.94h-1.69a.25.25 0 0 1-.25-.25V2.56ZM5 8.25a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 0 1.5h-4.5A.75.75 0 0 1 5 8.25Zm0 3a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1-.75-.75Z"/></svg>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M0 3.75C0 2.784.784 2 1.75 2h12.5c.966 0 1.75.784 1.75 1.75v8.5A1.75 1.75 0 0 1 14.25 14H1.75A1.75 1.75 0 0 1 0 12.25Zm1.75-.25a.25.25 0 0 0-.25.25v8.5c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25v-8.5a.25.25 0 0 0-.25-.25ZM3.5 6.25a.75.75 0 0 1 .75-.75h7a.75.75 0 0 1 0 1.5h-7a.75.75 0 0 1-.75-.75Zm.75 2.25h4a.75.75 0 0 1 0 1.5h-4a.75.75 0 0 1 0-1.5Z"/></svg>
           <span>Create invoice</span>
         </a>
       </div>
@@ -101,6 +109,7 @@
       <div class="invoice-controls">
         <p id="invoice-billing-period" class="invoice-billing-period" role="status" aria-live="polite"></p>
         <label>Client<select id="invoice-client"><option value="">No client</option></select></label>
+        <label>Bank details<select id="invoice-bank-account"><option value="">No bank details</option></select></label>
         <label>Currency<select id="invoice-currency"></select></label>
         <label>Group lines by<select id="invoice-group-by"><option value="task" selected>Task</option><option value="day">Day and task</option></select></label>
         <label>Issue date<input id="invoice-issue-date" type="date" required></label>
@@ -115,6 +124,7 @@
         <p class="muted">Amounts use the invoice currency. Enter a negative amount for a discount.</p>
         <div id="invoice-extra-lines"></div>
         <button id="invoice-add-line" class="button secondary" type="button">Add line</button>
+        <p id="invoice-extra-hint" class="invoice-extra-hint muted" role="status" hidden>Complete or remove unfinished additional lines before printing or saving.</p>
       </div>
       <p id="invoice-feedback" class="invoice-feedback" role="alert"></p>
       <section class="invoice-preview-region" aria-labelledby="invoice-preview-title">
@@ -129,16 +139,15 @@
 
     <div id="error" class="notice error" role="alert" hidden></div>
     <div id="partial-status" class="notice" role="status" hidden></div>
-    <div id="loading" class="notice loading-notice" role="status" aria-live="polite">
-      <div class="loading-copy"><strong id="loading-label">Loading time data…</strong><span id="loading-detail" class="muted">This can take a moment for larger repositories.</span></div>
-      <progress id="loading-progress" max="100">Loading reports…</progress>
-    </div>
     <div id="setup" class="notice" hidden>
       Choose where Clockoli should save your time before opening reports.
       <button id="setup-settings" class="button primary" type="button">Set up Clockoli</button>
     </div>
 
     <section id="report-content" hidden>
+      <div id="pending-status" class="notice" role="status" aria-live="polite" hidden>
+        <span id="pending-message"></span> <a id="pending-activity" href="../times/times.html">Review in Activity</a>
+      </div>
       <div class="report-summary" aria-label="Report summary">
         <div class="summary-totals">
           <strong id="summary-time">0m</strong>
@@ -161,6 +170,17 @@
 
       <div id="reports-layout" class="reports-layout">
         <aside class="filters card" aria-label="Report filters">
+          <section>
+            <div class="section-heading"><h2>Client</h2></div>
+            <label class="muted" for="report-client-filter">Show work for</label>
+            <select id="report-client-filter" aria-label="Filter by client"><option value="">All clients</option></select>
+          </section>
+          <section>
+            <div class="section-heading"><h2>Billable rates</h2></div>
+            <label class="muted" for="rate-client">Calculate amounts using</label>
+            <select id="rate-client" aria-label="Client rate card"><option value="__project__">Each project's client</option></select>
+            <p class="muted">Rates stay in this browser. Select a client to evaluate all visible work using that client's rates.</p>
+          </section>
           <section>
             <div class="section-heading"><h2>People</h2><button id="people-all" class="text-button" type="button">Select all</button></div>
             <input id="people-search" class="facet-search" type="search" placeholder="Search people" aria-label="Search people">
@@ -187,8 +207,9 @@
           <section id="analytics-card" class="card analytics-card" aria-label="Analytics chart">
             <div id="chart-options" class="chart-options" aria-label="Chart configuration">
               <div class="chart-top-controls">
-                  <label class="axis-select metric-select"><span class="visually-hidden">Vertical axis</span>
-                    <select id="metric" aria-label="Vertical axis">
+                  <label class="axis-select axis-chip metric-select" title="Y axis: measured value">
+                    <span class="axis-chip-direction" aria-hidden="true">↑</span><span class="axis-chip-prefix" aria-hidden="true">Y:</span>
+                    <select id="metric" aria-label="Y axis: measured value">
                       <option value="total-time" selected>Total time</option>
                       <option value="avg-time">Avg time</option>
                       <option value="billable-amount">Billable amount</option>
@@ -212,8 +233,9 @@
               </div>
             </div>
             <div id="analytics-chart" class="chart" aria-live="polite"></div>
-            <label class="axis-select horizontal-axis-select"><span class="visually-hidden">Horizontal axis</span>
-              <select id="horizontal-axis" aria-label="Horizontal axis">
+            <label class="axis-select axis-chip horizontal-axis-select" title="X axis: group by">
+              <span class="axis-chip-direction" aria-hidden="true">→</span><span class="axis-chip-prefix" aria-hidden="true">X:</span>
+              <select id="horizontal-axis" aria-label="X axis: group by">
                 <option value="day" selected>Day</option>
                 <option value="week">Week</option>
                 <option value="month">Month</option>
@@ -236,7 +258,7 @@
   <script src="../ui/instant-tooltips.js"></script>
   <script src="../domain/recovery-actions.js"></script>
   <script src="../vendor/html2pdf.bundle.min.js"></script>
-  <script type="module" src="../ui/interface-width.js"></script>
+  <script type="module" src="../ui/pending-navigation.js"></script>
   <script type="module" src="reports.js"></script>
 </body>
 </html>

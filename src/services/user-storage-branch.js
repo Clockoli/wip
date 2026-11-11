@@ -65,23 +65,42 @@ export async function ensureUserStorageBranch(github, user, sourceBranch) {
   return { branch, github: branchGithub };
 }
 
-export async function discoverUserStorageBranches(github, { signal, concurrency = 6 } = {}) {
-  const branches = await github.listBranches(USER_BRANCH_PREFIX, { signal });
+export async function discoverUserStorageBranches(github, { signal, concurrency = 6, cache = null } = {}) {
+  // Task search needs the commit SHA once per repository. Other callers keep
+  // their existing branch discovery and metadata verification behavior.
+  const heads = cache && typeof github.listBranchesWithSha === 'function'
+    ? await github.listBranchesWithSha(USER_BRANCH_PREFIX, { signal })
+    : (await github.listBranches(USER_BRANCH_PREFIX, { signal })).map(branch => ({ branch, headSha: null }));
   const limit = Math.min(12, Math.max(1, Number(concurrency) || 6));
   const users = [];
-  for (let offset = 0; offset < branches.length; offset += limit) {
+  for (let offset = 0; offset < heads.length; offset += limit) {
     signal?.throwIfAborted();
     const controller = new AbortController();
     const abortFromParent = () => controller.abort(signal.reason);
     signal?.addEventListener('abort', abortFromParent, { once: true });
     let firstError = null;
-    const settled = await Promise.allSettled(branches.slice(offset, offset + limit).map(async branch => {
+    const settled = await Promise.allSettled(heads.slice(offset, offset + limit).map(async ({ branch, headSha }) => {
       const branchGithub = github.forBranch(branch, 'custom');
       try {
-        const file = await readUserMetadata(branchGithub, { signal: controller.signal });
-        const user = parseUserBranchMetadata(file.text);
+        let user = null;
+        if (headSha && cache?.getReportCache) {
+          const previous = (await cache.getReportCache(branchGithub.repositoryKey))?.catalog;
+          if (previous?.headSha === headSha) {
+            try {
+              user = parseUserBranchMetadata(JSON.stringify({
+                version: 1, githubUserId: previous.user?.id, storageLogin: previous.user?.login,
+              }));
+            } catch { /* An unverified cache entry must never skip GitHub ownership checks. */ }
+          }
+        }
+        if (!user) {
+          const file = await readUserMetadata(branchGithub, {
+            signal: controller.signal, ...(headSha ? { ref: headSha } : {}),
+          });
+          user = parseUserBranchMetadata(file.text);
+        }
         if (branch !== userStorageBranch(user.id)) throw new Error('Clockoli user branch name does not match its stable GitHub identity');
-        return { ...user, branch, github: branchGithub };
+        return { ...user, branch, github: branchGithub, ...(headSha ? { headSha } : {}) };
       } catch (error) {
         if (!notFound(error)) throw error;
         // Ignore branch names from pre-release experiments that do not carry the

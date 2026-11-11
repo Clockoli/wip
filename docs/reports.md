@@ -2,9 +2,11 @@
 
 Filter tracked time by period, person, project, and source, chart it, and export CSV, JSON, or PDF timesheets.
 
-Reports combines tracked time from selected or all time repositories, including teammates' personal branches you can read. Open it from the toolbar panel navigation or the GitHub split-menu arrow.
+Reports combines tracked time from selected or all time repositories, including teammates' personal branches you can read. Open it from Clockoli's page navigation.
 
 Reports includes records whose Start date falls in the selected inclusive range.
+
+On a return visit, Reports shows the last locally saved result for the same local/UTC basis and restores its date range while refreshing it from GitHub. A compact progress indicator appears at the right side of the top navigation; the previous report remains visible. Cached totals may be out of date; exports and invoices stay unavailable until a successful fresh read. If refresh fails, the previous result remains visible for reference, with export and invoicing still blocked. Changing the period or basis loads the requested data rather than presenting a different period as current.
 
 ## Choose a period
 
@@ -38,9 +40,11 @@ The summary shows:
 - people count;
 - source count.
 
-Filter by People, Projects, Task sources, and Time repositories. For a GitHub issue or pull request, the **Task source** is `owner/repository`; for another URL it is the hostname. The **Time repository** is the destination that stores the record.
+Filter by Client, People, Projects, Task sources, and Time repositories. Client filters use project-client assignments from this browser's local settings. Select **All clients** or **Unassigned** if needed. For a GitHub issue or pull request, the **Task source** is `owner/repository`; for another URL it is the hostname. The **Time repository** is the destination that stores the record.
 
 ## Charts
+
+Compact controls beside the graph's axes clarify what each dropdown changes: **Y: Total time** selects the metric measured vertically; **X: Day** selects the horizontal grouping. **Stack by** independently controls the colored segments.
 
 Choose one vertical metric:
 
@@ -61,7 +65,7 @@ Choose independent horizontal and stack dimensions:
 
 The analytics are calculated for the chart; the data table's rows are rendered only when expanded, which keeps large reports responsive.
 
-Billable amounts need [billable rates](billable-rates.md). When a report contains more than one currency, Reports offers a currency selector for billable charts and converts amounts by day.
+Billable amounts need [client-specific billable rates](billable-rates.md). Choose **Calculate amounts using** to evaluate all visible work using one selected client's rates, or use **Each project's client** to choose the rate card based on the work's project. There are no global rate fallbacks. When a report contains more than one currency, Reports offers a currency selector for billable charts and converts amounts by day.
 
 ## Export a timesheet
 
@@ -80,6 +84,8 @@ To bill a client, use **Create invoice**; see [Invoicing](invoicing.md).
 Each destination is loaded independently. If one fails, Clockoli keeps records from the repositories that loaded, marks the result partial, and identifies the unavailable destinations. Conflicting copies of the same record ID are omitted and also make the result partial.
 
 While the selected data is partial, Clockoli disables CSV, JSON, and print/PDF timesheet exports. Invoice creation may still be available for the filtered records: confirm that every intended repository loaded before printing an invoice.
+
+If local operations are waiting to sync, Reports warns that its displayed totals are **GitHub-only**: local changes are not included, even if the report has no entries or filters hide them. Routine pending work does not display a queue count or Activity review link. If a conflict needs review, Reports shows the queue count and conflict, and the Activity navigation tab marks it across standalone pages. Follow **Review in Activity** to inspect the original and proposed entries and jump directly to an older affected week in List, Timeline, or Calendar. Before exporting or printing, Reports rechecks local changes and refuses the action if synchronization is pending or cannot be verified. Timesheet exports and invoice creation, printing, and PDF saving are unavailable while local operations remain pending; load Reports again after they sync. A remote-only partial read still permits invoice creation for the filtered records as described above.
 
 ## How Reports reads repositories
 

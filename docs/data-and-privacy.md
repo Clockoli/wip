@@ -48,6 +48,8 @@ Clockoli uses extension-origin IndexedDB for:
 
 GitHub page JavaScript and content scripts do not receive credentials or raw local billing settings. Durable local data remains in extension-origin IndexedDB, and the extension does not request the `storage` permission.
 
+The browser's `tabs` permission lets the toolbar identify an already-open Clockoli Activity tab and focus it instead of opening duplicates. Tab URLs are checked locally for that exact extension page and are not sent to GitHub.
+
 ## Time-repository and branch layout
 
 Each time repository's default branch owns its shared marker:
@@ -77,7 +79,7 @@ Routine Start, Stop, Edit, and Delete operations use the personal branch. Comple
 
 ## Data format v1
 
-Clockoli supports one persistent data format. It does not read or migrate any earlier pre-release representation.
+Clockoli stores work records in its documented persistent data format.
 
 An active file is one JSON object. A monthly file is JSON Lines with one compact completed record per non-empty line. Each record includes:
 
@@ -184,17 +186,17 @@ Hourly rates and their currency signs or descriptions stay in extension-local In
 
 Billable money uses integer minor units and tracked seconds. Clockoli aggregates before final rounding to avoid accumulating per-record rounding errors.
 
-The settings JSON backup can include rates and invoicing details, so protect that user-requested download according to the sensitivity of your rate card and customer data.
+The settings JSON backup can include rates, client details, and bank payment instructions, so protect that user-requested download as sensitive financial data.
 
 ## Invoice privacy
 
-Invoices are generated locally in the browser from time records read from the repository and invoicing settings held in extension-local IndexedDB. Hourly rates, computed amounts, seller details, and client details never leave the browser.
+Invoices are generated locally in the browser from time records read from the repository and invoicing settings held in extension-local IndexedDB. Hourly rates, computed amounts, your business details, client details, and bank payment instructions are not sent to GitHub. Printing or downloading an invoice includes the bank details selected for that invoice.
 
 An invoice exists only as the on-screen preview and as a file the user prints or downloads. Clockoli does not archive invoices, and no invoice or invoice number is ever written to the time-data repository.
 
 ## Settings backup exclusions
 
-A version 6 settings export includes local display and billing preferences plus credential-free destination references, the exported default destination, and project routing. It excludes:
+Settings backups include local display preferences, client-specific rate cards, invoice details, credential-free destination references, and project routing. They exclude:
 
 - access and refresh tokens;
 - personal access tokens;

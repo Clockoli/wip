@@ -9,5 +9,5 @@ test('functional browser suites do not launch visible Chromium windows', () => {
     const source = read(`test/${file}`);
     assert.equal(/headless\s*:\s*false\b/.test(source), false, `${file} must run headless`);
   }
-  assert.match(read('packages/task-timeline-component/playwright.config.js'), /headless:\s*true\b/);
+  assert.match(read('test/basic-browser.functional.spec.js'), /headless:\s*true\b/);
 });

@@ -25,8 +25,7 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm test
-      - run: xvfb-run -a npm run test:options:functional
-      - run: xvfb-run -a npm run test:activity:functional
+      - run: npm run test:browser
       - run: npm run check
       - name: Verify Corresponding Source archive
         run: |
@@ -139,3 +138,41 @@ jobs:
         run: |
           VERSION="$(node -p "JSON.parse(require('fs').readFileSync('manifest.json', 'utf8')).version")"
           test -f "$RUNNER_TEMP/safari/Clockoli-$VERSION-safari-unsigned.zip"
+
+  private-regressions:
+    name: private-regressions
+    needs: test
+    if: >-
+      github.repository == 'Clockoli/wip' &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'pull_request' && github.base_ref == 'main' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.user.login != 'dependabot[bot]'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check out the private test suite
+        uses: actions/checkout@v4
+        with:
+          repository: Clockoli/tests
+          path: test-private
+          token: ${{ secrets.PRIVATE_TESTS_READ_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Run private regressions without exposing test names
+        run: |
+          if npm run test:private > "$RUNNER_TEMP/private-regressions.log" 2>&1; then
+            echo 'Private regressions passed'
+          else
+            echo '::error::Private regressions failed; run npm run test:private locally for details.'
+            exit 1
+          fi

@@ -6,7 +6,7 @@ import {
 } from '../config/github-app.js';
 import { activeRecordPath } from '../domain/work-records.js';
 import { createUlid } from '../domain/ulid.js';
-import { normalizeTaskUrl, taskUrlOf } from '../domain/values.js';
+import { isUrlTaskIdentity, normalizeTaskUrl, parseGitHubProjectPaneIssueUrl, taskUrlOf } from '../domain/values.js';
 import { aggregateTaskParticipants, aggregateTrackedTasks } from '../domain/tasks.js';
 import { ChromeStore } from '../storage/chrome-store.js';
 import { IndexedDbBackend } from '../storage/chrome-store.js';
@@ -27,18 +27,19 @@ import '../services/clockify-identity-mapping.js';
 import '../services/clockify-import-cleanup.js';
 import { importClockifyOrganization } from '../services/clockify-organization-import.js';
 import '../services/clockify-record-import.js';
-import { TrackerService } from '../services/tracker.js';
+import { independentCompletedWrite, TrackerService } from '../services/tracker.js';
 import { ConfigurationService } from '../services/configuration.js';
 import { annotateDestinationRecord, loadDestinationRecords, mergeDestinationRecords, mergeDestinationTaskSummaries, ReportService, withoutInternalMetadata } from '../services/reports.js';
 import { ExchangeRateService } from '../services/exchange-rates.js';
 import { TaskMetadataService } from '../services/task-metadata.js';
 import { mergeTaskCatalogIndexes, taskCandidates } from '../services/task-catalog.js';
 import { InstallationDiscoveryService, RepositoryInitializer } from '../services/github-app-onboarding.js';
+import { readyRepositoryMemberIds } from '../services/repository-team-status.js';
 import { OnboardingCoordinator } from '../services/onboarding-coordinator.js';
 import { RepositoryInvitationService } from '../services/repository-invitations.js';
 import { withRepositoryRecovery } from '../services/repository-operation-recovery.js';
 import { discoverUserStorageBranches } from '../services/user-storage-branch.js';
-import { addTimeForSender, assertMessageAllowed, destinationIdForCompletedMutation, requestedStartDestinationId, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch, weekRangeForSender } from './message-policy.js';
+import { addTimeForSender, assertMessageAllowed, cachedViewRequest, dayRangeForSender, destinationIdForCompletedMutation, entryTaskSearchForSender, requestedStartDestinationId, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch, weekRangeForSender } from './message-policy.js';
 import { activeDestinationId, requireConfiguredDestinationId, resolveStartDestinationId, selectReadDestinations, syncPendingAll } from './destination-runtime.js';
 import { emitClockifyMigrationProgress, isClockifyProgressRequestId, registerClockifyMigrationProgressPort } from './clockify-migration-progress.js';
 import { SerialExecutor } from './serial-executor.js';
@@ -54,6 +55,10 @@ let directCompletedWrites = 0;
 const destinationValidationCache = new Map();
 const STATIC_ACTION_ICON = { 16: 'src/assets/clockoli-16.png', 32: 'src/assets/clockoli-32.png' };
 const ACTION_ICON_FRAMES = 8;
+const ACTION_CONTEXT_KEY = 'clockoli-toolbar-task-context';
+const TOOLBAR_POPUP_PATH = 'src/popup/quick.html';
+// Reuse Clockoli's privileged IndexedDB; do not expand extension permissions.
+const actionContextBackend = new IndexedDbBackend();
 const currentCredentialProvider = new CredentialBroker({ clientId: GITHUB_APP_CLIENT_ID, store });
 const configuration = new ConfigurationService({
   store,
@@ -257,9 +262,9 @@ async function checkCurrentRepositoryAccess(destinationId = null) {
   };
 }
 
-async function repositoryInvitationService(destinationId, { measureMigration = false } = {}) {
+async function repositoryInvitationService(destinationId, { measureMigration = false, localOnly = false } = {}) {
   const id = await requireConfiguredDestinationId(store, destinationId);
-  const { config, auth } = await configuredSnapshot({ destinationId: id, measureMigration });
+  const { config, auth } = await configuredSnapshot({ destinationId: id, measureMigration, localOnly });
   if (!config || auth?.mode !== 'github_app' || !Number.isSafeInteger(config.repoId)) {
     throw new Error('Invite teammates only from a connected GitHub App time repository.');
   }
@@ -308,6 +313,33 @@ function emitReportProgress(requestId, progress) {
   try { chrome.runtime.sendMessage({ type: 'REPORT_PROGRESS', requestId, ...progress }, () => void chrome.runtime.lastError); } catch {}
 }
 
+function pageSnapshotScope(snapshot, range, kind) {
+  return { generation: snapshot.generation, authGeneration: snapshot.authGeneration,
+    startDate: range.startDate, endDate: range.endDate,
+    ...(kind === 'reports' ? { reportingUtc: range.reportingUtc === true } : {}) };
+}
+
+async function cachedPageView(message, sender, extensionOrigin) {
+  const { kind, range } = cachedViewRequest(message, sender, extensionOrigin);
+  const snapshot = await configuredSnapshot({ localOnly: true });
+  if (!snapshot.auth || !Object.keys(snapshot.registry?.destinations ?? {}).length) return null;
+  const view = await store.getPageSnapshot(kind, pageSnapshotScope(snapshot, range, kind), { allowDifferentRange: kind === 'reports' });
+  if (!view) return null;
+  if (kind === 'tasks') {
+    const local = await globalTrackerState();
+    return { ...view, active: local.active, pendingWrites: local.pendingWrites,
+      tasks: view.tasks.map(task => ({ ...task, activeStartedAt: task.taskUrl === local.active?.taskUrl
+        && (!task.destinationId || task.destinationId === local.active?.destinationId) ? local.active.startedAt : null })) };
+  }
+  const tracking = await store.getTrackingSnapshot();
+  const pendingWrites = Object.entries(tracking.destinationStates?.entries ?? {}).flatMap(([destinationId, entry]) =>
+    (entry.pendingWrites ?? []).map(({ operation, status, stage, conflictReason }) => ({
+      destinationId, operation, status, stage, ...(conflictReason ? { conflictReason } : {}),
+    })));
+  return { ...view, pendingWrites, pendingCount: pendingWrites.length,
+    partial: view.partial || pendingWrites.length > 0, billing: await store.getLocalPreferences() };
+}
+
 function broadcastLocalPreferencesChanged(revision) {
   try { chrome.runtime.sendMessage({ type: 'LOCAL_PREFERENCES_CHANGED', revision }, () => void chrome.runtime.lastError); }
   catch { /* no open extension surface */ }
@@ -326,6 +358,7 @@ async function loadExchangeRates(message) {
 }
 
 async function loadReport(message) {
+  const startedAt = Date.now();
   const loadEpoch = await loadCoordinator.beginLoad();
   await store.ensureDataVersion(5);
   loadCoordinator.assertCurrent(loadEpoch);
@@ -356,17 +389,30 @@ async function loadReport(message) {
     }, { signal: controller.signal });
     loadCoordinator.assertCurrent(loadEpoch);
     const users = [...new Set(Object.values(currentUsers).filter(Boolean))];
+    const tracking = await store.getTrackingSnapshot();
+    loadCoordinator.assertCurrent(loadEpoch);
+    const pendingWrites = destinations.flatMap(destination => (tracking.destinationStates?.entries?.[destination.id]?.pendingWrites ?? [])
+      .map(({ operation, status, stage, conflictReason }) => ({
+        destinationId: destination.id, operation, status, stage,
+        ...(conflictReason ? { conflictReason } : {}),
+      })));
     return {
       configured: true,
       sourceRepositories: destinations.map(destination => destination.label),
       currentUsers, currentUser: users[0] || '',
       ...loaded,
+      pendingWrites, pendingCount: pendingWrites.length, partial: loaded.partial || pendingWrites.length > 0,
       records: loaded.records.map(withoutInternalMetadata),
       billing: await store.getLocalPreferences(),
     };
   })();
   reportLoads.set(loadKey, { controller, promise });
-  try { return await promise; }
+  try {
+    const result = await promise;
+    if (result.configured && !message.payload?.destinationIds) await store.savePageSnapshot('reports', pageSnapshotScope(snapshot, message.payload || {}, 'reports'), result, startedAt)
+      .catch(() => { /* caching is optional; never discard a completed read */ });
+    return result;
+  }
   finally { if (reportLoads.get(loadKey)?.promise === promise) reportLoads.delete(loadKey); }
 }
 
@@ -460,7 +506,8 @@ async function loadTimes(message, sender) {
         : projected.records;
     }, { signal: controller.signal });
     loadCoordinator.assertCurrent(loadEpoch);
-    const pendingWrites = [...recoveries.entries()].flatMap(([destinationId, recovery]) => (recovery.pendingWrites || []).map(operation => safePendingProjection(operation, destinationId)));
+    const pendingWrites = [...recoveries.entries()].flatMap(([destinationId, recovery]) => (recovery.pendingWrites || [])
+      .map(operation => safePendingProjection(operation, destinationId, { includeDetails: true })));
     return {
       configured: true,
       recent: loaded.records.map(({ _record, ...record }) => record)
@@ -478,6 +525,7 @@ async function loadTimes(message, sender) {
 }
 
 async function loadTasks(message, sender) {
+  const startedAt = Date.now();
   const loadEpoch = await loadCoordinator.beginLoad();
   await store.ensureDataVersion(5);
   loadCoordinator.assertCurrent(loadEpoch);
@@ -550,11 +598,17 @@ async function loadTasks(message, sender) {
     };
   })();
   reportLoads.set(loadKey, { controller, promise });
-  try { return await promise; }
+  try {
+    const result = await promise;
+    if (result.configured && !message.payload?.destinationIds && !message.payload?.includeAllUsers && !message.payload?.selectedUsers)
+      await store.savePageSnapshot('tasks', pageSnapshotScope(snapshot, message.payload || {}, 'tasks'), result, startedAt)
+        .catch(() => { /* caching is optional; never discard a completed read */ });
+    return result;
+  }
   finally { if (reportLoads.get(loadKey)?.promise === promise) reportLoads.delete(loadKey); }
 }
 
-async function searchTasks(sender, query = '', { refresh = false } = {}) {
+async function searchTasks(sender, query = '', { refresh = false, includeImported = false } = {}) {
   const loadEpoch = await loadCoordinator.beginLoad();
   await store.ensureDataVersion(5); loadCoordinator.assertCurrent(loadEpoch);
   const snapshot = await configuredSnapshot({ localOnly: true }); loadCoordinator.assertCurrent(loadEpoch);
@@ -583,10 +637,19 @@ async function searchTasks(sender, query = '', { refresh = false } = {}) {
     const cacheDirty = await store.isTaskSearchDirty();
     const hasPending = destinations.some(destination =>
       tracking.destinationStates?.entries?.[destination.id]?.pendingWrites?.length);
-    const cached = searchText && !refresh && !hasPending ? await store.getTaskSearchCache?.(scope) : null;
+    const cached = searchText && !refresh ? await store.getTaskSearchCache?.(scope) : null;
     const cachedTasks = cached && taskCandidates(cached.indexTasks.map(task => ({ ...task, taskTitle: task.title })));
-    const hit = cachedTasks?.some(task => `${task.title} ${task.taskUrl}`.toLowerCase().includes(searchText));
-    const indexed = hit ? { indexTasks: cached.indexTasks, records: cachedTasks,
+    // Preserve imported identities internally for the explicitly scoped historical
+    // entry editor, but never return them in ordinary Add time / Top tasks search.
+    const searchable = tasks => includeImported ? tasks : tasks.filter(task => isUrlTaskIdentity(task.taskUrl));
+    const hit = cachedTasks && searchable(cachedTasks)
+      .some(task => `${task.title} ${task.taskUrl}`.toLowerCase().includes(searchText));
+    // A recent complete catalog also proves a miss: do not rescan every branch
+    // after each keystroke. Pending local changes are projected below.
+    const recent = cached && Number.isFinite(cached.refreshedAt)
+      && requestedAt >= cached.refreshedAt && requestedAt - cached.refreshedAt < 60_000;
+    const useCached = Boolean(hit || recent);
+    const indexed = useCached ? { indexTasks: cached.indexTasks, records: cachedTasks,
       readStatus: cached.readStatus, partial: false, conflicts: [], fallback: false }
       : await loadDestinationRecords(destinations, async (destination, signal) => {
         signal.throwIfAborted(); loadCoordinator.assertCurrent(loadEpoch);
@@ -598,9 +661,9 @@ async function searchTasks(sender, query = '', { refresh = false } = {}) {
       }, { signal: controller.signal, merge: mergeTaskCatalogIndexes });
     if (!indexed.fallback) {
       loadCoordinator.assertCurrent(loadEpoch);
-      if (!hit && !hasPending && !directCompletedWrites && (!cacheDirty || refresh)
+      if (!useCached && !hasPending && !directCompletedWrites && (!cacheDirty || refresh)
           && !indexed.partial && !indexed.conflicts.length) {
-        const saved = await store.saveTaskSearchCache?.({ version: 1, scope, refreshedAt: requestedAt, indexTasks: indexed.indexTasks,
+        const saved = await store.saveTaskSearchCache?.({ version: 2, scope, refreshedAt: requestedAt, indexTasks: indexed.indexTasks,
           readStatus: indexed.readStatus }, scope, cacheRevision);
         if (saved === false) throw new DOMException('Task search configuration changed.', 'AbortError');
         loadCoordinator.assertCurrent(loadEpoch);
@@ -625,14 +688,14 @@ async function searchTasks(sender, query = '', { refresh = false } = {}) {
             taskTitle: task.recordIds.some(id => replaced.get(task.destinationId)?.has(id))
               && (!task.titleSourceId || replaced.get(task.destinationId).has(task.titleSourceId)) ? '' : task.title,
             destinationId: task.destinationId, timeRepository: task.timeRepository }));
-        return { configured: true, tasks: taskCandidates([...cached, ...pending.records]),
+        return { configured: true, tasks: searchable(taskCandidates([...cached, ...pending.records])),
           readStatus: indexed.readStatus, partial: true, conflicts: [...indexed.conflicts, ...pending.conflicts],
           ...(pendingFailures.length ? { pendingProjectionUnavailable: true } : {}) };
       }
-      if (hit && await store.getTaskSearchRevision() !== cacheRevision) {
+      if (useCached && await store.getTaskSearchRevision() !== cacheRevision) {
         throw new DOMException('Task search changed during the read.', 'AbortError');
       }
-      return { configured: true, tasks: indexed.records, readStatus: indexed.readStatus,
+      return { configured: true, tasks: searchable(indexed.records), readStatus: indexed.readStatus,
         partial: indexed.partial, conflicts: indexed.conflicts };
     }
     const loaded = await loadDestinationRecords(destinations, async (destination, signal) => {
@@ -657,7 +720,7 @@ async function searchTasks(sender, query = '', { refresh = false } = {}) {
       rejectSameDestinationDuplicates: true,
     }) });
     loadCoordinator.assertCurrent(loadEpoch);
-    return { configured: true, tasks: taskCandidates(loaded.records),
+    return { configured: true, tasks: searchable(taskCandidates(loaded.records)),
       readStatus: loaded.readStatus, partial: loaded.partial, conflicts: loaded.conflicts };
   })().catch(error => {
       if (error?.code === 'all_destinations_failed'
@@ -693,13 +756,13 @@ const DIRECT_DEVICE_FLOW_MESSAGES = new Set([
 
 const READ_RETRY_MESSAGES = new Set([
   'LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'LOAD_TASKS', 'LOAD_TIMES', 'LOAD_RECENT', 'SEARCH_TASKS',
-  'GET_STATE', 'GET_PAGE_STATE', 'GET_REMOTE_TIMER_STATUS', 'GET_EXCHANGE_RATES', 'GET_ONBOARDING_STATE',
+  'GET_STATE', 'GET_PAGE_STATE', 'GET_STOPPED_OVERLAP', 'GET_EXCHANGE_RATES', 'GET_ONBOARDING_STATE',
   'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES',
 ]);
 
 const RECOVERABLE_REPOSITORY_MESSAGES = new Set([
   'LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'LOAD_TASKS', 'LOAD_TIMES', 'SEARCH_TASKS', 'GET_STATE', 'GET_PAGE_STATE', 'START', 'SWITCH_TASK', 'STOP', 'DISCARD_ACTIVE', 'SYNC',
-  'LOAD_RECENT', 'BULK_ADD_TIMES', 'ADD_TIME', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT', 'DELETE_ENTRY', 'RESOLVE_PENDING',
+  'LOAD_RECENT', 'BULK_ADD_TIMES', 'ADD_TIME', 'ADD_DAY_RANGE', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'RESOLVE_STOPPED_OVERLAP',
 ]);
 
 async function withCurrentRepositoryRecovery(message, operation) {
@@ -742,7 +805,43 @@ function safeActiveProjection(active, destinationId) {
   } : null;
 }
 
-function safePendingProjection(operation, destinationId) {
+function safeQueuedRecord(record) {
+  if (!record || typeof record !== 'object') return null;
+  const result = {};
+  if (typeof record.entryDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(record.entryDate)
+      && !Number.isNaN(Date.parse(`${record.entryDate}T00:00:00Z`))) result.entryDate = record.entryDate;
+  for (const field of ['startedAt', 'endedAt']) {
+    if (typeof record[field] === 'string' && Number.isFinite(Date.parse(record[field]))) result[field] = record[field];
+  }
+  if (typeof record.taskTitle === 'string') result.taskTitle = record.taskTitle.slice(0, 160);
+  if (typeof record.taskUrl === 'string') result.taskUrl = record.taskUrl.slice(0, 500);
+  return Object.keys(result).length ? result : null;
+}
+function queuedSubjects(operation) {
+  const type = operation.operation ?? operation.stage;
+  if (['startTimer', 'completeTimerAndStart'].includes(type)) {
+    const proposed = safeQueuedRecord(operation.nextActive);
+    return proposed ? [{ proposed }] : [];
+  }
+  const requests = ['editEntry', 'deleteEntry'].includes(type) ? [operation.request]
+    : type === 'editEntries' ? operation.request?.entries : null;
+  if (Array.isArray(requests)) return requests.slice(0, 50).flatMap(request => {
+    const original = safeQueuedRecord(request?.original);
+    if (!original) return [];
+    const proposed = type === 'deleteEntry' ? null : safeQueuedRecord({ ...request.original, ...request.edits });
+    const queuedMonth = /^times\/(\d{4}-\d{2})\/[^/]+\.jsonl$/.exec(request.path || '')?.[1];
+    const descriptionChanged = typeof request?.edits?.description === 'string'
+      && request.edits.description !== (request.original.description ?? '');
+    return [{ original, ...(proposed ? { proposed } : {}), ...(queuedMonth ? { queuedMonth } : {}),
+      ...(descriptionChanged ? { descriptionChanged: true } : {}) }];
+  });
+  const entries = type === 'bulkAddTimes' ? operation.entries : [operation.entry];
+  return (Array.isArray(entries) ? entries : []).slice(0, 50).flatMap(entry => {
+    const proposed = safeQueuedRecord(entry);
+    return proposed ? [{ proposed }] : [];
+  });
+}
+function safePendingProjection(operation, destinationId, { includeDetails = false } = {}) {
   const { id, status, stage, conflictReason, queuedAt, retryCount, lastError } = operation;
   const diagnostics = Array.isArray(operation.diagnostics) ? operation.diagnostics.slice(-60).flatMap(event => {
     const at = typeof event?.at === 'string' && !Number.isNaN(new Date(event.at).getTime()) ? event.at : null;
@@ -755,6 +854,10 @@ function safePendingProjection(operation, destinationId) {
     ...(conflictReason ? { conflictReason } : {}),
     ...(lastError ? { lastError: diagnosticError(lastError) } : {}),
     ...(diagnostics.length ? { diagnostics } : {}),
+    ...(includeDetails ? {
+      subjects: queuedSubjects(operation),
+      ...(safeQueuedRecord(operation.conflictWith) ? { conflictWith: safeQueuedRecord(operation.conflictWith) } : {}),
+    } : {}),
   };
 }
 
@@ -764,7 +867,7 @@ function destinationSaveConfirmed(state) {
   return state?.remoteWriteConfirmed === true || (!pending && !hasLocalRecord);
 }
 
-async function globalTrackerState({ refresh = false, includeSummary = false } = {}) {
+async function globalTrackerState({ refresh = false, includeSummary = false, includePendingDetails = false } = {}) {
   const snapshot = await configuredSnapshot({ localOnly: true });
   const destinationIds = Object.keys(snapshot.registry?.destinations ?? {});
   if (!snapshot.auth || !destinationIds.length) return { configured: false, active: null, recent: [], pendingWrites: [] };
@@ -787,7 +890,7 @@ async function globalTrackerState({ refresh = false, includeSummary = false } = 
     .map(entry => ({ ...entry, destinationId })))
     .sort((left, right) => new Date(right.startedAt) - new Date(left.startedAt)).slice(0, 50);
   const pendingWrites = [...states].flatMap(([destinationId, state]) => (state.pendingWrites ?? [])
-    .map(operation => safePendingProjection(operation, destinationId)));
+    .map(operation => safePendingProjection(operation, destinationId, { includeDetails: includePendingDetails })));
   const result = { configured: true, active, recent, pendingWrites };
   if (includeSummary) {
     const summaries = [...states.values()];
@@ -799,24 +902,6 @@ async function globalTrackerState({ refresh = false, includeSummary = false } = 
     result.remoteWriteConfirmed = !summaryError && summaries.every(destinationSaveConfirmed);
   }
   return result;
-}
-
-async function remoteTimerStatus() {
-  const snapshot = await configuredSnapshot({ localOnly: true });
-  const destinationIds = Object.keys(snapshot.registry?.destinations ?? {});
-  if (!snapshot.auth || !destinationIds.length) return { remoteTimers: [] };
-  const tracking = await store.getTrackingSnapshot();
-  const remoteTimers = [];
-  for (const destinationId of destinationIds) {
-    const tracker = await trackerForDestination(destinationId, { localOnly: true, persistUser: false });
-    const [remote, state] = await Promise.all([tracker.readRemoteActive(), tracker.getState()]);
-    const local = tracking.activeTimer?.destinationId === destinationId ? state.active : null;
-    if (remote && (remote.id !== local?.id || remote.startedAt !== local.startedAt
-        || taskUrlOf(remote) !== taskUrlOf(local))) {
-      remoteTimers.push({ destinationId, startedAt: remote.startedAt, timezone: remote.timezone });
-    }
-  }
-  return { remoteTimers };
 }
 
 async function loadRecentAcrossDestinations(message, sender, extensionOrigin) {
@@ -937,6 +1022,18 @@ async function handle(message, sender) {
   if (!message || typeof message.type !== 'string') throw new Error('Invalid extension message');
   const extensionOrigin = chrome.runtime.getURL('');
   assertMessageAllowed(message.type, sender, extensionOrigin);
+  if (message.type === 'CONSUME_TOOLBAR_TASK_CONTEXT') {
+    if (sender?.url !== chrome.runtime.getURL('src/times/times.html')) {
+      throw new Error('Only Activity can consume the toolbar task context');
+    }
+    return actionContextBackend.mutateMany([ACTION_CONTEXT_KEY], current => {
+      const present = Object.hasOwn(current, ACTION_CONTEXT_KEY);
+      return {
+        delete: present ? [ACTION_CONTEXT_KEY] : [],
+        result: { present, value: present ? current[ACTION_CONTEXT_KEY] : null },
+      };
+    });
+  }
   if (message.type === 'SET_ACTION_ICON_FRAME') {
     if (!Number.isInteger(sender?.tab?.id)) throw new Error('Action icon updates require a browser tab');
     const frame = message.frame;
@@ -956,7 +1053,17 @@ async function handle(message, sender) {
     await chrome.tabs.create({ url: chrome.runtime.getURL('src/tasks/tasks.html') }); return { ok: true };
   }
   if (message.type === 'OPEN_TIMES') {
-    await openTimesPage(); return { ok: true };
+    // The GitHub-injected button and the browser toolbar have identical tab behavior.
+    // Only use the browser-provided tab URL and title, never message-supplied task data.
+    const githubPage = sender?.tab && /^https:\/\/github\.com(?:\/|$)/.test(sender.url || '')
+      && /^https:\/\/github\.com(?:\/|$)/.test(sender.tab.url || '');
+    if (githubPage) await openActivityFromTab(sender.tab);
+    else await openTimesPage();
+    return { ok: true };
+  }
+  if (message.type === 'OPEN_PREFERRED_SURFACE') {
+    await openPreferredSurfaceFromGitHub(sender);
+    return { ok: true };
   }
   if (message.type === 'GET_ONBOARDING_STATE') return onboardingState();
   if (message.type === 'START_DEVICE_FLOW') return deviceFlow().start();
@@ -989,18 +1096,27 @@ async function handle(message, sender) {
   if (message.type === 'LOAD_REPOSITORY_COLLABORATORS') {
     if (Object.keys(message).length !== 2 || typeof message.destinationId !== 'string') throw new Error('Invalid collaborator request');
     const destinationId = await requireConfiguredDestinationId(store, message.destinationId);
-    const { config, auth } = await configuredSnapshot({ destinationId });
+    const { config, auth } = await configuredSnapshot({ destinationId, localOnly: true });
     if (!config || !auth) throw new Error('Connect a time repository before viewing collaborators.');
     const github = githubForConfig(config);
     await github.assertDestinationReachable();
     const collaborators = await github.listRepositoryCollaborators();
+    const readyUserIds = await readyRepositoryMemberIds(github, config.defaultBranch, collaborators.users);
     try {
       const pending = await github.listRepositoryPendingInvitations();
-      return { ...collaborators, pendingUsers: pending.users, pendingHasMore: pending.hasMore,
+      return { ...collaborators, readyUserIds, pendingUsers: pending.users, pendingHasMore: pending.hasMore,
+        ...(pending.moreUsers ? { pendingMoreUsers: pending.moreUsers } : {}),
+        ...(pending.truncated ? { pendingTruncated: true } : {}),
         ...(pending.incomplete ? { pendingUnavailable: true } : {}) };
     } catch {
-      return { ...collaborators, pendingUnavailable: true };
+      return { ...collaborators, readyUserIds, pendingUnavailable: true };
     }
+  }
+  if (message.type === 'CHECK_REPOSITORY_INVITE_ACCESS') {
+    if (Object.keys(message).length !== 2 || typeof message.destinationId !== 'string') throw new Error('Invalid invitation access check');
+    const invitation = await repositoryInvitationService(message.destinationId, { localOnly: true });
+    await invitation.assertAdminAccess();
+    return { canInvite: true };
   }
   if (message.type === 'SEARCH_INVITEE_USERS' || message.type === 'INVITE_REPOSITORY_USER') {
     const payload = message.payload;
@@ -1011,7 +1127,7 @@ async function handle(message, sender) {
         || (message.type === 'INVITE_REPOSITORY_USER' && (!Number.isSafeInteger(payload.userId) || payload.userId <= 0))) {
       throw new Error('Invalid teammate request');
     }
-    const invitation = await repositoryInvitationService(payload.destinationId);
+    const invitation = await repositoryInvitationService(payload.destinationId, { localOnly: message.type === 'SEARCH_INVITEE_USERS' });
     return message.type === 'SEARCH_INVITEE_USERS'
       ? { users: await invitation.search(payload.query) } : invitation.invite(payload.login, payload.userId);
   }
@@ -1072,6 +1188,14 @@ async function handle(message, sender) {
     const preferences = await store.getLocalPreferences();
     broadcastLocalPreferencesChanged(preferences.revision);
     return { preferences };
+  }
+  if (message.type === 'SET_TOOLBAR_CLICK_MODE') {
+    if (sender?.url !== chrome.runtime.getURL('src/options/options.html')
+        || Object.keys(message).sort().join(',') !== 'mode,type'
+        || !['tab', 'popup'].includes(message.mode)) throw new Error('Invalid toolbar click mode request');
+    const mode = await store.setToolbarClickMode(message.mode);
+    await applyToolbarClickMode(mode);
+    return { preferences: await store.getLocalPreferences() };
   }
   if (message.type === 'GET_LOCAL_PREFERENCES') return store.getLocalPreferences();
   if (message.type === 'GET_ACTIVITY_VIEW_MODE' || message.type === 'SET_ACTIVITY_VIEW_MODE') {
@@ -1289,20 +1413,32 @@ async function handle(message, sender) {
   }
   if (message.type === 'CANCEL_REPORT') { await cancelReports('reports'); return { cancelled: true }; }
   if (message.type === 'LOAD_REPORT') return loadReport(message);
+  if (message.type === 'GET_CACHED_VIEW') return cachedPageView(message, sender, extensionOrigin);
   if (message.type === 'LOAD_TASK_PARTICIPANTS') return loadTaskParticipants(message, sender, extensionOrigin);
   if (message.type === 'GET_EXCHANGE_RATES') return loadExchangeRates(message);
   if (message.type === 'LOAD_TASKS') return loadTasks(message, sender);
   if (message.type === 'LOAD_TIMES') return loadTimes(message, sender);
-  if (message.type === 'GET_REMOTE_TIMER_STATUS') {
-    if (sender?.url !== chrome.runtime.getURL('src/times/times.html') || Object.keys(message).join(',') !== 'type') {
-      throw new Error('Invalid Activity remote timer payload or sender');
-    }
-    return remoteTimerStatus();
-  }
   if (message.type === 'SEARCH_TASKS') {
     if (Object.keys(message).sort().join(',') !== 'query,type' || typeof message.query !== 'string'
         || message.query.length > 300) throw new Error('Invalid task search query');
     return searchTasks(sender, message.query);
+  }
+  if (message.type === 'SEARCH_ENTRY_TASKS') {
+    const request = entryTaskSearchForSender(message, sender, extensionOrigin);
+    const destinationId = await requireConfiguredDestinationId(store, request.destinationId);
+    const tracker = await trackerForDestination(destinationId, { localOnly: true });
+    const monthly = await tracker.readMonthly(request.path);
+    if (!monthly.entries.some(entry => entry.id === request.recordId)) {
+      throw new Error('Completed entry is unavailable for task search');
+    }
+    const result = await searchTasks(sender, request.query, { includeImported: true });
+    const query = request.query.trim().toLowerCase();
+    const matches = result.tasks.filter(task => task.destinationId === destinationId
+      && typeof task.taskUrl === 'string' && !/^https?:\/\//i.test(task.taskUrl)
+      && (`${task.title} ${task.taskUrl}`).toLowerCase().includes(query));
+    return { configured: result.configured, tasks: matches.slice(0, 25).map(task => ({
+      taskUrl: task.taskUrl, title: task.title, destinationId,
+    })), partial: Boolean(result.partial || result.conflicts?.length || matches.length > 25) };
   }
   if (message.type === 'SEARCH_ACTIVITY') {
     if (message.payload !== undefined) throw new Error('Activity search does not accept a range');
@@ -1315,12 +1451,13 @@ async function handle(message, sender) {
   }
   if (message.type === 'GET_STATE' || message.type === 'GET_PAGE_STATE') {
     const pageState = message.type === 'GET_PAGE_STATE';
-    const state = await globalTrackerState({ refresh: Boolean(message.refresh), includeSummary: pageState });
-    if (!state.configured) return pageState
-      ? { configured: false, active: null, pendingCount: 0, recent: [], interfaceWidth: (await store.getLocalPreferences()).interfaceWidth }
-      : state;
+    const state = await globalTrackerState({ refresh: Boolean(message.refresh), includeSummary: pageState,
+      includePendingDetails: !pageState || sender?.url === chrome.runtime.getURL('src/times/times.html') });
     if (!pageState) return state;
-    const preferences = await store.getLocalPreferences();
+    const preferences = await store.getActivityDisplayPreferences();
+    if (!state.configured) return {
+      ...state, pendingCount: 0, interfaceWidth: preferences.interfaceWidth,
+    };
     return {
       ...state,
       projects: preferences.projects,
@@ -1342,6 +1479,22 @@ async function handle(message, sender) {
     }
   };
   switch (message.type) {
+    case 'ADD_DAY_RANGE': {
+      const { type, ...fields } = message;
+      const payload = dayRangeForSender(fields, sender, extensionOrigin);
+      const destinationId = payload.destinationId
+        ? await requireConfiguredDestinationId(store, payload.destinationId)
+        : await resolveStartDestinationId(store, payload.taskUrl);
+      const currentDestinationId = await activeDestinationId(store);
+      if (currentDestinationId && currentDestinationId !== destinationId) {
+        throw new Error('A timer is running in another time repository. Stop it before adding time.');
+      }
+      const tracker = await trackerForDestination(destinationId, { localOnly: true });
+      const { destinationId: _requestedDestination, ...range } = payload;
+      const result = await tracker.addDayRange(range);
+      if (result.pending) requestPendingSync();
+      return { ...result, destinationId };
+    }
     case 'ADD_TIME': {
       const { type, ...fields } = message;
       const payload = addTimeForSender(fields, sender, extensionOrigin);
@@ -1554,15 +1707,47 @@ async function handle(message, sender) {
       requestPendingSync();
       return { ...result, destinationId: destinationIds[0] };
     }
+    case 'GET_STOPPED_OVERLAP':
+    case 'RESOLVE_STOPPED_OVERLAP':
+    case 'DELETE_STOPPED_OVERLAP': {
+      if (sender?.url !== chrome.runtime.getURL('src/times/times.html')) throw new Error('Only Activity can review this overlap.');
+      const keys = Object.keys(message).sort().join(',');
+      if (keys !== (message.type === 'GET_STOPPED_OVERLAP' ? 'destinationId,id,type'
+        : message.type === 'DELETE_STOPPED_OVERLAP' ? 'destinationId,id,side,type' : 'destinationId,endedAt,id,side,startedAt,type')
+          || typeof message.id !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(message.id)) {
+        throw new Error('Invalid overlap request.');
+      }
+      const destinationId = await requireConfiguredDestinationId(store, message.destinationId);
+      const tracker = await trackerForDestination(destinationId,
+        message.type === 'GET_STOPPED_OVERLAP' ? { localOnly: true, persistUser: false } : {});
+      if (message.type === 'GET_STOPPED_OVERLAP') return tracker.getStoppedOverlapContext(message.id);
+      if (message.type === 'DELETE_STOPPED_OVERLAP') {
+        if (!['previous', 'local'].includes(message.side)) throw new Error('Invalid overlap delete.');
+        const result = await tracker.deleteStoppedOverlap(message.id, { side: message.side });
+        requestPendingSync();
+        return result;
+      }
+      const validOverlapTimestamp = value => typeof value === 'string'
+        && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)
+        && Number.isFinite(Date.parse(value));
+      if (!['previous', 'local'].includes(message.side)
+          || !validOverlapTimestamp(message.startedAt) || !validOverlapTimestamp(message.endedAt)) {
+        throw new Error('Invalid overlap edit.');
+      }
+      const result = await tracker.resolveStoppedOverlap(message.id,
+        { side: message.side, startedAt: message.startedAt, endedAt: message.endedAt });
+      requestPendingSync();
+      return result;
+    }
     default: throw new Error('Unknown extension message');
   }
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type === 'LOCAL_PREFERENCES_CHANGED') return undefined;
+  if (message?.type === 'LOCAL_PREFERENCES_CHANGED' || message?.type === 'TOOLBAR_CONTEXT_UPDATED') return undefined;
   const reportReadOnly = ['LOAD_REPORT', 'LOAD_TASK_PARTICIPANTS', 'CANCEL_REPORT', 'GET_EXCHANGE_RATES'].includes(message?.type);
   const localStateRead = ['GET_STATE', 'GET_PAGE_STATE'].includes(message?.type) && !message?.refresh;
-  const readOnly = reportReadOnly || localStateRead || ['LOAD_TASKS', 'LOAD_TIMES', 'GET_REMOTE_TIMER_STATUS', 'SEARCH_TASKS', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES', 'GET_ADDON_SETTINGS', 'GET_CLOCKIFY_MIGRATION_PREVIEW', 'SEARCH_INVITEE_USERS', 'SEARCH_CLOCKIFY_GITHUB_USERS', 'LOAD_REPOSITORY_COLLABORATORS'].includes(message?.type);
+  const readOnly = reportReadOnly || localStateRead || ['GET_CACHED_VIEW', 'LOAD_TASKS', 'LOAD_TIMES', 'GET_STOPPED_OVERLAP', 'SEARCH_TASKS', 'SEARCH_ENTRY_TASKS', 'GET_ONBOARDING_STATE', 'RESUME_DEVICE_FLOW', 'DISCOVER_REPOSITORIES', 'GET_ADDON_SETTINGS', 'GET_CLOCKIFY_MIGRATION_PREVIEW', 'SEARCH_INVITEE_USERS', 'SEARCH_CLOCKIFY_GITHUB_USERS', 'LOAD_REPOSITORY_COLLABORATORS'].includes(message?.type);
   const changesConfiguration = ['SAVE_CONFIG', 'UPDATE_DISPLAY_PREFERENCES', 'IMPORT_SETTINGS', 'CHECK_REPOSITORY_ACCESS', 'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION', 'INVITE_REPOSITORY_USER'].includes(message?.type);
   let operation;
   if (changesConfiguration) {
@@ -1572,10 +1757,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     } catch (error) { operation = Promise.reject(error); }
   } else {
     const direct = readOnly || DIRECT_DEVICE_FLOW_MESSAGES.has(message?.type) || message?.type === 'CONFIRM_CLOCKIFY_MIGRATION'
-      || ['OPEN_OPTIONS', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES'].includes(message?.type)
+      || ['OPEN_OPTIONS', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_PREFERRED_SURFACE', 'CONSUME_TOOLBAR_TASK_CONTEXT'].includes(message?.type)
       || ['CLOCKIFY_ARM_CAPTURE', 'CLOCKIFY_ARM_CSV_CAPTURE', 'CLOCKIFY_IS_CAPTURE_ARMED', 'CLOCKIFY_DISARM_CAPTURE', 'CLOCKIFY_YEAR_OBSERVED', 'CLOCKIFY_CAPTURED_CSV', 'CLOCKIFY_CAPTURED_REPORT', 'CLOCKIFY_CSV_EMAIL_OFFER'].includes(message?.type);
     const acceptsLocally = [
-      'START', 'STOP', 'SWITCH_TASK', 'DISCARD_ACTIVE', 'ADD_TIME', 'BULK_ADD_TIMES',
+      'START', 'STOP', 'SWITCH_TASK', 'DISCARD_ACTIVE', 'ADD_TIME', 'ADD_DAY_RANGE', 'BULK_ADD_TIMES',
       'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRY_DELETE', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT',
     ].includes(message?.type);
     const taskMerge = message?.type === 'MERGE_TASKS';
@@ -1666,8 +1851,16 @@ function hasRunnablePending(queue) {
   if (first.status !== 'conflict') return true;
   const operation = first.operation ?? first.stage;
   const retryableConflict = !String(first.conflictReason || '').startsWith('queued_write_');
-  return retryableConflict && ((first.stage === 'startNext' && first.nextActive)
-    || (['editEntry', 'editEntries', 'deleteEntry'].includes(operation) && first.conflictReason !== 'queued_entry_missing'));
+  if (retryableConflict && ((first.stage === 'startNext' && first.nextActive)
+    || (['editEntry', 'editEntries', 'deleteEntry'].includes(operation) && first.conflictReason !== 'queued_entry_missing'))) return true;
+  if (!retryableConflict) return false;
+  const blocked = [first];
+  for (const candidate of queue.slice(1)) {
+    if (candidate.stage === 'awaitSourceCompletion') return false;
+    if (candidate.status !== 'conflict' && independentCompletedWrite(candidate, blocked)) return true;
+    blocked.push(candidate);
+  }
+  return false;
 }
 async function shouldContinuePendingSync() {
   const destinationIds = await store.getPendingDestinationIds();
@@ -1768,50 +1961,108 @@ function scheduleSync() {
   return alarm;
 }
 
+let openingTimesPage = null;
 async function openTimesPage() {
-  await chrome.tabs.create({ url: chrome.runtime.getURL('src/times/times.html') });
+  if (await shouldOpenOnboarding()) return chrome.runtime.openOptionsPage();
+  if (openingTimesPage) return openingTimesPage;
+  const open = async () => {
+    const url = chrome.runtime.getURL('src/times/times.html');
+    const loaded = (await chrome.tabs.query({ url }))
+      .find(tab => !tab.pendingUrl || tab.pendingUrl === url);
+    const existing = loaded ?? (await chrome.tabs.query({})).find(tab => tab.pendingUrl === url);
+    if (Number.isInteger(existing?.id)) {
+      try {
+        const activated = await chrome.tabs.update(existing.id, { active: true });
+        if (activated.pendingUrl ? activated.pendingUrl !== url : activated.url && activated.url !== url) {
+          await chrome.tabs.create({ url });
+          return;
+        }
+        await chrome.windows.update(activated.windowId, { focused: true });
+        return;
+      } catch (error) {
+        // A closed tab cannot be activated. Keep other API failures visible.
+        let stillOpen = false;
+        try { await chrome.tabs.get(existing.id); stillOpen = true; } catch {}
+        if (stillOpen) throw error;
+      }
+    }
+    await chrome.tabs.create({ url });
+  };
+  openingTimesPage = open();
+  try { await openingTimesPage; } finally { openingTimesPage = null; }
 }
 
-async function toggleActionSurface(tab) {
-  if (!Number.isInteger(tab?.id)) return openTimesPage();
+async function shouldOpenOnboarding() {
+  // Match onboardingState.ready without remote requests; the worker can restart
+  // between toolbar clicks, so always check the current durable configuration.
   try {
-    try {
-      await chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_FULL_WIDTH_POPUP' });
-      return;
-    } catch {
-      const url = new URL(tab.url || '');
-      if (!['http:', 'https:'].includes(url.protocol)) return openTimesPage();
-    }
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: () => { globalThis.__CLOCKOLI_ACTION_SURFACE__ = true; },
-    });
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ['src/domain/recovery-actions.js', 'src/ui/tracking-card.js', 'src/ui/task-search.js', 'src/content/task-timeline-component.js', 'src/content/github.js'],
-    });
+    const { auth, registry } = await configuredSnapshot({ localOnly: true });
+    return !auth || !registry?.defaultDestinationId;
   } catch {
-    return openTimesPage();
+    // If local setup cannot be read, Settings is the recovery surface.
+    return true;
   }
 }
 
-async function dismissInactivePanels({ windowId }) {
-  const tabs = await chrome.tabs.query({ windowId });
-  await Promise.allSettled(tabs
-    .filter(tab => Number.isInteger(tab.id) && !tab.active)
-    .map(tab => chrome.tabs.sendMessage(tab.id, { type: 'DISMISS_FULL_WIDTH_POPUP' })));
+function toolbarTaskContext(tab) {
+  try {
+    const url = new URL(tab?.url || '');
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return null;
+    // A Projects issue pane points to an issue, not a generic project-view task.
+    const taskUrl = normalizeTaskUrl(parseGitHubProjectPaneIssueUrl(url.href) || url.href);
+    return { taskUrl, taskTitle: String(tab.title || '').trim().slice(0, 300), openedAt: Date.now() };
+  } catch {
+    return null;
+  }
 }
 
-void chrome.action.setPopup({ popup: '' }).catch(() => console.warn('Could not restore toolbar panel.'));
+async function openActivityFromTab(tab) {
+  if (await shouldOpenOnboarding()) return chrome.runtime.openOptionsPage();
+  // A page click carries the same one-use validated context as a toolbar click.
+  await actionContextBackend.setMany({ [ACTION_CONTEXT_KEY]: toolbarTaskContext(tab) });
+  await openTimesPage();
+  await chrome.runtime.sendMessage({ type: 'TOOLBAR_CONTEXT_UPDATED' }).catch(() => {});
+}
+
+async function toggleActionSurface(tab) {
+  return openActivityFromTab(tab);
+}
+
+async function openPreferredSurfaceFromGitHub(sender) {
+  // Never trust request-supplied task URLs. Both sender URLs are browser-provided.
+  const tab = sender?.tab;
+  if (!tab || !/^https:\/\/github\.com(?:\/|$)/.test(sender.url || '')
+      || !/^https:\/\/github\.com(?:\/|$)/.test(tab.url || '')) {
+    throw new Error('The toolbar shortcut requires a GitHub page');
+  }
+  const mode = await store.getToolbarClickMode();
+  if (mode === 'popup') {
+    if (await shouldOpenOnboarding()) return chrome.runtime.openOptionsPage();
+    try {
+      // Chrome 127+ supports opening the action popup; older browsers use Activity.
+      await applyToolbarClickMode('popup');
+      if (typeof chrome.action.openPopup !== 'function') throw new Error('Action popup API unavailable');
+      await chrome.action.openPopup(Number.isInteger(tab.windowId) ? { windowId: tab.windowId } : {});
+      return;
+    } catch (error) {
+      console.warn('Could not open Clockoli quick popup; opening Activity instead.', error);
+    }
+  }
+  return openActivityFromTab(tab);
+}
+
+async function applyToolbarClickMode(mode) {
+  await chrome.action.setPopup({ popup: mode === 'popup' ? TOOLBAR_POPUP_PATH : '' });
+}
+
+// The extension has no default popup. Restore the saved choice on worker startup.
+void store.getToolbarClickMode().then(applyToolbarClickMode).catch(() => console.warn('Could not configure toolbar click behavior.'));
 chrome.runtime.onInstalled.addListener(details => {
   scheduleSync();
   if (details.reason === 'install') void chrome.runtime.openOptionsPage();
 });
 chrome.action.onClicked.addListener(tab => {
   void toggleActionSurface(tab).catch(() => {});
-});
-chrome.tabs.onActivated.addListener(info => {
-  void dismissInactivePanels(info).catch(() => {});
 });
 chrome.runtime.onStartup.addListener(() => { scheduleSync(); });
 chrome.alarms.onAlarm.addListener(alarm => {

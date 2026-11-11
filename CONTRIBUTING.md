@@ -1,6 +1,6 @@
 # Contributing to Clockoli
 
-Clockoli is a Chrome/Chromium Manifest V3 extension built with browser-native JavaScript modules. The extension has no runtime package dependencies. The framework-neutral timeline component, its build tooling, and its complete test harness live in this repository as an npm workspace. Node.js is used for tests and validation, and Python builds release archives and orchestrates the macOS Safari build.
+Clockoli is a Chrome/Chromium Manifest V3 extension built with browser-native JavaScript modules. The extension has no runtime package dependencies. The timeline component and public smoke tests live in this repository as an npm workspace; deeper regression tests live in a separate private repository. Node.js is used for tests and validation, and Python builds release archives and orchestrates the macOS Safari build.
 
 ## Prerequisites
 
@@ -17,12 +17,26 @@ git clone https://github.com/Clockoli/clockoli.git
 cd clockoli
 npm ci
 npm test
+npm run test:browser
 npm run check
 ```
 
-To measure coverage for the extension source, run `npm run test:coverage`. The
-generated timeline bundle is excluded because it is built and verified by the
-timeline workspace checks.
+To measure coverage from the public Node suite, run `npm run test:coverage`.
+It is not a measure of the private regression suite. The generated timeline
+bundle is excluded because the timeline workspace checks its build.
+
+Maintainers with access to the private regression suite can additionally run:
+
+```bash
+git clone git@github.com:Clockoli/tests-private.git test-private
+npm run test:private
+```
+
+`test-private/` is ignored by Git. The private command requires that checkout
+and runs its Node and Chromium tests against this working tree; use `npm run
+test:private -- --unit` or `npm run test:private -- --browser` to narrow a local
+run. Never commit private tests, fixtures, traces, or credentials to this public
+repository. An outside contributor needs only the public commands above.
 
 Chrome loads checked-in extension files directly. When changing the timeline source or adapter under `packages/task-timeline-component/`, regenerate `src/content/task-timeline-component.js` with `npm run build:timeline` before testing or loading the extension.
 
@@ -53,8 +67,9 @@ Use a private test repository and test credentials. Never commit tokens, reposit
 | `src/services/` | Tracking, onboarding, reports, metadata, recovery, and exchange-rate workflows |
 | `src/storage/chrome-store.js` | Extension-origin IndexedDB state and migrations |
 | `src/popup/`, `src/options/`, `src/reports/`, `src/tasks/`, `src/times/` | Extension pages and their presentation logic |
-| `packages/task-timeline-component/` | Clockoli-owned TaskTimeline, Clockoli adapter, unit tests, Chromium E2E tests, package smoke test, and content-script build |
-| `test/` | Node test suite, behavioral contracts, security checks, and release checks |
+| `packages/task-timeline-component/` | Clockoli-owned TaskTimeline, adapter, public theme and package smoke tests, fixture, and content-script build |
+| `test/` | Public Node contracts, security checks, release checks, and a Chromium smoke test |
+| `test-private/` (optional checkout) | Private Node regressions, functional Chromium tests, and timeline E2E; maintained separately |
 | `scripts/` | Extension validation and deterministic release packaging |
 | `docs/` | User documentation and normative data-format documentation |
 
@@ -86,7 +101,7 @@ Read `docs/spec-compliance.md` before changing architecture or behavior. Read `d
 - Validate complete JSON/JSONL files; do not silently skip malformed records.
 - Preserve local-date, timezone, monthly partition, actor, producer, metadata, and metrics semantics.
 - Use blob SHAs for rewrites and stable record IDs for lookup. Preflight linked or cross-month mutations and publish them atomically.
-- Preserve FIFO, operation-ID-aware pending mutations. A stale Stop must not clear or resurrect a newer timer.
+- Preserve operation-ID-aware pending mutations and FIFO for dependent writes and timer lifecycle. Only provably independent completed-record writes may bypass a conflicted completed-record mutation; never discard the blocker. A stale Stop must not clear or resurrect a newer timer.
 
 ### UI behavior
 
@@ -136,11 +151,7 @@ npm run check
 git diff --check
 ```
 
-`npm test` runs both Clockoli's Node suite and the complete internal timeline suite, including Chromium E2E and package-consumer smoke coverage. `npm run check` runs extension validation and release-inventory validation. Do not replace either command with a narrower check. When a coverage report is required, run `npm run test:coverage`; it reports the extension source under `src/` and excludes the generated timeline bundle.
-
-Run `npm run test:options:functional` for the Settings repository-disclosure, access-menu, and device-code handoff Chromium checks. These load a temporary extension with synthetic responses and perform no GitHub access mutations. CI runs them under Xvfb.
-
-Run `npm run test:activity:functional` for the Activity List, Add time, and weekly Timeline/Calendar browser checks on the Activity page and GitHub panel. These use a temporary extension with synthetic responses and run headless locally; CI runs them under Xvfb.
+`npm test` runs the public Clockoli Node contracts, timeline theme, build, and package-consumer smoke checks. `npm run test:browser` opens Settings and Activity in a fresh Chromium profile. `npm run check` validates the extension and release inventory. Public CI runs all three, including on fork pull requests, without private credentials. On trusted pushes to `main`, a separate job checks out the private suite with a read-only token and runs it against the exact public commit. Configure the public repository's Actions secret `PRIVATE_TESTS_READ_TOKEN` with a fine-grained token limited to `Clockoli/tests-private` and Contents: Read-only; no secret is needed in the private repository. Private test output stays off the public Actions logs, so maintainers reproduce failures locally. Fork pull requests never receive the token or private tests. The public test job passing does not mean that the separate private job has passed. `npm run test:coverage` reports only public Node coverage under `src/` and excludes the generated timeline bundle.
 
 ## Browser verification
 
@@ -179,7 +190,7 @@ Use the Clockoli name only. Do not introduce legacy product names or unsupported
 
 ## Build release packages
 
-Version values in `package.json` and `manifest.json` must match. `manifest.json` remains the Chrome development manifest. `scripts/target-manifest.js` derives Firefox and Safari manifests without changing it; validation and inventory traversal use those generated manifests. Chrome archive bytes retain the original packaging format.
+Version values in `package.json` and `manifest.json` must match. `manifest.json` remains the Chrome development manifest. `scripts/target-manifest.js` derives Firefox and Safari manifests without changing it; validation and inventory traversal use those generated manifests. Chrome archive bytes retain the original packaging format. Actual releases require the latest trusted `main` CI run for the tagged commit to contain a successful `private-regressions` job; dry-run previews do not. Wait for that job before publishing.
 
 Run all checks, then build outside the repository:
 
@@ -289,4 +300,4 @@ A pull request should contain:
 - screenshots only when they clarify a visual change;
 - no unrelated formatting or refactoring.
 
-CI runs `npm test` and `npm run check` on Node.js 22. A change is not complete until local checks and CI pass.
+Public CI runs `npm test`, `npm run test:browser`, and `npm run check` on Node.js 22. On a trusted push to `main`, a separate job checks out and runs the private suite for that commit with a single read-only token. Fork pull requests never receive it; an external contribution is not considered privately tested until it reaches trusted `main` or a maintainer checks it locally after review. A public test job passing alone does not imply the private job passed.

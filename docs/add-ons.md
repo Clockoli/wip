@@ -12,7 +12,7 @@ A user must explicitly enable an add-on in Clockoli Settings. Before enablement,
 
 ### What an add-on can do
 
-An add-on descriptor declares its `id`, `version`, `title`, `description`, `requested origins`, and `capabilities`. The planned version 1 permits only the `import_completed_records` capability. Remote code, arbitrary messages, and arbitrary GitHub calls are forbidden.
+An add-on descriptor declares its `id`, `version`, `title`, `description`, `requested origins`, and `capabilities`. The supported capability is `import_completed_records`. Remote code, arbitrary messages, and arbitrary GitHub calls are forbidden.
 
 The privileged core remains separate from each untrusted provider adapter. Add-ons never collect or persist provider credentials. The core owns credentials, storage, GitHub access, validation, and record writes; an adapter can only supply data through its declared capability. Add-on enablement is available only to extension-origin Settings messages, never to content scripts or provider pages.
 

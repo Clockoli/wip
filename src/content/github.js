@@ -5,14 +5,24 @@
   const extensionPageMode = location.href.startsWith(chrome.runtime.getURL(''));
   const timesMode = extensionPageMode && location.pathname.endsWith('/src/times/times.html');
   const popupMode = extensionPageMode && !timesMode;
-  const actionSurfaceMode = globalThis.__CLOCKOLI_ACTION_SURFACE__ === true;
   const STOPWATCH_PATH = 'M5.75.75A.75.75 0 0 1 6.5 0h3a.75.75 0 0 1 0 1.5h-.75v1l-.001.041a6.724 6.724 0 0 1 3.464 1.435l.007-.006.75-.75a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734l-.75.75-.006.007a6.75 6.75 0 1 1-10.548 0L2.72 5.03l-.75-.75a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018l.75.75.007.006A6.72 6.72 0 0 1 7.25 2.541V1.5H6.5a.75.75 0 0 1-.75-.75ZM8 14.5a5.25 5.25 0 1 0-.001-10.501A5.25 5.25 0 0 0 8 14.5Zm.389-6.7 1.33-1.33a.75.75 0 1 1 1.061 1.06L9.45 8.861A1.503 1.503 0 0 1 8 10.75a1.499 1.499 0 1 1 .389-2.95Z';
 
   const SYNC_PATH = 'M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z';
-  const TASKS_PATH = 'M2 2.75A.75.75 0 0 1 2.75 2h1.5a.75.75 0 0 1 0 1.5h-1.5A.75.75 0 0 1 2 2.75Zm4 0A.75.75 0 0 1 6.75 2h6.5a.75.75 0 0 1 0 1.5h-6.5A.75.75 0 0 1 6 2.75ZM2 8a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5A.75.75 0 0 1 2 8Zm4 0a.75.75 0 0 1 .75-.75h6.5a.75.75 0 0 1 0 1.5h-6.5A.75.75 0 0 1 6 8Zm-4 5.25a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5a.75.75 0 0 1-.75-.75Zm4 0a.75.75 0 0 1 .75-.75h6.5a.75.75 0 0 1 0 1.5h-6.5a.75.75 0 0 1-.75-.75Z';
-  const ACTIVITY_PATH = 'M8 1.5A6.5 6.5 0 1 1 1.5 8a.75.75 0 0 1 1.5 0A5 5 0 1 0 8 3a4.96 4.96 0 0 0-3.535 1.465L5.53 5.53A.75.75 0 0 1 4.47 6.59L2.14 4.26a.75.75 0 0 1 0-1.06L4.47.87A.75.75 0 1 1 5.53 1.93l-.79.79A6.46 6.46 0 0 1 8 1.5Zm.75 3.25v2.94l1.78 1.78a.75.75 0 1 1-1.06 1.06l-2-2A.75.75 0 0 1 7.25 8V4.75a.75.75 0 0 1 1.5 0Z';
-  const REPORTS_PATH = 'M1.75 1.5a.75.75 0 0 0-.75.75v11.5c0 .414.336.75.75.75h12.5a.75.75 0 0 0 0-1.5H2.5V2.25a.75.75 0 0 0-.75-.75Zm3.5 8a.75.75 0 0 0-.75.75v1.5a.75.75 0 0 0 1.5 0v-1.5a.75.75 0 0 0-.75-.75Zm3-3a.75.75 0 0 0-.75.75v4.5a.75.75 0 0 0 1.5 0v-4.5a.75.75 0 0 0-.75-.75Zm3-3a.75.75 0 0 0-.75.75v7.5a.75.75 0 0 0 1.5 0v-7.5a.75.75 0 0 0-.75-.75Z';
-  const GEAR_PATH = 'M8 0a8.2 8.2 0 0 1 .701.031C9.444.095 9.99.645 10.16 1.29l.288 1.107c.018.066.079.158.212.224.231.114.454.243.668.386.123.082.233.09.299.071l1.103-.303c.644-.176 1.392.021 1.82.63.27.385.506.792.704 1.218.315.675.111 1.422-.364 1.891l-.814.806c-.049.048-.098.147-.088.294.016.257.016.515 0 .772-.01.147.038.246.088.294l.814.806c.475.469.679 1.216.364 1.891a7.977 7.977 0 0 1-.704 1.217c-.428.61-1.176.807-1.82.63l-1.102-.302c-.067-.019-.177-.011-.3.071a5.909 5.909 0 0 1-.668.386c-.133.066-.194.158-.211.224l-.29 1.106c-.168.646-.715 1.196-1.458 1.26a8.006 8.006 0 0 1-1.402 0c-.743-.064-1.289-.614-1.458-1.26l-.289-1.106c-.018-.066-.079-.158-.212-.224a5.738 5.738 0 0 1-.668-.386c-.123-.082-.233-.09-.299-.071l-1.103.303c-.644.176-1.392-.021-1.82-.63a8.12 8.12 0 0 1-.704-1.218c-.315-.675-.111-1.422.363-1.891l.815-.806c.05-.048.098-.147.088-.294a6.214 6.214 0 0 1 0-.772c.01-.147-.038-.246-.088-.294l-.815-.806C.635 6.045.431 5.298.746 4.623a7.92 7.92 0 0 1 .704-1.217c.428-.61 1.176-.807 1.82-.63l1.102.302c.067.019.177.011.3-.071.214-.143.437-.272.668-.386.133-.066.194-.158.211-.224l.29-1.106C6.009.645 6.556.095 7.299.03 7.53.01 7.764 0 8 0Zm3 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM9.5 8a1.5 1.5 0 1 0-3.001.001A1.5 1.5 0 0 0 9.5 8Z';
+  const TASKS_PATH = 'M5.75 2.5h8.5a.75.75 0 0 1 0 1.5h-8.5a.75.75 0 0 1 0-1.5Zm0 5h8.5a.75.75 0 0 1 0 1.5h-8.5a.75.75 0 0 1 0-1.5Zm0 5h8.5a.75.75 0 0 1 0 1.5h-8.5a.75.75 0 0 1 0-1.5ZM2 14a1 1 0 1 1 0-2 1 1 0 0 1 0 2Zm1-6a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM2 4a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z';
+  const ACTIVITY_PATH = 'm.427 1.927 1.215 1.215a8.002 8.002 0 1 1-1.6 5.685.75.75 0 1 1 1.493-.154 6.5 6.5 0 1 0 1.18-4.458l1.358 1.358A.25.25 0 0 1 3.896 6H.25A.25.25 0 0 1 0 5.75V2.104a.25.25 0 0 1 .427-.177ZM7.75 4a.75.75 0 0 1 .75.75v2.992l2.028.812a.75.75 0 0 1-.557 1.392l-2.5-1A.751.751 0 0 1 7 8.25v-3.5A.75.75 0 0 1 7.75 4Z';
+  const REPORTS_PATH = 'M1.5 1.75V13.5h13.75a.75.75 0 0 1 0 1.5H.75a.75.75 0 0 1-.75-.75V1.75a.75.75 0 0 1 1.5 0Zm14.28 2.53-5.25 5.25a.75.75 0 0 1-1.06 0L7 7.06 4.28 9.78a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042l3.25-3.25a.75.75 0 0 1 1.06 0L10 7.94l4.72-4.72a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042Z';
+  const GEAR_PATH = 'M8 0a8.2 8.2 0 0 1 .701.031C9.444.095 9.99.645 10.16 1.29l.288 1.107c.018.066.079.158.212.224.231.114.454.243.668.386.123.082.233.09.299.071l1.103-.303c.644-.176 1.392.021 1.82.63.27.385.506.792.704 1.218.315.675.111 1.422-.364 1.891l-.814.806c-.049.048-.098.147-.088.294.016.257.016.515 0 .772-.01.147.038.246.088.294l.814.806c.475.469.679 1.216.364 1.891a7.977 7.977 0 0 1-.704 1.217c-.428.61-1.176.807-1.82.63l-1.102-.302c-.067-.019-.177-.011-.3.071a5.909 5.909 0 0 1-.668.386c-.133.066-.194.158-.211.224l-.29 1.106c-.168.646-.715 1.196-1.458 1.26a8.006 8.006 0 0 1-1.402 0c-.743-.064-1.289-.614-1.458-1.26l-.289-1.106c-.018-.066-.079-.158-.212-.224a5.738 5.738 0 0 1-.668-.386c-.123-.082-.233-.09-.299-.071l-1.103.303c-.644.176-1.392-.021-1.82-.63a8.12 8.12 0 0 1-.704-1.218c-.315-.675-.111-1.422.363-1.891l.815-.806c.05-.048.098-.147.088-.294a6.214 6.214 0 0 1 0-.772c.01-.147-.038-.246-.088-.294l-.815-.806C.635 6.045.431 5.298.746 4.623a7.92 7.92 0 0 1 .704-1.217c.428-.61 1.176-.807 1.82-.63l1.102.302c.067.019.177.011.3-.071.214-.143.437-.272.668-.386.133-.066.194-.158.211-.224l.29-1.106C6.009.645 6.556.095 7.299.03 7.53.01 7.764 0 8 0Zm-.571 1.525c-.036.003-.108.036-.137.146l-.289 1.105c-.147.561-.549.967-.998 1.189-.173.086-.34.183-.5.29-.417.278-.97.423-1.529.27l-1.103-.303c-.109-.03-.175.016-.195.045-.22.312-.412.644-.573.99-.014.031-.021.11.059.19l.815.806c.411.406.562.957.53 1.456a4.709 4.709 0 0 0 0 .582c.032.499-.119 1.05-.53 1.456l-.815.806c-.081.08-.073.159-.059.19.162.346.353.677.573.989.02.03.085.076.195.046l1.102-.303c.56-.153 1.113-.008 1.53.27.161.107.328.204.501.29.447.222.85.629.997 1.189l.289 1.105c.029.109.101.143.137.146a6.6 6.6 0 0 0 1.142 0c.036-.003.108-.036.137-.146l.289-1.105c.147-.561.549-.967.998-1.189.173-.086.34-.183.5-.29.417-.278.97-.423 1.529-.27l1.103.303c.109.029.175-.016.195-.045.22-.313.411-.644.573-.99.014-.031.021-.11-.059-.19l-.815-.806c-.411-.406-.562-.957-.53-1.456a4.709 4.709 0 0 0 0-.582c-.032-.499.119-1.05.53-1.456l.815-.806c.081-.08.073-.159.059-.19a6.464 6.464 0 0 0-.573-.989c-.02-.03-.085-.076-.195-.046l-1.102.303c-.56.153-1.113.008-1.53-.27a4.44 4.44 0 0 0-.501-.29c-.447-.222-.85-.629-.997-1.189l-.289-1.105c-.029-.11-.101-.143-.137-.146a6.6 6.6 0 0 0-1.142 0ZM11 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM9.5 8a1.5 1.5 0 1 0-3.001.001A1.5 1.5 0 0 0 9.5 8Z';
+  const CHECK_PATH = 'M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z';
+  const X_PATH = 'M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z';
+  const CHEVRON_LEFT_PATH = 'M9.78 12.78a.75.75 0 0 1-1.06 0L4.47 8.53a.75.75 0 0 1 0-1.06l4.25-4.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042L6.06 8l3.72 3.72a.75.75 0 0 1 0 1.06Z';
+  const CHEVRON_RIGHT_PATH = 'M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z';
+  const PLAY_PATH = 'M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm4.879-2.773 4.264 2.559a.25.25 0 0 1 0 .428l-4.264 2.559A.25.25 0 0 1 6 10.559V5.442a.25.25 0 0 1 .379-.215Z';
+  const STOP_PATH = 'M5.75 4h4.5c.966 0 1.75.784 1.75 1.75v4.5A1.75 1.75 0 0 1 10.25 12h-4.5A1.75 1.75 0 0 1 4 10.25v-4.5C4 4.784 4.784 4 5.75 4Z';
+  const PENCIL_PATH = 'M11.013 1.427a1.75 1.75 0 0 1 2.474 0l1.086 1.086a1.75 1.75 0 0 1 0 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 0 1-.927-.928l.929-3.25c.081-.286.235-.547.445-.758l8.61-8.61Zm.176 4.823L9.75 4.81l-6.286 6.287a.253.253 0 0 0-.064.108l-.558 1.953 1.953-.558a.253.253 0 0 0 .108-.064Zm1.238-3.763a.25.25 0 0 0-.354 0L10.811 3.75l1.439 1.44 1.263-1.263a.25.25 0 0 0 0-.354Z';
+  const TRASH_PATH = 'M11 1.75V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75ZM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.748 1.748 0 0 1 10.595 15h-5.19a1.75 1.75 0 0 1-1.741-1.575l-.66-6.6a.75.75 0 1 1 1.492-.15ZM6.5 1.75V3h3V1.75a.25.25 0 0 0-.25-.25h-2.5a.25.25 0 0 0-.25.25Z';
+  const SEARCH_PATH = 'M10.68 11.74a6 6 0 0 1-7.922-8.982 6 6 0 0 1 8.982 7.922l3.04 3.04a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215ZM11.5 7a4.499 4.499 0 1 0-8.997 0A4.499 4.499 0 0 0 11.5 7Z';
+  const TASKLIST_PATH = 'M2 2h4a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1Zm4.655 8.595a.75.75 0 0 1 0 1.06L4.03 14.28a.75.75 0 0 1-1.06 0l-1.5-1.5a.749.749 0 0 1 .326-1.275.749.749 0 0 1 .734.215l.97.97 2.095-2.095a.75.75 0 0 1 1.06 0ZM9.75 2.5h5.5a.75.75 0 0 1 0 1.5h-5.5a.75.75 0 0 1 0-1.5Zm0 5h5.5a.75.75 0 0 1 0 1.5h-5.5a.75.75 0 0 1 0-1.5Zm0 5h5.5a.75.75 0 0 1 0 1.5h-5.5a.75.75 0 0 1 0-1.5Zm-7.25-9v3h3v-3Z';
+  const VIEW_MODE_PATHS = { timeline: 'M4.75 7a.75.75 0 0 0 0 1.5h4.5a.75.75 0 0 0 0-1.5h-4.5ZM5 4.75A.75.75 0 0 1 5.75 4h5.5a.75.75 0 0 1 0 1.5h-5.5A.75.75 0 0 1 5 4.75ZM6.75 10a.75.75 0 0 0 0 1.5h4.5a.75.75 0 0 0 0-1.5h-4.5ZM0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0 1 14.25 16H1.75A1.75 1.75 0 0 1 0 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25V1.75a.25.25 0 0 0-.25-.25Z', calendar: 'M4.75 0a.75.75 0 0 1 .75.75V2h5V.75a.75.75 0 0 1 1.5 0V2h1.25c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 13.25 16H2.75A1.75 1.75 0 0 1 1 14.25V3.75C1 2.784 1.784 2 2.75 2H4V.75A.75.75 0 0 1 4.75 0ZM2.5 7.5v6.75c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25V7.5Zm10.75-4H2.75a.25.25 0 0 0-.25.25V6h11V3.75a.25.25 0 0 0-.25-.25Z', list: TASKS_PATH };
   let lastRoute = null;
   let tick = null;
   let actionAnimationTimer = null;
@@ -30,10 +40,6 @@
   let extensionContextActive = true;
   let root = null;
   let shadow = null;
-  let fullWidthPopupRoot = null;
-  let fullWidthPopupShadow = null;
-  let fullWidthPopupOpen = false;
-  let timelineWindowTimer = null;
   let timelineView = null;
   let activityTimelineView = null;
   let activityInitialFocusPending = false;
@@ -114,6 +120,9 @@
   let descriptionDraft = null;
   const timelineDescriptionDrafts = new Map();
   let pageState = { configured: null, active: null, pendingCount: 0, pendingWrites: [], projects: [] };
+  let syncIssuesSignature = null, syncIssuesOpen = false, selectedSyncIssueKey = null, syncIssueError = '';
+  const stoppedOverlapDetails = new Map();
+  let stoppedOverlapQueueSignature = null, overlapEditorCloseWatch = null;
   let recent = [];
   let quickStartRecent = [];
   let recentLoaded = false;
@@ -125,7 +134,6 @@
   let recentLoadId = 0;
   let timesLoadId = 0;
   let activityStateLoadId = 0;
-  let remoteTimerLoadId = 0;
   let activityCalendarLoadId = 0;
   let activityCalendarStatusText = '';
   let calendarWeekLoadingId = null, selectedTimesCalendarLoadingId = null;
@@ -155,18 +163,22 @@
   const inlineBoundaryLinks = new Map();
   const inlineGroupSaves = new Map();
   let errorText = '';
+  let activityErrorAction = null;
   let errorCode = '';
   let todayReportDate = '';
   let summaryUpdatedAt = 0;
   let summaryActive = null;
   let connectionError = null;
+  let trackingRateLimit;
+  if (timesMode) document.addEventListener('clockoli:tracking-rate-limit', event => {
+    trackingRateLimit = event.detail?.code === 'rate_limit' ? event.detail : null;
+    if (errorText && errorCode === 'all_destinations_failed') renderUi();
+  });
   let compactSurface = null;
-  let popupReturnFocus = null;
-  let popupFocusPending = false;
-  let popupOpening = false;
   let timeEntryFormLoad = null;
   let timeEntryFormHost = null;
   let timeEntryFormDialog = null;
+  let timeEntrySearchRecord = null;
 
   const LONG_ENTRY_HOURS = 12;
   const HOUR_MS = 3_600_000;
@@ -174,6 +186,8 @@
   const resolveTaskColor = globalThis.ClockoliTaskTimeline?.createColorResolver?.();
   const motionPreference = globalThis.matchMedia?.('(prefers-reduced-motion: no-preference)');
   let popupTask = null;
+  let actionSourceTask = null;
+  const ACTION_CONTEXT_KEY = 'clockoli-toolbar-task-context';
 
   function normalizeTaskUrl(value) {
     const candidate = String(value || '');
@@ -289,6 +303,12 @@
   function taskFromUrl(value, title = '') {
     const taskUrl = normalizeTaskUrl(value);
     return taskUrl ? { taskUrl, taskTitle: String(title || '').trim().slice(0, 300) } : null;
+  }
+  // GitHub tab titles read "Title by author · Pull Request #12 · owner/repo"; keep "Title #12" as GitHub shows it.
+  function githubTabTitle(title) {
+    const text = String(title || '');
+    const match = text.match(/^(.*?)(?: by \S+)? · (?:Pull Request|Issue) #(\d+) · \S+\/\S+$/);
+    return match ? `${match[1]} #${match[2]}` : text.replace(/ · GitHub$/, '');
   }
   function projectPaneIssueUrl(value) {
     try {
@@ -601,7 +621,6 @@
     clearInterval(tick); tick = null;
     clearInterval(actionAnimationTimer); actionAnimationTimer = null;
     clearInterval(navigationTimer); navigationTimer = null;
-    clearInterval(timelineWindowTimer); timelineWindowTimer = null;
     if (typeof clearTimeout === 'function') clearTimeout(pendingRefreshTimer); pendingRefreshTimer = null;
     clearClockoliParticipantRetry();
     timelineObserver?.disconnect?.(); timelineObserver = null;
@@ -670,7 +689,7 @@
   async function refreshPopupTask() {
     if (!popupMode) return taskFromLocation();
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    popupTask = taskFromUrl(projectPaneIssueUrl(tab?.url) || tab?.url, tab?.title || '');
+    popupTask = taskFromUrl(projectPaneIssueUrl(tab?.url) || tab?.url, githubTabTitle(tab?.title));
     return popupTask;
   }
 
@@ -742,7 +761,25 @@
     const shape = document.createElementNS('http://www.w3.org/2000/svg', 'path'); shape.setAttribute('d', path); svg.append(shape); return svg;
   }
 
-  function clockoliMark(size = 22) {
+  function iconButton(label, iconName, path, className, handler) {
+    const node = button('', className, handler);
+    node.title = label; node.setAttribute('aria-label', label); node.append(icon(iconName, path));
+    return node;
+  }
+
+  function savedNotice(className) {
+    const notice = el('span', 'Saved', className);
+    notice.prepend(icon('check', CHECK_PATH));
+    return notice;
+  }
+
+  function entryActionButton(label, kind, handler) {
+    const action = button(label, kind === 'edit' ? 'link-button entry-edit' : 'danger-outline entry-delete', handler);
+    action.append(kind === 'edit' ? icon('pencil', PENCIL_PATH) : icon('trash', TRASH_PATH));
+    return action;
+  }
+
+  function clockoliMark(size = 20) {
     const ns = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(ns, 'svg');
     svg.setAttribute('viewBox', '65 78 296 310'); svg.setAttribute('width', String(size)); svg.setAttribute('height', String(size));
@@ -807,6 +844,26 @@
     return { start: day.getTime(), end: end.getTime() };
   }
 
+  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+  // ISO week 1 is the week holding January 4, so both helpers count from that Monday.
+  function isoWeekValue(value) {
+    const monday = weekWindow(value).start;
+    const thursday = new Date(monday);
+    thursday.setDate(thursday.getDate() + 3);
+    const year = thursday.getFullYear();
+    const firstMonday = weekWindow(new Date(year, 0, 4)).start;
+    const week = Math.round((monday - firstMonday) / WEEK_MS) + 1;
+    return `${year}-W${String(week).padStart(2, '0')}`;
+  }
+
+  function weekStartFromIsoValue(value) {
+    const [year, week] = value.split('-W').map(Number);
+    const monday = new Date(weekWindow(new Date(year, 0, 4)).start);
+    monday.setDate(monday.getDate() + (week - 1) * 7);
+    return monday;
+  }
+
   function resetWeekForViewSwitch() {
     selectedWeekStart = null;
     activityTimelineView = null;
@@ -822,7 +879,7 @@
       try { timelineInstance.setCalendarRange(weekWindow()); }
       finally { suppressCalendarNavigate = false; }
     }
-    const navigation = (fullWidthPopupShadow || shadow)?.querySelector('.week-navigation');
+    const navigation = (shadow)?.querySelector('.week-navigation');
     const { startDate, endDate } = timesRange();
     const label = navigation?.querySelector('.week-navigation-label');
     if (label) label.textContent = `${startDate} – ${endDate}`;
@@ -834,21 +891,36 @@
     const navigation = el('div', undefined, 'week-navigation');
     navigation.setAttribute('role', 'group');
     navigation.setAttribute('aria-label', 'Browse weeks');
-    const label = el('span', undefined, 'week-navigation-label');
+    const label = el('button', undefined, 'week-navigation-label');
+    label.type = 'button';
+    label.title = 'Pick a week';
+    const picker = el('input', undefined, 'week-navigation-picker');
+    picker.type = 'week';
+    picker.tabIndex = -1;
+    picker.setAttribute('aria-hidden', 'true');
+    label.addEventListener('click', () => {
+      picker.max = isoWeekValue(Date.now());
+      picker.value = isoWeekValue(weekWindow().start);
+      picker.showPicker();
+    });
     let nextControl;
     const updateNavigation = () => {
       const { startDate, endDate } = timesRange();
-      label.textContent = (timesMode && activityViewMode === 'list') || ((popupMode || fullWidthPopupOpen) && timelineViewMode === 'list')
+      label.textContent = (timesMode && activityViewMode === 'list') || ((popupMode) && timelineViewMode === 'list')
         ? activityWeekRangeLabel({ startDate, endDate }) : `${startDate} – ${endDate}`;
       nextControl.disabled = weekWindow().start >= weekWindow(Date.now()).start;
     };
-    for (const [direction, name, glyph] of [[-1, 'Previous week', '‹'], [1, 'Next week', '›']]) {
-      const control = button(glyph, 'secondary week-navigation-button', async () => {
+    picker.addEventListener('change', async () => {
+      if (!picker.value) return;
+      try { await selectWeek(weekStartFromIsoValue(picker.value)); }
+      finally { updateNavigation(); }
+    });
+    for (const [direction, name, iconName, path] of [[-1, 'Previous week', 'chevron-left', CHEVRON_LEFT_PATH], [1, 'Next week', 'chevron-right', CHEVRON_RIGHT_PATH]]) {
+      const control = iconButton(name, iconName, path, 'secondary week-navigation-button', async () => {
         try { await shiftWeek(direction); }
         finally { updateNavigation(); }
       });
-      control.setAttribute('aria-label', name);
-      if (direction < 0) navigation.append(control, label);
+      if (direction < 0) navigation.append(control, label, picker);
       else { nextControl = control; navigation.append(control); }
     }
     updateNavigation();
@@ -857,10 +929,10 @@
 
   function updateWeekNavigationLabel() {
     const { startDate, endDate } = timesRange();
-    for (const scope of [shadow, fullWidthPopupShadow]) {
+    for (const scope of [shadow]) {
       const navigation = scope?.querySelector('.week-navigation');
       const label = navigation?.querySelector('.week-navigation-label');
-      if (label) label.textContent = (timesMode && activityViewMode === 'list') || ((popupMode || fullWidthPopupOpen) && timelineViewMode === 'list')
+      if (label) label.textContent = (timesMode && activityViewMode === 'list') || ((popupMode) && timelineViewMode === 'list')
         ? activityWeekRangeLabel({ startDate, endDate }) : `${startDate} – ${endDate}`;
       const next = navigation?.querySelector('[aria-label="Next week"]');
       if (next) next.disabled = weekWindow().start >= weekWindow(Date.now()).start;
@@ -869,7 +941,7 @@
 
   function updateCalendarWeekLoading() {
     const active = calendarWeekLoadingId !== null || selectedTimesCalendarLoadingId !== null;
-    for (const scope of [shadow, fullWidthPopupShadow]) {
+    for (const scope of [shadow]) {
       const overlay = scope?.querySelector('.calendar-week-loading');
       if (overlay) overlay.hidden = !active || (timesMode ? activityViewMode !== 'calendar' : timelineViewMode !== 'calendar');
     }
@@ -883,14 +955,14 @@
     if (!navigation) return;
     const oldNavigation = host.querySelector('.week-navigation');
     if (oldNavigation && oldNavigation !== navigation) oldNavigation.remove();
-    const activityChart = timesMode || popupMode || fullWidthPopupOpen ? root.querySelector('.timeline-shell') : null;
+    const activityChart = timesMode || popupMode ? root.querySelector('.timeline-shell') : null;
     const oldChartNavigation = activityChart?.querySelector('.week-navigation');
     if (oldChartNavigation && oldChartNavigation !== navigation) oldChartNavigation.remove();
     activityChart?.classList.toggle('calendar-week-navigation', mode === 'calendar');
     if (activityChart && mode !== 'list') {
       navigation.removeAttribute('slot');
       activityChart.append(navigation);
-    } else if ((popupMode || fullWidthPopupOpen) && mode === 'list') {
+    } else if ((popupMode) && mode === 'list') {
       navigation.removeAttribute('slot');
       const toolbar = root.querySelector('.popup-list-toolbar');
       if (toolbar) toolbar.insertBefore(navigation, toolbar.querySelector('.times-refresh'));
@@ -906,6 +978,10 @@
   function shiftWeek(direction) {
     const current = new Date(weekWindow().start);
     current.setDate(current.getDate() + 7 * direction);
+    return selectWeek(current);
+  }
+
+  function selectWeek(current) {
     if (current.getTime() > weekWindow(Date.now()).start) return;
     const previousWeek = selectedWeekStart;
     const previousActivityView = activityTimelineView, previousTimelineView = timelineView;
@@ -985,7 +1061,7 @@
     for (const section of sections) {
       const span = section.querySelector('.activity-weekly-range');
       if (span) {
-        span.textContent = timesMode || popupMode || fullWidthPopupOpen
+        span.textContent = timesMode || popupMode
           ? activityWeekRangeLabel(range)
           : `${range.startDate} – ${range.endDate}`;
       }
@@ -996,7 +1072,7 @@
   }
 
   function updateListWeekTotal() {
-    for (const scope of [shadow, fullWidthPopupShadow]) {
+    for (const scope of [shadow]) {
       const total = scope?.querySelector('.times-list-total,.popup-list-total');
       if (total) total.textContent = listWeekTotalText();
     }
@@ -1048,7 +1124,7 @@
       selectedTimesCalendarLoadingId = null;
     }
     const nextWeek = weekWindow(range.start).start;
-    (timesMode ? shadow : fullWidthPopupShadow || shadow)?.querySelector('.timeline-edit-error')?.remove();
+    (timesMode ? shadow : shadow)?.querySelector('.timeline-edit-error')?.remove();
     const previousWeek = selectedWeekStart;
     const previousActivityView = activityTimelineView, previousTimelineView = timelineView;
     if (selectedWeekStart !== nextWeek) {
@@ -1181,7 +1257,6 @@
 
   function applyMenuData(data, fresh = true) {
     const incoming = Array.isArray(data) ? data : data?.recent ?? [];
-    const previousPending = new Set(pageState.pendingWrites?.map(item => item.id) ?? []);
     if (!timesMode && Array.isArray(data?.recent)) quickStartRecent = data.recent;
     recent = recentLoaded && (timesMode || selectedWeekStart !== null)
       ? mergeActivityRecords(incoming, timesRange(), Boolean(data?.partial) || !timesMode) : incoming;
@@ -1198,9 +1273,6 @@
       const pendingIds = new Set(pageState.pendingWrites.map(item => item.id));
       reconcileQueuedInlineOperations(pendingIds);
       reconcileTimelineQueuedOperations(pendingIds);
-      if (timesMode && [...previousPending].some(id => !pendingIds.has(id))) {
-        void refreshRemoteTimerStatus().catch(setError);
-      }
     }
     for (const [entryId] of timelineOptimisticCompletions) {
       if (recent.some(entry => entry.id === entryId && entry._sha && !entry._pending)) timelineOptimisticCompletions.delete(entryId);
@@ -1228,13 +1300,10 @@
     if (pageState.configured == null) { errorText = ''; errorCode = ''; connectionError = null; }
     const previousParticipantState = `${taskUrlOf(pageState.active) || ''}:${pageState.active?.startedAt || ''}:${pageState.pendingCount || 0}`;
     recordQueueDiagnostics(pageState.pendingWrites, data?.pendingWrites ?? []);
-    const remoteTimers = Object.hasOwn(data ?? {}, 'remoteTimers') ? data.remoteTimers : pageState.remoteTimers;
     pageState = reconcileTimelineAcceptedActive(data);
-    pageState.remoteTimers = data?.configured === false ? [] : remoteTimers;
     if (!timesMode && Array.isArray(data?.recent)) quickStartRecent = data.recent;
     mergeLocalPendingActivity(data?.recent);
     root?.setAttribute('data-clockoli-width', pageState.interfaceWidth === 'full' ? 'full' : 'contained');
-    fullWidthPopupRoot?.setAttribute('data-clockoli-width', pageState.interfaceWidth === 'full' ? 'full' : 'contained');
     applyTrackedTotals(data);
     const pendingIds = new Set(pageState.pendingWrites?.map(item => item.id) ?? []);
     reconcileQueuedInlineOperations(pendingIds);
@@ -1363,7 +1432,6 @@
         if (timesMode) {
           const remainingIds = new Set(pageState.pendingWrites?.map(item => item.id) ?? []);
           if ([...pendingIds].some(id => !remainingIds.has(id))) {
-            void refreshRemoteTimerStatus().catch(setError);
             await refreshRecent(true);
           }
         } else if (Array.isArray(data?.recent)) applyMenuData(data.recent, recentFresh);
@@ -1415,7 +1483,7 @@
     return result;
   }
 
-  function timePicker(label, original, draft = null, { compact = false, timezone = '', onChange = () => {}, onFocus = () => {} } = {}) {
+  function timePicker(label, original, draft = null, { compact = false, timezone = '', onChange = () => {}, onFocus = () => {}, onSet = () => {} } = {}) {
     let template = validTimestamp(draft?.timestamp) ? draft.timestamp : original;
     const initial = timestampParts(template, timezone), group = el('fieldset', undefined, `time-picker${compact ? ' compact-time-picker' : ''}`), controls = [];
     group.append(el('legend', label));
@@ -1434,6 +1502,7 @@
     const changed = () => { refreshValidity(); onChange(currentDraft()); };
     const applyTimestamp = (timestamp, notify = false) => {
       const parts = timestampParts(timestamp, timezone); template = timestamp; dateField.value = parts.date; hourField.value = parts.hour; minuteField.value = parts.minute; refreshValidity();
+      onSet(timestamp);
       if (notify) changed();
     };
     dateField.addEventListener('input', changed); hourField.addEventListener('input', changed); minuteField.addEventListener('input', changed);
@@ -1459,7 +1528,7 @@
     if (popupMode) return taskTitleOf(popupTask);
     if (timesMode) return '';
     const node = document.querySelector('[data-testid="issue-title"], .js-issue-title, bdi.js-issue-title');
-    const title = (node?.textContent || document.title || '').replace(/ · GitHub$/, '').trim();
+    const title = (node?.textContent || githubTabTitle(document.title)).trim();
     return title.slice(0, 300);
   }
 
@@ -1531,18 +1600,18 @@
   }
 
   function saveCheckButton(label, handler) {
-    const save = button('✓', 'save-check', async (_event, node) => {
+    const save = button('', 'save-check', async (_event, node) => {
       node.disabled = true;
       try { await handler(); }
       catch (error) { setError(error); }
       finally { node.disabled = false; }
     });
-    save.title = label; save.setAttribute('aria-label', label);
+    save.title = label; save.setAttribute('aria-label', label); save.append(icon('check', CHECK_PATH));
     save.addEventListener('mousedown', event => event.preventDefault());
     return save;
   }
 
-  function setError(error = '') { if (isExtensionContextInvalidated(error)) { deactivateExtensionContext(); return; } if (error?.name === 'AbortError' || error?.code === 'aborted') return; errorText = error?.message || String(error || ''); errorCode = error?.code || ''; connectionError = errorText ? { ...error, message: errorText, code: errorCode } : null; renderUi(); }
+  function setError(error = '', action = null) { if (isExtensionContextInvalidated(error)) { deactivateExtensionContext(); return; } if (error?.name === 'AbortError' || error?.code === 'aborted') return; errorText = error?.message || String(error || ''); activityErrorAction = action; errorCode = error?.code || ''; connectionError = errorText ? { ...error, message: errorText, code: errorCode } : null; renderUi(); }
 
   function closeMenu() { menuOpen = false; menuScrollTop = 0; cancelActiveInlineDraft(); if (pageState.configured != null) { errorText = ''; errorCode = ''; } renderUi(); }
 
@@ -1803,11 +1872,12 @@
     const day = el('div', relativeDayLabel((draft?.start?.date || timestampParts(entry.startedAt, entry.timezone).date)), 'entry-day');
     const duration = el('span', formatDuration(entry.durationSeconds), 'inline-duration'); duration.title = duration.textContent;
     const unsaved = el('span', 'Unsaved', 'inline-unsaved'); unsaved.hidden = !draft;
-    let startPicker, stopPicker, save, cancel;
+    let startPicker, stopPicker, save, cancel, lastValidStart;
     const updateDraft = group => {
       if (!startPicker || !stopPicker) return;
       const previous = inlineDrafts.get(key) || {};
-      const value = { ...previous, entry, start: startPicker.draft(), stop: stopPicker.draft(), group: group || previous.group || key };
+      const value = { ...previous, entry, start: { ...startPicker.draft(), lastValidInstant: lastValidStart },
+        stop: stopPicker.draft(), group: group || previous.group || key };
       inlineDrafts.set(key, value); activeInlineKey ||= key;
       unsaved.hidden = false;
       if (save && cancel) { save.hidden = false; cancel.hidden = false; save.parentElement?.classList.add('dirty'); }
@@ -1822,12 +1892,29 @@
       const group = inlineDrafts.get(key)?.group || key;
       updateDraft(group); linkCrossedTimeBoundaries(entry, boundary, group); refreshOverlapWarnings();
     };
+    const moveStart = () => {
+      try {
+        const nextStart = new Date(startPicker.value()).getTime();
+        const previousStart = lastValidStart ?? new Date(entry.startedAt).getTime();
+        try {
+          const previousEnd = new Date(stopPicker.value()).getTime();
+          stopPicker.setValue(timestampAtOriginalOffset(entry.endedAt, previousEnd + nextStart - previousStart, entry.timezone));
+        } catch { /* An incomplete Stop remains a draft, not a boundary to move. */ }
+        lastValidStart = nextStart;
+      } catch { /* Keep the draft intact until the date and time are valid. */ }
+      remember('start');
+      linkCrossedTimeBoundaries(entry, 'stop', inlineDrafts.get(key)?.group || key);
+      refreshOverlapWarnings();
+    };
     startPicker = timePicker('Start', entry.startedAt, draft?.start, {
-      compact: true, timezone: entry.timezone, onChange: () => remember('start'), onFocus: () => activateTimeInput(key),
+      compact: true, timezone: entry.timezone, onChange: moveStart, onFocus: () => activateTimeInput(key),
+      onSet: timestamp => { lastValidStart = new Date(timestamp).getTime(); },
     });
     stopPicker = timePicker('Stop', entry.endedAt, draft?.stop, {
       compact: true, timezone: entry.timezone, onChange: () => remember('stop'), onFocus: () => activateTimeInput(key),
     });
+    if (Number.isFinite(draft?.start?.lastValidInstant)) lastValidStart = draft.start.lastValidInstant;
+    else try { lastValidStart = new Date(startPicker.value()).getTime(); } catch { /* Incomplete drafts stay editable. */ }
     const saveGroupOnce = async group => {
       try {
         const submittedDrafts = new Map([...inlineDrafts.entries()].filter(([, value]) => value.group === group)
@@ -1932,7 +2019,15 @@
         container.append(stylesheet, anchor);
         document.body.append(host);
         timeEntryFormHost = host;
-        const dialog = mountAddTime(anchor, { container, send: async () => ({ configured: true, recent: [] }) });
+        const dialog = mountAddTime(anchor, { container, searchIsCompleteCatalog: false, send: async request => {
+          if (request.type !== 'SEARCH_TASKS') return { configured: true, recent: [] };
+          const record = timeEntrySearchRecord;
+          if (!record?._path || !record?.id || !record?.destinationId || record._active) {
+            throw new Error('Completed entry is unavailable for task search.');
+          }
+          return send({ type: 'SEARCH_ENTRY_TASKS', destinationId: record.destinationId,
+            path: record._path, recordId: record.id, query: request.query });
+        } });
         timeEntryFormDialog = dialog;
         return dialog;
       })().catch(error => { timeEntryFormLoad = null; timeEntryFormHost?.remove(); timeEntryFormHost = null; timeEntryFormDialog = null; throw error; });
@@ -1943,6 +2038,7 @@
       beginRecordEdit(entry); return;
     }
     if (entry._active) {
+      timeEntrySearchRecord = null;
       if (pageState.active?.id !== entry.id) throw new Error('The running timer changed. Reload before editing it.');
       form.openEdit({ ...entry, taskUrl: storedTaskIdentityOf(entry), taskTitle: taskTitleOf(entry) }, async value => {
         if (value.startedAt !== entry.startedAt) await queueActiveStartEdit(entry, value.startedAt);
@@ -1950,12 +2046,17 @@
       return;
     }
     const current = recent.find(item => item.id === entry.id && item._path === entry._path && item.destinationId === entry.destinationId) || entry;
+    timeEntrySearchRecord = current;
     form.openEdit({ taskUrl: storedTaskIdentityOf(current), taskTitle: taskTitleOf(current),
       destinationId: current.destinationId, startedAt: current.startedAt,
       endedAt: current.endedAt, description: current.description || '' }, async value => {
-        const identity = value.taskUrl === storedTaskIdentityOf(current)
-          ? value.taskUrl : taskFromUrl(value.taskUrl, value.taskTitle)?.taskUrl;
-        if (!identity) throw new Error('Enter a valid HTTP(S) task URL.');
+        const imported = value.taskUrl && !/^https?:\/\//i.test(value.taskUrl);
+        if (imported && value.destinationId !== current.destinationId) {
+          throw new Error('The selected imported task belongs to a different time repository.');
+        }
+        const identity = value.taskUrl === storedTaskIdentityOf(current) ? value.taskUrl
+          : imported ? storedTaskIdentityOf(value.taskUrl) : taskFromUrl(value.taskUrl, value.taskTitle)?.taskUrl;
+        if (!identity || imported && !value.destinationId) throw new Error('Select an existing imported task or enter an HTTP(S) task URL.');
         const edits = { ...(identity === storedTaskIdentityOf(current) && !taskUrlOf(current) ? {} : { taskUrl: identity }),
           taskTitle: value.taskTitle, startedAt: value.startedAt,
           endedAt: value.endedAt, description: value.description };
@@ -1965,6 +2066,166 @@
         await queueCalendarEntry(current, edits);
         renderUi();
       }, trigger);
+  }
+
+  function overlapClock(value) {
+    if (!validTimestamp(value)) return '';
+    return new Date(value).toLocaleTimeString('en-GB',
+      { hour: '2-digit', minute: '2-digit', hour12: false });
+  }
+
+  function overlapLocalDate(value) {
+    return new Date(value).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+
+  function overlapLocalRange(start, end) {
+    const beginDate = overlapLocalDate(start), endDate = overlapLocalDate(end);
+    return `${beginDate} ${overlapClock(start)}–${beginDate === endDate ? '' : `${endDate} `}${overlapClock(end)}`;
+  }
+
+  function loadStoppedOverlap(item) {
+    const key = `${item.destinationId}:${item.id}`;
+    if (stoppedOverlapDetails.has(key)) return;
+    const queueSignature = stoppedOverlapQueueSignature;
+    const request = { loading: true };
+    let settledCurrent = false;
+    stoppedOverlapDetails.set(key, request);
+    void send({ type: 'GET_STOPPED_OVERLAP', destinationId: item.destinationId, id: item.id }).then(data => {
+      if (queueSignature === stoppedOverlapQueueSignature && stoppedOverlapDetails.get(key) === request) {
+        stoppedOverlapDetails.set(key, { data }); settledCurrent = true;
+      }
+    }).catch(error => {
+      if (queueSignature === stoppedOverlapQueueSignature && stoppedOverlapDetails.get(key) === request) {
+        stoppedOverlapDetails.set(key, { error: error.message || 'Could not load the entries.' }); settledCurrent = true;
+      }
+    }).finally(() => {
+      if (syncIssuesOpen && settledCurrent) {
+        syncIssuesSignature = null; renderSyncIssues();
+      }
+    });
+  }
+
+  function projectedStoppedOverlap(item, completion) {
+    const blocked = completion.subjects?.find(subject =>
+      validTimestamp(subject.proposed?.startedAt) && validTimestamp(subject.proposed?.endedAt))?.proposed;
+    if (!blocked) return null;
+    const matches = (pageState.pendingWrites ?? []).filter(write => write.destinationId === item.destinationId
+      && write.operation === 'editEntry').flatMap(write => write.subjects ?? []).filter(subject =>
+        validTimestamp(subject.original?.startedAt) && validTimestamp(subject.original?.endedAt)
+        && Date.parse(subject.original.startedAt) < Date.parse(blocked.endedAt)
+        && Date.parse(subject.original.endedAt) > Date.parse(blocked.startedAt));
+    if (matches.length !== 1) return null;
+    const pending = recent.find(entry => entry.id === item.id && entry.destinationId === item.destinationId
+      && entry.startedAt === blocked.startedAt && entry.endedAt === blocked.endedAt);
+    return { previous: matches[0].original, queuedPrevious: matches[0].proposed,
+      blocked: { ...blocked, ...(pending ? { taskUrl: pending.taskUrl, taskTitle: pending.taskTitle } : {}) },
+      editable: false, verified: false };
+  }
+
+  function overlapMessageError(error) {
+    return /^Message (?:RESOLVE|DELETE)_STOPPED_OVERLAP is not allowed from this sender$/.test(error?.message || '')
+      ? new Error('Reload Clockoli and reopen Activity to use the updated background. Your pending time remains in this browser.')
+      : error;
+  }
+
+  function editStoppedOverlap(item, side, record, trigger) {
+    const form = globalThis.ClockoliTimeEntryForm;
+    if (!form?.openEdit) {
+      syncIssueError = 'The time editor is unavailable. Reload Activity and try again.';
+      syncIssuesSignature = null; renderSyncIssues();
+      return;
+    }
+    form.openEdit({ ...record, _overlapBoundary: side === 'previous' ? 'end' : 'start',
+      description: record.description || '' }, async value => {
+      if (value.taskUrl !== record.taskUrl || value.taskTitle !== record.taskTitle
+          || value.description !== (record.description || '')) {
+        throw new Error('Only the time range can be changed here. Edit the task or description in Activity after resolving the overlap.');
+      }
+      let result;
+      try {
+        result = await send({ type: 'RESOLVE_STOPPED_OVERLAP', destinationId: item.destinationId,
+          id: item.id, side, startedAt: value.startedAt, endedAt: value.endedAt });
+      } catch (error) { throw overlapMessageError(error); }
+      stoppedOverlapDetails.delete(`${item.destinationId}:${item.id}`);
+      syncIssueError = '';
+      if (!result?.resolved) throw new Error('Your edited times are stored locally, but GitHub has not accepted all changes. Review Activity; do not clear extension data.');
+      recentLoaded = false;
+      void refreshRecent(true).catch(setError);
+    }, trigger);
+  }
+
+  async function deleteStoppedOverlap(item, side, trigger) {
+    const prompt = side === 'previous'
+      ? 'Delete the earlier saved entry? Its unsynced edit will also be removed. The pending timer will be kept.'
+      : 'Delete the pending timer and its tracked time? The earlier entry and its unsynced edit will be kept.';
+    if (!confirm(prompt)) return;
+    trigger.disabled = true;
+    try {
+      const result = await send({ type: 'DELETE_STOPPED_OVERLAP', destinationId: item.destinationId, id: item.id, side });
+      stoppedOverlapDetails.delete(`${item.destinationId}:${item.id}`);
+      recentLoaded = false;
+      await refreshRecent(true);
+      if (!result?.deleted || (side === 'previous' && !result.resolved)) {
+        throw new Error('The deletion is not fully synced. Keep this browser data and review Activity.');
+      }
+      syncIssueError = '';
+    } catch (error) {
+      syncIssueError = overlapMessageError(error).message || 'Deletion could not be verified. Your pending changes remain in this browser.';
+      syncIssuesSignature = null;
+      renderSyncIssues();
+    } finally { trigger.disabled = false; }
+  }
+
+  function renderStoppedOverlap(box, item, data) {
+    const { previous, blocked, queuedPrevious } = data ?? {};
+    if (!previous || !blocked || !validTimestamp(previous.startedAt) || !validTimestamp(previous.endedAt)
+        || !validTimestamp(blocked.startedAt) || !validTimestamp(blocked.endedAt)) return false;
+    const begin = Math.max(Date.parse(previous.startedAt), Date.parse(blocked.startedAt));
+    const end = Math.min(Date.parse(previous.endedAt), Date.parse(blocked.endedAt));
+    if (end <= begin) return false;
+    const pair = el('div', undefined, 'sync-overlap-pair');
+    pair.append(el('h3', `Overlap · ${overlapLocalDate(new Date(begin).toISOString())} ${overlapClock(new Date(begin).toISOString())}`));
+    const card = (side, record, label, proposed) => {
+      const node = el('div', undefined, 'entry-record sync-overlap-card');
+      const timeRow = el('div', undefined, 'entry-time-row');
+      timeRow.append(el('span', overlapLocalRange(record.startedAt, record.endedAt),
+        'entry-time-range entry-time-display sync-overlap-range'));
+      const identity = el('div', undefined, 'entry-record-task-identity');
+      identity.append(siteFavicon(record, 'entry-record-favicon'), taskResult(record, 'entry-record-task-result'));
+      node.append(el('span', label, 'sync-overlap-label'), timeRow, identity);
+      if (proposed?.endedAt && proposed.endedAt !== record.endedAt) {
+        node.append(el('span', `Your unsynced edit ends at ${overlapLocalDate(proposed.endedAt)} ${overlapClock(proposed.endedAt)}.`, 'sync-overlap-proposed'));
+      }
+      const actions = el('div', undefined, 'entry-actions');
+      const edit = entryActionButton('Edit time', 'edit', (_event, trigger) => editStoppedOverlap(item, side,
+        side === 'previous' && proposed ? { ...record, endedAt: proposed.endedAt } : record, trigger));
+      edit.classList.add('sync-overlap-edit');
+      const editLabel = side === 'previous' ? 'Edit earlier entry' : 'Edit pending entry';
+      edit.setAttribute('aria-label', editLabel);
+      edit.title = editLabel;
+      // A local snapshot can open the editor; saving still goes through the
+      // privileged resolver's fresh remote and queue checks.
+      edit.disabled = data.editable === false && data.verified !== false;
+      const deleteLabel = side === 'previous' ? 'Delete earlier entry' : 'Delete pending entry';
+      const remove = entryActionButton(deleteLabel, 'delete', (_event, trigger) => deleteStoppedOverlap(item, side, trigger));
+      remove.setAttribute('aria-label', deleteLabel);
+      remove.title = deleteLabel;
+      actions.append(edit, remove);
+      timeRow.append(actions);
+      return node;
+    };
+    pair.append(card('previous', previous, data.verified === false ? 'Earlier entry · not yet checked on GitHub' : 'Saved on GitHub', queuedPrevious),
+      card('local', blocked, 'Pending · saved in this browser'));
+    if (data.editable !== true) pair.append(el('p', data.verified === false
+      ? 'You can adjust either time. Saving requires a fresh GitHub check; if it fails, your pending time stays in this browser.'
+      : 'Editing is unavailable for these pending changes. Keep this browser data and review the queue.', 'sync-overlap-unavailable'));
+    if (data.verified === false) pair.append(button('Recheck GitHub entry', 'secondary', () => {
+      stoppedOverlapDetails.delete(`${item.destinationId}:${item.id}`);
+      syncIssuesSignature = null;
+      renderSyncIssues();
+    }));
+    box.append(pair);
+    return true;
   }
 
   function recentRecord(entry, overlaps) {
@@ -1988,13 +2249,13 @@
     const inline = inlineTimeEditor(entry), actions = el('div', undefined, 'entry-actions'), day = inline.day;
       const editor = inlineEditors.get(key); if (editor) editor.setOverlap = setOverlap;
       const revealTimeEditor = trigger => openTimeEntryForm(entry, trigger).catch(setError);
-      const edit = button('Edit time', 'link-button entry-edit', async (_event, node) => revealTimeEditor(node));
-      const remove = button('Delete', 'danger-outline entry-delete', async () => { try { await queueTimelineEntryDelete(entry); } catch (error) { setError(error); } });
+      const edit = entryActionButton('Edit time', 'edit', async (_event, node) => revealTimeEditor(node));
+      const remove = entryActionButton('Delete', 'delete', async () => { try { await queueTimelineEntryDelete(entry); } catch (error) { setError(error); } });
       const disabled = Boolean((loadingRecent || !recentFresh) && !entry._pending);
       inline.save.disabled = disabled || inlineGroupSaves.has(draft?.group || key);
       for (const control of [edit, inline.cancel, remove]) control.disabled = disabled;
       inline.setDisabled(disabled);
-      if ((timesMode || popupMode || fullWidthPopupOpen) && trackableTaskIdentityOf(entry)) {
+      if ((timesMode || popupMode) && trackableTaskIdentityOf(entry)) {
         const running = sameTask(entry, pageState.active);
         const label = `${running ? 'Stop' : 'Start'} tracking ${taskTitleOf(entry) || storedTaskIdentityOf(entry)}`;
         const track = button(label, `entry-track-control ${running ? 'entry-stop' : 'entry-track'}`, async (_event, node) => {
@@ -2005,7 +2266,7 @@
             else await restartTimelineEntry(entry);
           } catch (error) { setError(error); }
         });
-        track.title = label; track.setAttribute('aria-label', label);
+        track.title = label; track.setAttribute('aria-label', label); track.append(running ? icon('stop', STOP_PATH) : icon('play', PLAY_PATH));
         track.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
         actions.append(track);
       }
@@ -2050,8 +2311,8 @@
         description.title = 'Edit time'; description.setAttribute('aria-label', 'Edit time');
         record.append(description);
       }
-    if (inlineSavedNotices.has(key)) record.append(el('span', '✓ Saved', 'description-saved entry-description-saved'));
-    if (timesMode || popupMode || fullWidthPopupOpen) record.prepend(timeRow); else record.prepend(day, timeRow);
+    if (inlineSavedNotices.has(key)) record.append(savedNotice('description-saved entry-description-saved'));
+    if (timesMode || popupMode) record.prepend(timeRow); else record.prepend(day, timeRow);
     return record;
   }
 
@@ -2072,7 +2333,6 @@
   function recentRefreshButton() {
     const refresh = button('', 'icon-button', async (event, node) => {
       node.disabled = true;
-      if (timesMode) void refreshRemoteTimerStatus().catch(setError);
       try { errorText = ''; renderUi(); recentLoaded = false; await refreshState(true, true); }
       catch (error) { node.disabled = false; setError(error); }
     });
@@ -2085,7 +2345,7 @@
     inlineEditors.clear();
     if (!timesMode && !hideHeader) {
       const header = el('div', undefined, 'section-head');
-      header.append(el('strong', popupMode || fullWidthPopupOpen ? 'Tracked time' : 'Recent entries'), recentRefreshButton());
+      header.append(el('strong', popupMode ? 'Tracked time' : 'Recent entries'), recentRefreshButton());
       container.append(header);
     }
     if (!recentLoaded && !allowCached) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
@@ -2102,21 +2362,208 @@
     for (const [, group] of [...groups].sort(([left], [right]) => right.localeCompare(left))) container.append(recentGroup(group, overlaps));
   }
 
-  function renderPendingConflicts(container) {
-    const conflicts = (pageState.pendingWrites ?? []).filter(item => item.status === 'conflict');
+  function queuedDateLabel(value) {
+    if (!validEntryDate(value)) return '';
+    return new Date(`${value}T12:00:00Z`).toLocaleDateString('en-GB',
+      { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+  }
+
+  function queuedTimeRange(record) {
+    if (!validTimestamp(record?.startedAt)) return '';
+    if (!validTimestamp(record?.endedAt)) {
+      const started = new Date(record.startedAt).toLocaleTimeString('en-GB',
+        { hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3, hour12: false });
+      return `started ${started} local`;
+    }
+    const time = value => new Date(value).toLocaleTimeString('en-GB',
+      { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
+    return `${time(record.startedAt)}–${time(record.endedAt)} UTC`;
+  }
+
+  function queuedRecordLabel(record) {
+    return [record?.taskTitle || record?.taskUrl || 'Untitled task', queuedDateLabel(record?.entryDate),
+      queuedTimeRange(record)].filter(Boolean).join(' · ');
+  }
+
+  function relatedQueuedCompletion(item, writes = pageState.pendingWrites ?? []) {
+    if (item.operation !== 'startTimer') return null;
+    return writes.find(other => other !== item && other.operation === 'completeTimer'
+      && other.id === item.id && other.destinationId === item.destinationId) ?? null;
+  }
+
+  function blockedStartFor(item, writes = pageState.pendingWrites ?? []) {
+    if (item.operation !== 'completeTimer') return null;
+    return writes.find(other => other.operation === 'startTimer' && other.status === 'conflict'
+      && other.id === item.id && other.destinationId === item.destinationId) ?? null;
+  }
+
+  function renderSyncIssues() {
+    const host = document.getElementById?.('activity-sync-status');
+    if (!host) return;
+    const writes = pageState.pendingWrites ?? [];
+    const editor = document.querySelector('.add-time-dialog[open]');
+    if (editor && host.childElementCount) {
+      if (overlapEditorCloseWatch !== editor) {
+        overlapEditorCloseWatch = editor;
+        editor.addEventListener('close', () => {
+          overlapEditorCloseWatch = null;
+          syncIssuesSignature = null;
+          renderSyncIssues();
+        }, { once: true });
+      }
+      return;
+    }
+    const queueSignature = JSON.stringify(writes);
+    if (queueSignature !== stoppedOverlapQueueSignature) {
+      stoppedOverlapDetails.clear();
+      stoppedOverlapQueueSignature = queueSignature;
+    }
+    const conflicts = writes.filter(item => item.status === 'conflict');
+    const signature = JSON.stringify([selectedSyncIssueKey, writes]);
+    if (signature === syncIssuesSignature && host.childElementCount) return;
+    const wasOpen = Boolean(host.querySelector('dialog')?.open || syncIssuesOpen);
+    const previousScroll = host.querySelector('.sync-issue-list')?.scrollTop ?? 0;
+    syncIssuesSignature = signature;
+    if (!conflicts.length) {
+      host.replaceChildren();
+      syncIssuesOpen = false;
+      selectedSyncIssueKey = null;
+      syncIssueError = '';
+      if (wasOpen) document.querySelector('#activity-view-switcher [aria-pressed="true"]')?.focus();
+      return;
+    }
+    const waiting = writes.length - conflicts.length;
+    const oneStoppedOverlap = timesMode && conflicts.length === 1
+      && conflicts[0].stage === 'startNext' && conflicts[0].conflictReason === 'add_time_overlap_changed'
+      && Boolean(relatedQueuedCompletion(conflicts[0], writes));
+    const banner = el('section', undefined, 'sync-status-banner has-conflicts');
+    banner.setAttribute('role', 'alert');
+    const copy = el('div', undefined, 'sync-status-copy');
+    copy.append(el('strong', `${conflicts.length} ${conflicts.length === 1 ? 'conflict needs' : 'conflicts need'} review`),
+    el('span', `${waiting ? `${waiting} waiting to sync. ` : ''}Keep this browser data until the changes are saved to GitHub.`));
+    const review = button('Review sync issues', 'sync-review-button', () => {
+      syncIssuesOpen = true;
+      stoppedOverlapDetails.clear();
+      syncIssuesSignature = null;
+      renderSyncIssues();
+    });
+    banner.append(copy, review);
+
+    const dialog = el('dialog', undefined, 'sync-issues-dialog');
+    dialog.setAttribute('aria-labelledby', 'sync-issues-title');
+    dialog.addEventListener('close', () => { syncIssuesOpen = false; review.focus(); });
+    const heading = el('header', undefined, 'sync-issues-header');
+    const headingCopy = el('div');
+    const title = el('h2', 'Sync issues'); title.id = 'sync-issues-title';
+    headingCopy.append(title, el('p', oneStoppedOverlap
+      ? 'One overlap needs attention. Your changes remain in this browser.'
+      : `${conflicts.length} ${conflicts.length === 1 ? 'conflict' : 'conflicts'} · ${waiting} waiting. These changes are still in this browser; select one to see why it has not reached GitHub.`));
+    const close = button('Close', 'sync-issues-close', () => dialog.close());
+    heading.append(headingCopy, close);
+    const content = el('div', undefined, 'sync-issues-content');
+    const list = el('div', undefined, 'sync-issue-list');
+    list.setAttribute('role', 'group'); list.setAttribute('aria-label', 'Local changes');
+    const occurrences = new Map();
+    const keys = writes.map(item => {
+      const identity = JSON.stringify([item.destinationId, item.id, item.operation ?? item.stage, item.queuedAt]);
+      const occurrence = occurrences.get(identity) ?? 0;
+      occurrences.set(identity, occurrence + 1);
+      return `${identity}:${occurrence}`;
+    });
+    const previousIndex = keys.indexOf(selectedSyncIssueKey);
+    const selectedIndex = previousIndex < 0 ? writes.indexOf(conflicts[0]) : previousIndex;
+    selectedSyncIssueKey = keys[selectedIndex];
+    const selected = writes[selectedIndex];
+    const focusedOverlap = oneStoppedOverlap && selected.status === 'conflict';
+    if (focusedOverlap) content.classList.add('is-single-overlap');
+    for (const [index, item] of writes.entries()) {
+      const record = item.subjects?.[0]?.original || item.subjects?.[0]?.proposed
+        || relatedQueuedCompletion(item, writes)?.subjects?.[0]?.proposed;
+      const name = record?.taskTitle || record?.taskUrl
+        || (item.operation === 'startTimer' ? 'Timer start' : item.operation === 'completeTimer' ? 'Timer stop' : 'Queued change');
+      const date = queuedDateLabel(record?.entryDate);
+      const status = item.status === 'conflict' ? 'Conflict' : 'Pending sync';
+      const action = item.operation === 'startTimer' ? 'Timer start' : item.operation === 'completeTimer' ? 'Timer stop' : '';
+      const row = button(`${name}${date ? ` · ${date}` : ''}${action ? ` · ${action}` : ''} · ${status}`, 'sync-issue-item', () => {
+        selectedSyncIssueKey = keys[index];
+        syncIssueError = '';
+        syncIssuesSignature = null;
+        renderSyncIssues();
+        host.querySelector('.sync-issue-item[aria-pressed="true"]')?.focus();
+      });
+      row.setAttribute('aria-pressed', String(index === selectedIndex));
+      row.classList.toggle('is-conflict', item.status === 'conflict');
+      list.append(row);
+    }
+    const detail = el('section', undefined, 'sync-issue-detail');
+    detail.setAttribute('aria-label', 'Selected local change');
+    if (syncIssueError) { const error = el('p', syncIssueError, 'sync-issue-error'); error.setAttribute('role', 'alert'); detail.append(error); }
+    if (selected.status === 'conflict') renderPendingConflicts(detail, [selected]);
+    else {
+      detail.append(el('h3', 'Waiting to sync'),
+        el('p', blockedStartFor(selected, writes)
+          ? 'This timer was stopped locally. Its completion is waiting for the earlier start conflict to be resolved before it can sync to GitHub. Keep this browser data.'
+          : 'This change is stored locally and has not yet been confirmed on GitHub. No action is needed while it waits.'));
+      for (const subject of selected.subjects ?? []) {
+        if (subject.original) detail.append(el('p', `Original: ${queuedRecordLabel(subject.original)}`));
+        if (subject.proposed) detail.append(el('p', `Queued change: ${queuedRecordLabel(subject.proposed)}`));
+      }
+    }
+    if (focusedOverlap && writes.length > 2) {
+      const expansion = el('details', undefined, 'sync-other-pending');
+      expansion.append(el('summary', `All queued changes (${writes.length})`), list);
+      detail.append(expansion);
+    }
+    if (!focusedOverlap) content.append(list);
+    content.append(detail);
+    dialog.append(heading, content, el('p', oneStoppedOverlap
+      ? 'Changes remain in this browser until synced. Do not clear extension data.'
+      : 'Do not clear extension data while changes are waiting. Discarding an unsaved timer can lose tracked time; it is not a way to fix an overlap.', 'sync-issues-footnote'));
+    host.replaceChildren(banner, dialog);
+    list.scrollTop = previousScroll;
+    if (wasOpen) dialog.showModal();
+  }
+
+  function renderPendingConflicts(container, conflicts = (pageState.pendingWrites ?? []).filter(item => item.status === 'conflict')) {
     for (const item of conflicts) {
+      const resolve = async (action, refresh) => {
+        try {
+          await send({ type: 'RESOLVE_PENDING', id: item.id, ...(action ? { action } : {}) });
+          syncIssueError = '';
+          recentLoaded = false;
+          await refreshState(refresh, true);
+        } catch (error) {
+          setError(error);
+          if (timesMode) {
+            syncIssueError = 'This change was not resolved. It remains stored locally; check the Activity error and try again.';
+            syncIssuesSignature = null;
+            renderSyncIssues();
+          }
+        }
+      };
       const unsaved = item.conflictReason === 'active_missing_no_completion' || item.conflictReason === 'active_changed_no_completion';
       const savedWithNewerTimer = item.stage === 'clearActive' && item.conflictReason === 'completion_saved_newer_timer';
       const changedAddTime = item.stage === 'startNext' && item.conflictReason === 'add_time_overlap_changed';
+      const completion = changedAddTime ? relatedQueuedCompletion(item) : null;
+      const overlapKey = `${item.destinationId}:${item.id}`;
+      if (changedAddTime && completion && timesMode && syncIssuesOpen && !stoppedOverlapDetails.has(overlapKey)) loadStoppedOverlap(item);
+      const overlapState = stoppedOverlapDetails.get(overlapKey);
+      const localPair = changedAddTime && completion ? projectedStoppedOverlap(item, completion) : null;
+      const laterChanges = changedAddTime && (pageState.pendingWrites ?? []).slice((pageState.pendingWrites ?? []).indexOf(item) + 1)
+        .some(other => other.destinationId === item.destinationId);
+      const queuedStart = item.subjects?.[0]?.proposed || completion?.subjects?.[0]?.proposed;
+      const canRetryStart = Boolean(item.subjects?.[0]?.proposed);
+      const canAlignStart = canRetryStart && item.operation === 'startTimer' && !laterChanges;
       // Queues persisted before operation was projected to the page expose only
       // their stage. Keep their recovery actionable after an extension upgrade.
       const queuedEdit = ['editEntry', 'editEntries'].includes(item.operation ?? item.stage);
       const queuedAddition = ['addTime', 'bulkAddTimes'].includes(item.operation ?? item.stage);
+      const queuedMultipleTimes = (item.operation ?? item.stage) === 'bulkAddTimes';
       const rejectedWrite = item.conflictReason?.startsWith('queued_write_');
       const rejectedStart = rejectedWrite && item.stage === 'startNext';
       const box = el('div', undefined, 'conflict');
       const title = unsaved ? 'Completion was not saved' : savedWithNewerTimer ? 'Newer GitHub timer preserved'
-        : changedAddTime ? 'Add time needs review'
+        : changedAddTime ? 'Timer start overlaps saved time'
         : rejectedStart ? 'Queued start needs attention' : rejectedWrite ? 'Queued write needs attention'
           : queuedAddition ? 'Added time needs review'
             : queuedEdit ? 'Saved edit needs review' : 'Entry path conflict';
@@ -2125,42 +2572,88 @@
         : item.conflictReason === 'active_changed_no_completion'
           ? 'The active timer changed before this completion was saved. Discarding removes this unsaved completion.'
           : savedWithNewerTimer ? 'The completed entry was saved; the newer active timer was preserved.'
-            : changedAddTime ? 'Completed time changed before this timer synced. Recheck for overlap or, while online, verify GitHub and discard the unsaved start.'
+            : changedAddTime ? 'Clockoli could not save this timer start because it overlaps a completed entry on GitHub. The local change has not been deleted.'
             : rejectedStart ? 'GitHub rejected this timer start. Check the configured repository and access, then retry.'
               : rejectedWrite ? 'GitHub rejected this queued write. Check the configured repository and access, then retry.'
-                : queuedAddition ? 'GitHub could not safely save the locally added time. Retry after reviewing Activity, or discard this addition after verifying it was not already saved.'
+                : queuedMultipleTimes ? 'The time batch could not be saved in its original intervals. Retry will look for free intervals on each selected day; if none fit, the whole batch stays safely queued.'
+                  : queuedAddition ? 'GitHub could not safely save the locally added time. Retry after reviewing Activity, or discard this addition after verifying it was not already saved.'
                   : queuedEdit ? 'Activity changed after this edit was queued. Retry safely reloads the affected entry and reapplies your saved change.'
                     : 'Repair or remove the conflicting entry in GitHub, then retry.';
       const label = unsaved ? 'Discard unsaved completion' : savedWithNewerTimer ? 'Keep newer timer'
         : changedAddTime ? 'Recheck and retry start'
-        : rejectedWrite ? 'Retry queued write' : queuedAddition ? 'Retry added time'
+        : rejectedWrite ? 'Retry queued write' : queuedMultipleTimes ? 'Find free time and retry' : queuedAddition ? 'Retry added time'
           : queuedEdit ? 'Retry saved edit' : 'Retry entry sync';
       box.append(el('strong', title), el('div', detail, 'muted'));
-      box.append(button(label, 'secondary wide', async () => {
+      if (queuedAddition && item.lastError && !rejectedWrite) {
+        box.append(el('p', `Last sync error: ${safeQueueDetail(item.lastError)}`, 'muted'));
+      }
+      if (changedAddTime && completion && timesMode && overlapState?.loading && !localPair) {
+        box.replaceChildren(el('p', 'Loading the two entries…'));
+        container.append(box);
+        continue;
+      }
+      if (changedAddTime && completion && timesMode && renderStoppedOverlap(box, item, overlapState?.data || localPair)) {
+        box.firstChild?.remove(); box.firstChild?.remove();
+        container.append(box);
+        continue;
+      }
+      if (changedAddTime && completion && overlapState?.error) {
+        box.append(el('p', 'Could not verify the saved entry. Your changes remain in this browser.'),
+          button('Refresh entries', 'secondary', () => { stoppedOverlapDetails.delete(overlapKey); syncIssuesSignature = null; renderSyncIssues(); }));
+      }
+      if (changedAddTime) {
+        if (queuedStart) box.append(el('div', `Timer: ${queuedRecordLabel({ ...queuedStart, endedAt: null })}`, 'queued-context'));
+        if (completion) box.append(el('p', 'This timer was stopped locally. Its completion is waiting for the start to sync. Do not discard the start or stop if you need to keep this tracked time.'));
+        if (!canRetryStart) box.append(el('p', 'The queued start itself has no details needed for a safe automatic retry. A later stop can show its task and time, but cannot repair the start. Keep this browser data and inspect Activity before changing anything.'));
+        else if (laterChanges) box.append(el('p', 'A later local change is waiting. Automatic start adjustment is unavailable while this start is not the last queued change. Recheck keeps the original start; discarding it loses unsaved tracked time.'));
+        else box.append(el('p', 'Recheck tries the same start again; it does not move the time. Start after previous entry moves it to the exact end of one overlapping entry, so the overlapping seconds will not count. If GitHub has changed, the start stays queued.'));
+      }
+      for (const subject of item.subjects ?? []) {
+        if (subject.original) box.append(el('div', `Original: ${queuedRecordLabel(subject.original)}`, 'queued-context'));
+        if (subject.proposed && (subject.original || queuedAddition || changedAddTime)) {
+          box.append(el('div', `Queued ${changedAddTime ? 'start' : subject.original ? 'change' : 'addition'}: ${queuedRecordLabel(subject.proposed)}`, 'queued-context'));
+        }
+        if (subject.descriptionChanged) box.append(el('div', 'Description changed (text remains in this browser).', 'queued-context'));
+        const date = subject.original?.entryDate || subject.proposed?.entryDate;
+        if (item.conflictReason === 'queued_entry_missing' && validEntryDate(date)) {
+          const expectedMonth = date.slice(0, 7);
+          const mismatch = subject.queuedMonth && subject.queuedMonth !== expectedMonth;
+          box.append(el('div', mismatch
+            ? `The original is dated ${expectedMonth}, but the queued edit points to ${subject.queuedMonth}. The original was not found there; retry checks its ID in the correct month.`
+            : `The original entry ID was not found in ${subject.queuedMonth || expectedMonth}. Retry checks its canonical month before saving.`, 'muted'));
+        }
+        if (validEntryDate(date)) box.append(button(`View week of ${queuedDateLabel(date)}`, 'secondary', async () => {
+          if (timesMode && syncIssuesOpen) document.querySelector('#activity-sync-status dialog')?.close();
+          await selectWeek(new Date(weekWindow(new Date(`${date}T12:00:00`)).start));
+        }));
+      }
+      if (changedAddTime && !(item.subjects ?? []).length && validEntryDate(queuedStart?.entryDate)) {
+        const date = queuedStart.entryDate;
+        box.append(button(`View week of ${queuedDateLabel(date)}`, 'secondary', async () => {
+          if (timesMode && syncIssuesOpen) document.querySelector('#activity-sync-status dialog')?.close();
+          await selectWeek(new Date(weekWindow(new Date(`${date}T12:00:00`)).start));
+        }));
+      }
+      if (item.conflictWith) box.append(el('div', `Overlaps: ${queuedRecordLabel(item.conflictWith)}`, 'queued-context'));
+      else if (changedAddTime) box.append(el('p', 'The exact earlier entry is not included in this issue. Check Activity to compare its times.'));
+      if (!changedAddTime || canRetryStart) box.append(button(label, 'secondary wide', async () => {
         if (unsaved && !confirm('Discard this unsaved completion? This cannot be recovered from the time-data repository.')) return;
-        await send({ type: 'RESOLVE_PENDING', id: item.id, ...(unsaved ? { action: 'discard_unsaved_completion' } : {}) });
-        recentLoaded = false;
-        await refreshState(true, true);
+        await resolve(unsaved ? 'discard_unsaved_completion' : null, true);
+      }));
+      if (changedAddTime && canAlignStart) box.append(button('Start after previous entry', 'secondary wide', async () => {
+        await resolve('align_queued_start', true);
       }));
       if (queuedAddition) box.append(button('Discard unsynced addition', 'link-button', async () => {
         if (!confirm('Discard this locally added time? Clockoli will verify that GitHub does not already contain it.')) return;
-        await send({ type: 'RESOLVE_PENDING', id: item.id, action: 'discard_queued_addition' });
-        recentLoaded = false;
-        await refreshState(false, true);
+        await resolve('discard_queued_addition', false);
       }));
       if (queuedEdit) box.append(button('Discard queued edit', 'link-button', async () => {
         if (!confirm('Discard this queued edit? The current Activity data will not be changed.')) return;
-        await send({ type: 'RESOLVE_PENDING', id: item.id, action: 'discard_queued_edit' });
-        recentLoaded = false;
-        await refreshState(true, true);
+        await resolve('discard_queued_edit', true);
       }));
-      if (changedAddTime) box.append(button('Discard queued start', 'link-button', async () => {
-        if (!confirm('Discard this queued start? GitHub must confirm the timer is not already running before the local start can be removed.')) return;
-        try {
-          await send({ type: 'RESOLVE_PENDING', id: item.id, action: 'discard_queued_start' });
-          recentLoaded = false;
-          await refreshState(true, true);
-        } catch (error) { setError(error); }
+      if (changedAddTime && !completion) box.append(button('Discard queued start', 'link-button', async () => {
+        if (!confirm('Discard this queued start and its unsaved tracked time? GitHub must confirm the timer is not already running before the local start can be removed.')) return;
+        await resolve('discard_queued_start', true);
       }));
       container.append(box);
     }
@@ -2172,9 +2665,6 @@
     updateCalendarWeekLoading();
     const previousLoaded = recentLoaded;
     recentLoaded = false; errorText = ''; renderUi();
-    // The active record is a separate read from the selected week's history.
-    // Check it even if that history fails and cached entries remain visible.
-    void refreshRemoteTimerStatus().catch(setError);
     try {
       // Hydrate durable local edits before the remote week read. Page state is
       // bounded, so it must not replace records already loaded for this week.
@@ -2228,28 +2718,15 @@
     }, 250);
   }
 
-  async function refreshRemoteTimerStatus() {
-    const loadId = ++remoteTimerLoadId;
-    const { remoteTimers } = await send({ type: 'GET_REMOTE_TIMER_STATUS' });
-    if (loadId !== remoteTimerLoadId || !timesMode) return;
-    const next = pageState.configured === false ? [] : remoteTimers ?? [];
-    const changed = JSON.stringify(pageState.remoteTimers ?? []) !== JSON.stringify(next);
-    pageState.remoteTimers = next;
-    if (changed) renderUi();
-  }
-
   async function refreshActivityState(refresh = false) {
     const loadId = ++activityStateLoadId;
     const state = await send({ type: 'GET_PAGE_STATE', refresh });
     if (loadId !== activityStateLoadId) return;
     const previous = pageState.active;
-    const previousPending = new Set(pageState.pendingWrites?.map(item => item.id) ?? []);
     applyPageState(state);
+    if (timesMode) renderSyncIssues();
     const timelineUpdated = refreshMountedTimeline();
     if (!timelineUpdated) renderUi();
-    if (timesMode && [...previousPending].some(id => !pageState.pendingWrites?.some(item => item.id === id))) {
-      void refreshRemoteTimerStatus().catch(setError);
-    }
     if (previous && (previous.id !== pageState.active?.id || previous.startedAt !== pageState.active?.startedAt)) {
       await refreshRecent(true);
     }
@@ -2265,11 +2742,11 @@
     for (const [key, label, shape] of [
       ['todayTrackedMs', 'Today', STOPWATCH_PATH],
       ['total', 'Total tracked', STOPWATCH_PATH],
-      ['tasks', 'Tasks worked on', 'M2 2h12v12H2V2Zm1.5 1.5v9h9v-9h-9Zm2 2h5V7h-5V5.5Zm0 3h5V10h-5V8.5Z'],
+      ['tasks', 'Tasks worked on', TASKLIST_PATH],
     ]) {
       const card = el('div', undefined, 'activity-weekly-card');
       const badge = el('span', undefined, 'activity-weekly-icon');
-      badge.append(icon(key, shape, 19));
+      badge.append(icon(key, shape));
       const copy = el('div', undefined, 'activity-weekly-copy');
       const value = el('strong', key === 'todayTrackedMs' ? trackedTotalText(key) : '—', 'activity-weekly-value');
       value.setAttribute(key === 'todayTrackedMs' ? 'data-tracked-total' : 'data-stat', key);
@@ -2352,6 +2829,7 @@
   function renderTimesPage(preservedTimeline = null) {
     const page = el('main', undefined, 'times-page');
     const body = el('div', undefined, 'times-body');
+    renderSyncIssues();
     if (!pageState.configured && recentLoaded) {
       body.append(el('p', 'Choose where Clockoli should save your time before viewing time.', 'muted'), button('Set up Clockoli', 'primary', async () => send({ type: 'OPEN_OPTIONS' })));
       page.append(body); return page;
@@ -2368,7 +2846,7 @@
     }
     const toolbar = el('section', undefined, 'times-toolbar');
     const filterLabel = el('label'), filter = el('input'); filter.type = 'search'; filter.placeholder = 'Search entries'; filter.setAttribute('aria-label', 'Search activity'); filter.value = timesFilter; filterLabel.className = 'times-filter';
-    filterLabel.append(icon('search', 'M7 1a6 6 0 1 0 3.708 10.72l3.286 3.286a.75.75 0 0 0 1.06-1.06l-3.286-3.286A6 6 0 0 0 7 1Zm-4.5 6a4.5 4.5 0 1 1 9 0 4.5 4.5 0 0 1-9 0Z', 18), filter);
+    filterLabel.append(icon('search', SEARCH_PATH), filter);
     toolbar.append(filterLabel);
     const result = el('section', undefined, 'times-results activity-list');
     const renderFiltered = createActivityListRenderer(result, filter, () => { bulkOpen = true; bulk.open = true; input.focus(); });
@@ -2402,12 +2880,7 @@
       });
       control.setAttribute('aria-label', mode[0].toUpperCase() + mode.slice(1));
       control.setAttribute('title', mode[0].toUpperCase() + mode.slice(1));
-      const shapes = {
-        timeline: 'M1 12h14v1.5H1V12Zm2-3h2v2H3V9Zm3-4h2v6H6V5Zm3 2h2v4H9V7Zm3-5h2v9h-2V2Z',
-        calendar: 'M4 0a.75.75 0 0 1 .75.75V2h6V.75a.75.75 0 0 1 1.5 0V2h1A2.75 2.75 0 0 1 16 4.75v8.5A2.75 2.75 0 0 1 13.25 16H2.75A2.75 2.75 0 0 1 0 13.25v-8.5A2.75 2.75 0 0 1 2.75 2h1V.75A.75.75 0 0 1 4 0ZM1.5 6.5v6.75c0 .69.56 1.25 1.25 1.25h10.5c.69 0 1.25-.56 1.25-1.25V6.5h-13ZM3 9h3v1.5H3V9Zm5 0h3v1.5H8V9Z',
-        list: 'M1 2h2v2H1V2Zm4 0h10v2H5V2ZM1 7h2v2H1V7Zm4 0h10v2H5V7Zm-4 5h2v2H1v-2Zm4 0h10v2H5v-2Z',
-      };
-      control.prepend(icon(mode, shapes[mode], 18));
+      control.prepend(icon(mode, VIEW_MODE_PATHS[mode]));
       control.setAttribute('aria-pressed', String(mode === activityViewMode)); views.append(control);
     }
     if (summaryHost) summaryHost.replaceChildren(weeklySummary);
@@ -2421,33 +2894,6 @@
     refresh.hidden = activityViewMode !== 'list';
     toolbar.append(weekNavigation(), refresh);
     body.append(toolbar, listTotal);
-    for (const timer of pageState.remoteTimers ?? []) {
-      const started = new Intl.DateTimeFormat('en-GB', {
-        dateStyle: 'medium', timeStyle: 'short', timeZone: timer.timezone,
-      }).format(new Date(timer.startedAt));
-      const pendingStop = pageState.pendingWrites?.some(item => item.destinationId === timer.destinationId
-        && item.operation === 'completeTimer');
-      const warning = el('div', undefined, 'remote-timer-warning notice');
-      warning.setAttribute('role', 'alert');
-      warning.append(el('strong', 'GitHub had a running timer at the last check'),
-        el('div', pendingStop
-          ? `Started ${started} ${timer.timezone}. Stop is already queued locally for this repository. Do not stop again; keep this browser data until the queued changes sync. Open List to review pending changes.`
-          : `Started ${started} ${timer.timezone}. This remote timer may differ from local tracking. Open List and review pending changes before editing or removing either record.`));
-      warning.append(button('Recheck GitHub timer', 'secondary', async () => {
-        try { await refreshRemoteTimerStatus(); } catch (error) { setError(error); }
-      }));
-      body.append(warning);
-    }
-    if (activityViewMode === 'list') {
-      const waiting = (pageState.pendingWrites ?? []).filter(item => item.status !== 'conflict');
-      if (waiting.length) {
-        const count = waiting.length;
-        const notice = el('div', `${count} local ${count === 1 ? 'change is' : 'changes are'} waiting to sync with GitHub. Keep this browser data until it is saved.`, 'notice');
-        notice.setAttribute('role', 'status');
-        body.append(notice);
-      }
-      renderPendingConflicts(body);
-    }
     const calendarStatus = el('div', activityCalendarStatusText, 'times-calendar-status muted');
     calendarStatus.setAttribute('role', 'status'); calendarStatus.setAttribute('aria-live', 'polite');
     calendarStatus.hidden = activityViewMode !== 'calendar';
@@ -2498,12 +2944,55 @@
     if (bulkFeedback) {
       const feedback = el('div', undefined, `bulk-time-feedback bulk-time-feedback-${bulkFeedback.kind}`);
       feedback.setAttribute('role', bulkFeedback.kind === 'error' ? 'alert' : 'status');
-      const dismiss = button('×', 'bulk-time-feedback-dismiss', () => { bulkFeedback = null; feedback.remove(); });
-      dismiss.setAttribute('aria-label', 'Dismiss bulk time message');
+      const dismiss = iconButton('Dismiss bulk time message', 'x', X_PATH, 'bulk-time-feedback-dismiss', () => { bulkFeedback = null; feedback.remove(); });
       feedback.append(el('span', bulkFeedback.message), dismiss);
       body.append(feedback);
     }
-    if (errorText) body.prepend(el('div', errorText, errorCode ? 'error' : 'notice'));
+    const readRateLimit = errorText && activityErrorAction !== 'edit'
+      ? errorCode === 'rate_limit' ? connectionError
+        : errorCode === 'all_destinations_failed'
+          ? trackingRateLimit === undefined
+            ? pageState.summaryError?.code === 'rate_limit' ? pageState.summaryError : null
+            : trackingRateLimit
+          : null
+      : null;
+    if (errorText) {
+      const notice = el('section', undefined, 'times-load-error');
+      notice.setAttribute('role', 'alert');
+      if (activityErrorAction === 'edit') {
+        notice.append(el('strong', 'Could not change the time entry'), el('p', errorText));
+      } else {
+        const networkFailure = ['network_error', 'network_timeout'].includes(errorCode);
+        const copy = el('div', undefined, 'times-load-error-copy');
+        if (networkFailure) {
+          copy.append(el('strong', 'Cannot reach GitHub'),
+            el('p', errorCode === 'network_timeout'
+              ? 'GitHub did not respond in time. Check your connection and retry.'
+              : 'Check your connection to GitHub and retry.'));
+        } else if (readRateLimit) {
+          copy.append(el('strong', globalThis.ClockoliRecovery.describeConnectionError(readRateLimit).headline),
+            el('p', errorCode === 'rate_limit'
+              ? 'Activity could not load. Retry after the GitHub rate limit resets.'
+              : 'All configured time repositories failed to load. GitHub also reports a rate limit; other failures may need attention.'));
+        } else copy.append(el('strong', 'Could not load Activity'), el('p', errorText));
+        notice.append(copy);
+        const actions = el('div', undefined, 'times-load-error-actions');
+        actions.append(button('Retry', 'secondary', async () => {
+          errorText = ''; errorCode = ''; connectionError = null; renderUi();
+          try { await refreshActivityState(true); await loadSelectedTimes(); }
+          catch (cause) { setError(cause); }
+        }));
+        notice.append(actions);
+        if (networkFailure) {
+          const details = el('details', undefined, 'times-error-details');
+          details.open = true;
+          details.append(el('summary', 'Technical details'), el('pre', errorText));
+          notice.append(details);
+        }
+      }
+      body.prepend(notice);
+    }
+    document.body?.classList?.toggle('activity-rate-limit-visible', Boolean(readRateLimit));
     page.append(body); return page;
   }
 
@@ -2576,12 +3065,11 @@
         startedAt: Math.max(historyStart, weekWindow().start, new Date(entry.startedAt).getTime()),
         endedAt: entry._active ? null : Math.min(completedDisplayEnd, new Date(entry.endedAt).getTime()),
         isRunning: Boolean(entry._active),
-        isCurrentTask: Boolean(!entry._active && sameTask(entry, pageState.active)),
         isEditable: !entry._active && (timesMode || completeVisualWeekStart === weekWindow().start),
         isPending: Boolean(entry.isPending),
         isStartDisabled: !trackableTaskIdentityOf(entry) || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)
           || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict')),
-        isStopDisabled: Boolean((entry._active || sameTask(entry, pageState.active)) && (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
+        isStopDisabled: Boolean(entry._active && (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
           || pageState.pendingWrites?.some(item => item.status === 'conflict'))),
         isDeleteDisabled: timelineDeleteInFlight || timelineStartInFlight || timelineStopInFlight
           || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict')),
@@ -2646,7 +3134,7 @@
 
   function showTimelineEditConflict(error) {
     if (!/overlap/i.test(error?.message || '')) return false;
-    const section = (timesMode ? shadow : fullWidthPopupShadow || shadow)?.querySelector('.popup-timeline-section');
+    const section = (timesMode ? shadow : shadow)?.querySelector('.popup-timeline-section');
     if (!section) return false;
     section.querySelector('.timeline-edit-error')?.remove();
     const warning = el('div', undefined, 'timeline-edit-error error');
@@ -2663,7 +3151,7 @@
     const warning = timelineWeekError(error);
     if (!warning) return false;
     timelineInstance?.destroy(); timelineInstance = null; timelineWindow = null;
-    const shell = (timesMode ? shadow : fullWidthPopupShadow || shadow)?.querySelector('.popup-timeline-section .timeline-shell');
+    const shell = (timesMode ? shadow : shadow)?.querySelector('.popup-timeline-section .timeline-shell');
     shell?.replaceChildren(warning);
     return Boolean(shell);
   }
@@ -2791,13 +3279,13 @@
     if (!refreshMountedTimeline()) renderUi();
   }
 
-  async function trackCurrentTimelineTask({ preserveSavedDescription = false } = {}) {
+  async function trackCurrentTimelineTask({ preserveSavedDescription = false, sourceTask = null } = {}) {
     if (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight) return;
     timelineStartInFlight = true;
     refreshMountedTimeline();
     let startContext = null;
     try {
-      const task = popupMode ? await refreshPopupTask() : taskFromLocation();
+      const task = sourceTask || (popupMode ? await refreshPopupTask() : taskFromLocation());
       if (!task) throw new Error('Open an HTTP(S) page to start tracking.');
       if (sameTask(task, pageState.active)) return;
       const switching = Boolean(pageState.active);
@@ -2918,7 +3406,7 @@
       timelineOptimisticEdits.set(entry.id, edits);
       applyTimelineOptimisticEntry(entry, edits);
       trackTimelineQueuedOperation(result?.operationId, entry.id, optimisticEditGeneration);
-      (timesMode ? shadow : fullWidthPopupShadow || shadow)?.querySelector('.timeline-edit-error')?.remove();
+      (timesMode ? shadow : shadow)?.querySelector('.timeline-edit-error')?.remove();
       recordTimelineQueueDiagnostic('Edit time entry: accepted locally and queued for GitHub.');
     } catch (error) {
       recordTimelineQueueDiagnostic('Edit time entry: local queue rejected the change.');
@@ -3100,8 +3588,13 @@
       || (timesMode ? activityViewMode !== 'calendar' : timelineViewMode !== 'calendar');
     timelineShell.append(loading);
     if (!recentLoaded && !timelineAcceptedActive) {
-      if (!loading.hidden) section.append(timelineShell, timelineQueueIndicator);
-      else section.append(timelineQueueIndicator, el('div', 'Loading timeline…', 'muted'));
+      if (loading.hidden) {
+        const placeholder = el('div', undefined, 'times-loading-placeholder');
+        placeholder.setAttribute('role', 'status');
+        placeholder.append(el('span', undefined, 'times-loading-spinner'), el('span', 'Loading activity…'));
+        timelineShell.append(placeholder);
+      }
+      section.append(timelineShell, timelineQueueIndicator);
       return section;
     }
     const now = Math.min(timelineNow(), weekWindow().end - 1), periodStart = weekWindow().start;
@@ -3138,8 +3631,8 @@
         view: initialView,
         viewMode: timesMode ? (activityViewMode === 'list' ? 'timeline' : activityViewMode) : timelineGraphicViewMode,
         weeklyCalendar: true,
-        activityDashboard: timesMode || popupMode || fullWidthPopupOpen,
-        activityPage: timesMode || popupMode || fullWidthPopupOpen,
+        activityDashboard: timesMode || popupMode,
+        activityPage: timesMode || popupMode,
         toolbarPopup: popupMode,
         onCalendarNavigate: range => suppressCalendarNavigate ? undefined : loadActivityCalendarWeek(range),
         onViewModeChange: mode => {
@@ -3155,11 +3648,12 @@
         onError: (error, context) => {
           if (!host.isConnected) return;
           if (context?.action === 'edit' && showTimelineEditConflict(error)) return;
-          if (!showTimelineWeekError(error)) setError(error);
+          if (!showTimelineWeekError(error)) setError(error,
+            context?.action === 'edit' || ['move', 'resize-start', 'resize-end'].includes(context?.event?.action) ? 'edit' : null);
         },
         onStop: item => {
           const entry = timelineEntriesById.get(item.id);
-          return stopTimelineEntry(entry && !entry._active && sameTask(entry, pageState.active) ? pageState.active : entry);
+          return entry?._active ? stopTimelineEntry(entry) : false;
         },
         onDelete: async item => {
           const entry = timelineEntriesById.get(item.id);
@@ -3220,7 +3714,7 @@
             if (edit.kind !== 'resize-left') return;
             try {
               await queueActiveStartEdit(entry, edit.startedAt);
-            } catch (error) { setError(error); throw error; }
+            } catch (error) { setError(error, 'edit'); throw error; }
             return;
           }
           const edits = edit.kind === 'move'
@@ -3229,7 +3723,7 @@
               ? { startedAt: new Date(edit.startedAt).toISOString() }
               : { endedAt: new Date(edit.endedAt).toISOString() };
           try { await queueCalendarEntry(entry, edits); }
-          catch (error) { setError(error); throw error; }
+          catch (error) { setError(error, 'edit'); throw error; }
         },
         });
         if ((!timesMode || focusCurrentActivityWeek) && periodStart === weekWindow(Date.now()).start) timelineInstance.scrollToEnd();
@@ -3294,7 +3788,7 @@
   function updatePanelClocks() {
     if ((timesMode && activityViewMode === 'list') || (!timesMode && timelineViewMode === 'list')) updateListWeekTotal();
     else updateActivityWeekSummary();
-    for (const scope of [shadow, fullWidthPopupShadow, timesMode ? document.getElementById?.('activity-summary') : null]) {
+    for (const scope of [shadow, timesMode ? document.getElementById?.('activity-summary') : null]) {
       for (const value of scope?.querySelectorAll?.('[data-tracked-total]') ?? []) value.textContent = trackedTotalText(value.getAttribute('data-tracked-total'));
       for (const value of scope?.querySelectorAll?.('.running-elapsed') ?? []) if (pageState.active) {
         value.textContent = value.classList?.contains?.('running-status-metric-value') || value.className?.includes?.('running-status-metric-value')
@@ -3344,31 +3838,21 @@
     parent.prepend(error);
   }
 
-  function focusPopupAction() {
-    if (!popupFocusPending || popupOpening) return;
-    globalThis.requestAnimationFrame?.(() => {
-      const description = fullWidthPopupShadow?.querySelector?.('.active-task-strip.is-active .strip-description');
-      const action = description || fullWidthPopupShadow?.querySelector?.('[data-strip-primary]');
-      if (!popupFocusPending || !action || action.disabled) return;
-      action.focus({ preventScroll: true }); popupFocusPending = false;
-    });
-  }
-
   function applyCompactViewMode() {
     if (!compactSurface) return;
     const list = timelineViewMode === 'list';
-    placeCalendarWeekNavigation(popupMode || fullWidthPopupOpen ? compactSurface.body : compactSurface.timeline, timelineViewMode);
+    placeCalendarWeekNavigation(popupMode ? compactSurface.body : compactSurface.timeline, timelineViewMode);
     updateWeekNavigationLabel();
-    compactSurface.timeline.hidden = (popupMode || fullWidthPopupOpen) && list;
+    compactSurface.timeline.hidden = (popupMode) && list;
     const toolbar = compactSurface.body.querySelector('.popup-list-toolbar');
     if (toolbar) toolbar.hidden = !list;
     const shell = compactSurface.timeline.querySelector('.timeline-shell');
     if (shell) shell.hidden = list;
     const total = compactSurface.timeline.querySelector('.popup-list-total');
-    if (total) { total.hidden = popupMode || fullWidthPopupOpen || !list; total.textContent = listWeekTotalText(); }
+    if (total) { total.hidden = popupMode || !list; total.textContent = listWeekTotalText(); }
     compactSurface.overlaps.hidden = list;
     compactSurface.today.hidden = !list;
-    for (const control of (fullWidthPopupShadow || shadow)?.querySelectorAll?.('[data-timeline-view-mode]') ?? []) {
+    for (const control of (shadow)?.querySelectorAll?.('[data-timeline-view-mode]') ?? []) {
       control.setAttribute('aria-pressed', String(control.getAttribute('data-timeline-view-mode') === timelineViewMode));
     }
   }
@@ -3390,9 +3874,9 @@
   function refreshCompactSurface() {
     if (!compactSurface) return;
     const { strip, switchAction, today, feedback } = compactSurface;
-    const activeElement = fullWidthPopupShadow?.activeElement || shadow?.activeElement;
+    const activeElement = shadow?.activeElement;
     const actionKey = activeElement?.getAttribute?.('data-panel-action');
-    const scroll = fullWidthPopupShadow?.querySelector?.('.full-width-popup');
+    const scroll = null;
     const scrollTop = scroll?.scrollTop;
     const diagnosticsOpen = feedback.querySelector?.('details')?.open;
     const active = pageState.active, current = taskFromLocation();
@@ -3418,7 +3902,7 @@
       const resizeDescription = () => fitDescriptionTextarea(description, { maxHeight: 180, more: descriptionMore });
       resizeDescription();
       const descriptionField = el('div', undefined, 'save-field strip-description-field');
-      const savedIndicator = el('span', '✓ Saved', 'description-saved');
+      const savedIndicator = savedNotice('description-saved');
       savedIndicator.setAttribute('role', 'status');
       savedIndicator.hidden = true;
       let savingDescription = null, saveAgain = false, submittedDescription = null, hideSavedTimer = null;
@@ -3495,10 +3979,10 @@
       start.value = new Date(active.startedAt).toTimeString().slice(0, 5);
       let displayedStartAt = active.startedAt;
       startValue.append(start); startLabel.append(startValue);
-      const saveStart = el('button', '✓', 'running-status-start-save');
+      const saveStart = el('button', undefined, 'running-status-start-save');
       saveStart.type = 'button'; saveStart.title = 'Save start'; saveStart.setAttribute('aria-label', 'Save start');
-      saveStart.hidden = true;
-      const startSaved = el('span', '✓ Saved', 'running-status-start-saved');
+      saveStart.append(icon('check', CHECK_PATH)); saveStart.hidden = true;
+      const startSaved = savedNotice('running-status-start-saved');
       startSaved.setAttribute('role', 'status'); startSaved.hidden = true;
       startField.append(startLabel, saveStart, startSaved);
       const updateStartDraft = async () => {
@@ -3606,7 +4090,7 @@
           choice.title = identity; choice.setAttribute('aria-label', `Start tracking ${label}`);
           choice.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
             || sameTask(entry, pageState.active) || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
-          const play = el('span', undefined, 'running-status-recent-play'); play.setAttribute('aria-hidden', 'true');
+          const play = el('span', undefined, 'running-status-recent-play'); play.setAttribute('aria-hidden', 'true'); play.append(icon('play', PLAY_PATH));
           choice.append(play, el('span', label, 'running-status-recent-name'));
           choices.append(choice);
           if (seen.size === 3) break;
@@ -3649,7 +4133,6 @@
       replacement?.focus?.({ preventScroll: true });
     }
     if (scroll && scrollTop !== undefined) scroll.scrollTop = scrollTop;
-    focusPopupAction();
   }
 
   function refreshTimelineOverlaps() {
@@ -3688,8 +4171,7 @@
     headerActions.append(pageNavigation);
     if (compact) {
       if (onClose) {
-        const close = button('×', 'icon-button popup-timeline-close', onClose);
-        close.title = 'Close Clockoli'; close.setAttribute('aria-label', 'Close Clockoli');
+        const close = iconButton('Close Clockoli', 'x', X_PATH, 'icon-button popup-timeline-close', onClose);
         timelineToolbarEnd.append(close);
         header.append(brand, headerActions, timelineToolbarEnd);
       } else header.append(brand, headerActions, timelineToolbarEnd);
@@ -3717,7 +4199,7 @@
         filter.type = 'search'; filter.placeholder = popupMode ? 'Search entries' : 'Search this week';
         filter.setAttribute('aria-label', popupMode ? 'Search activity' : 'Search current week');
         filter.value = popupMode ? timesFilter : panelListFilter;
-        filterLabel.append(icon('search', 'M7 1a6 6 0 1 0 3.708 10.72l3.286 3.286a.75.75 0 0 0 1.06-1.06l-3.286-3.286A6 6 0 0 0 7 1Zm-4.5 6a4.5 4.5 0 1 1 9 0 4.5 4.5 0 0 1-9 0Z', 18), filter);
+        filterLabel.append(icon('search', SEARCH_PATH), filter);
         listToolbar.append(filterLabel);
         const refresh = recentRefreshButton(); refresh.classList.add('times-refresh');
         listToolbar.append(refresh);
@@ -3738,12 +4220,7 @@
         const modeButton = (mode, label) => {
           const control = button(label, 'timeline-view-button', () => setTimelineViewMode(mode));
           control.setAttribute('aria-label', label); control.title = label;
-          const shapes = {
-            timeline: 'M1 12h14v1.5H1V12Zm2-3h2v2H3V9Zm3-4h2v6H6V5Zm3 2h2v4H9V7Zm3-5h2v9h-2V2Z',
-            calendar: 'M4 0a.75.75 0 0 1 .75.75V2h6V.75a.75.75 0 0 1 1.5 0V2h1A2.75 2.75 0 0 1 16 4.75v8.5A2.75 2.75 0 0 1 13.25 16H2.75A2.75 2.75 0 0 1 0 13.25v-8.5A2.75 2.75 0 0 1 2.75 2h1V.75A.75.75 0 0 1 4 0ZM1.5 6.5v6.75c0 .69.56 1.25 1.25 1.25h10.5c.69 0 1.25-.56 1.25-1.25V6.5h-13ZM3 9h3v1.5H3V9Zm5 0h3v1.5H8V9Z',
-            list: 'M1 2h2v2H1V2Zm4 0h10v2H5V2ZM1 7h2v2H1V7Zm4 0h10v2H5V7Zm-4 5h2v2H1v-2Zm4 0h10v2H5v-2Z',
-          };
-          control.replaceChildren(icon(mode, shapes[mode], 18));
+          control.replaceChildren(icon(mode, VIEW_MODE_PATHS[mode]));
           control.setAttribute('data-timeline-view-mode', mode);
           control.setAttribute('aria-pressed', String(timelineViewMode === mode));
           return control;
@@ -3775,7 +4252,7 @@
         const descriptionMore = el('span', '↓ More lines — scroll', 'description-overflow-hint'); descriptionMore.hidden = true;
         const resizeDescription = () => fitDescriptionTextarea(description, { minRows: 2, more: descriptionMore });
         resizeDescription();
-        const saved = el('span', '✓ Saved', 'description-saved dialog-description-saved'); saved.setAttribute('role', 'status'); saved.hidden = true;
+        const saved = savedNotice('description-saved dialog-description-saved'); saved.setAttribute('role', 'status'); saved.hidden = true;
         label.append(description, saved, descriptionMore); body.append(label);
         let savingDescription = null, saveAgain = false, submittedDescription = null;
         const saveDescription = () => {
@@ -3895,91 +4372,57 @@
     globalThis.requestAnimationFrame?.(() => { if (menu.isConnected) menu.scrollTop = scrollTop; });
   }
 
-  function mountFullWidthPopup() {
-    if (fullWidthPopupRoot?.isConnected) return;
-    fullWidthPopupRoot = el('div'); fullWidthPopupRoot.id = 'clockoli-full-width-popup-root';
-    fullWidthPopupRoot.className = 'full-width-popup-surface';
-    fullWidthPopupRoot.setAttribute('data-clockoli-width', pageState.interfaceWidth === 'full' ? 'full' : 'contained');
-    isolateShadowHost(fullWidthPopupRoot, { fullWidth: true });
-    fullWidthPopupShadow = fullWidthPopupRoot.attachShadow({ mode: 'closed' });
-    globalThis.ClockoliInstantTooltips?.attach(fullWidthPopupShadow);
-    (document.body || document.documentElement).append(fullWidthPopupRoot);
+  function renderActionSourceContext() {
+    if (!timesMode) return;
+    const banner = document.getElementById?.('activity-source-context');
+    if (!banner) return;
+    const task = actionSourceTask;
+    banner.hidden = !task;
+    if (!task) return;
+    const link = document.getElementById('activity-source-link');
+    const url = document.getElementById('activity-source-url');
+    const track = document.getElementById('activity-source-track');
+    const label = document.getElementById('activity-source-track-label');
+    link.href = task.taskUrl;
+    link.textContent = githubTabTitle(task.taskTitle) || task.taskUrl;
+    link.title = task.taskUrl;
+    url.textContent = task.taskUrl;
+    const alreadyTracking = sameTask(task, pageState.active);
+    label.textContent = alreadyTracking ? 'Tracking this task' : pageState.active ? 'Switch to this task' : 'Track this task';
+    track.disabled = !pageState.configured || alreadyTracking || timelineStartInFlight
+      || timelineStopInFlight || timelineDeleteInFlight
+      || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
   }
 
-  function closeFullWidthPopup({ restoreFocus = true } = {}) {
-    fullWidthPopupOpen = false;
-    compactSurface = null; popupFocusPending = false;
-    clearInterval(tick); tick = null;
-    clearInterval(timelineWindowTimer); timelineWindowTimer = null;
-    timelineInstance?.destroy(); timelineInstance = null; timelineWindow = null; timelineEntriesById = new Map(); timelineQueueIndicator = null;
-    timelineView = null;
-    fullWidthPopupRoot?.remove(); fullWidthPopupRoot = null; fullWidthPopupShadow = null;
-    renderUi();
-    const target = popupReturnFocus?.isConnected ? popupReturnFocus : shadow?.querySelector?.('.trigger-main');
-    if (restoreFocus) target?.focus?.({ preventScroll: true });
-    popupReturnFocus = null;
+  async function refreshActionSourceContext() {
+    const result = await send({ type: 'CONSUME_TOOLBAR_TASK_CONTEXT' });
+    if (result?.present) receiveActionSourceContext(result.value);
   }
 
-  function renderFullWidthPopup(style) {
-    if (!fullWidthPopupOpen || !fullWidthPopupShadow || !fullWidthPopupRoot?.isConnected) return;
-    const focused = fullWidthPopupShadow.activeElement;
-    const restoreDescriptionFocus = focused?.classList?.contains('strip-description');
-    const restoreStopFocus = focused?.getAttribute?.('data-panel-action') === 'stop';
-    compactSurface = null;
-    timelineInstance?.destroy(); timelineInstance = null; timelineWindow = null; timelineEntriesById = new Map(); timelineQueueIndicator = null;
-    const surface = el('section', undefined, 'full-width-popup');
-    surface.append(renderMenu({ compact: true, onClose: closeFullWidthPopup }));
-    fullWidthPopupShadow.replaceChildren(style.cloneNode(true), surface);
-    updateActivityWeekSummary();
-    if (restoreDescriptionFocus) fullWidthPopupShadow.querySelector('.strip-description')?.focus({ preventScroll: true });
-    else if (restoreStopFocus) fullWidthPopupShadow.querySelector('[data-panel-action="stop"]')?.focus({ preventScroll: true });
-    focusPopupAction();
-  }
-
-  async function toggleFullWidthPopup() {
-    fullWidthPopupOpen = !fullWidthPopupOpen;
-    if (!fullWidthPopupOpen) { closeFullWidthPopup(); return false; }
-    popupReturnFocus = shadow?.activeElement || document.activeElement; popupFocusPending = true;
-    popupOpening = true;
-    mountFullWidthPopup(); renderUi();
-    clearInterval(timelineWindowTimer);
-    timelineWindowTimer = setInterval(() => { if (fullWidthPopupOpen) renderUi(); }, 60_000);
-    timelineWindowTimer?.unref?.();
-    try {
-      applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: false }));
-      if (!fullWidthPopupOpen) return false;
-      renderUi();
-      const refreshedState = send({ type: 'GET_PAGE_STATE', refresh: true });
-      const restoredMode = restoreActivityViewMode();
-      applyPageState(await refreshedState);
-      await restoredMode;
-      if (!fullWidthPopupOpen) return false;
-      if (pageState.configured) {
-        if (timelineViewMode === 'calendar') await loadActivityCalendarWeek(weekWindow(), { showLoading: false });
-        else {
-          await refreshRecent(true);
-          if (fullWidthPopupOpen) await loadActivityCalendarWeek(weekWindow());
-        }
-      }
-      else renderUi();
-    } catch (error) { setError(error); }
-    finally { popupOpening = false; focusPopupAction(); }
-    return true;
+  function receiveActionSourceContext(value) {
+    if (!timesMode) return;
+    const age = Date.now() - Number(value?.openedAt);
+    let task = null;
+    if (age >= -10_000 && age <= 120_000) {
+      try { task = taskFromUrl(value?.taskUrl, value?.taskTitle); } catch { /* Invalid context. */ }
+    }
+    actionSourceTask = task?.taskUrl === value?.taskUrl ? task : null;
+    renderActionSourceContext();
+    // The worker atomically deletes the one-use context on consumption.
   }
 
   function renderUi() {
-    if ((!shadow || !root?.isConnected) && (!fullWidthPopupShadow || !fullWidthPopupRoot?.isConnected)) return;
+    if (!shadow || !root?.isConnected) return;
     if (descriptionDraft && (!pageState.active || descriptionDraft.id !== (pageState.active.id || pageState.active.startedAt)
         || descriptionDraft.taskUrl !== taskUrlOf(pageState.active))) descriptionDraft = null;
     updateTaskAnimation();
     const preservedMenuScrollTop = menuScrollTop;
-    const preserveFullWidthTimeline = Boolean(fullWidthPopupOpen && pageState.configured && timelineInstance && timelineWindow);
     const preservedActivityTimeline = timesMode && pageState.configured && timelineInstance && timelineWindow
       ? shadow?.querySelector('.popup-timeline-section') : null;
     const preservedActivityCalendarScroll = preservedActivityTimeline && timelineInstance.captureCalendarScroll?.();
     preservedActivityTimeline?.remove();
     clearInterval(tick); tick = null;
-    if (!preserveFullWidthTimeline && !preservedActivityTimeline) {
+    if (!preservedActivityTimeline) {
       timelineInstance?.destroy(); timelineInstance = null; timelineWindow = null; timelineEntriesById = new Map(); timelineQueueIndicator = null;
     }
     if (shadow && root?.isConnected) shadow.replaceChildren();
@@ -4075,7 +4518,7 @@
         --control-borderColor-rest:#d1d9e0; --control-bgColor-rest:#f6f8fa; --control-fgColor-rest:#25292e; --control-fgColor-placeholder:#59636e;
         --control-bgColor-hover:#eff2f5; --control-bgColor-active:#e6eaef; --control-borderColor-disabled:#818b981a; --control-bgColor-disabled:#eff2f5; --control-fgColor-disabled:#818b98;
         --shadow-floating-small:0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f;
-        --fontStack-sansSerif:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+        --fontStack-sansSerif:"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
         --fontStack-monospace:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
         --text-body-shorthand-medium:400 14px/1.5 var(--fontStack-sansSerif);
         --text-caption-shorthand:400 12px/1.25 var(--fontStack-sansSerif);
@@ -4164,58 +4607,59 @@
           --control-bgColor-hover:#262c36; --control-bgColor-active:#2a313c; --control-borderColor-disabled:#656c761a; --control-bgColor-disabled:#212830; --control-fgColor-disabled:#656c76;
           --shadow-floating-small:0 0 0 1px #3d444d,0 6px 12px -3px #01040966,0 6px 18px 0 #01040966;
         }
-        :host(.full-width-popup-surface) .clockoli-wordmark { filter:saturate(1.4) brightness(2.1) }
-      }
+        }
       :host { all:initial; position:relative; display:inline-flex; align-items:center; color:var(--fgColor-default,var(--ck-fg)); color-scheme:light dark; font:var(--text-body-shorthand-medium,400 14px/1.5 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") }
       :where(:host > :not(style)) { all:revert; color:var(--fgColor-default,var(--ck-fg)); color-scheme:light dark; font:var(--text-body-shorthand-medium,400 14px/1.5 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") }
-      * { box-sizing:border-box } button,input,textarea,select { font:inherit } .trigger { display:inline-flex; align-items:center; justify-content:center; gap:3px; width:46px; height:32px; margin:0 8px 0 0; padding:0 6px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; background:var(--button-default-bgColor-rest,var(--ck-button-default-bg-rest)); color:var(--fgColor-muted,var(--ck-fg-muted)); cursor:pointer }
-      .trigger:hover { background:var(--button-default-bgColor-hover,var(--ck-button-default-bg-hover)) } .trigger:active:not(:disabled) { background:var(--button-default-bgColor-active,var(--ck-button-default-bg-active)) } .trigger[aria-expanded="true"] { background:var(--button-default-bgColor-selected,var(--ck-button-default-bg-selected)) } .clockoli-mark { display:block; width:22px; height:22px; flex:none; transform-origin:center } @media(prefers-reduced-motion: no-preference) { .trigger.running-current .clockoli-mark { animation:clockoli-task-spin 1s linear infinite } } @keyframes clockoli-task-spin { to { transform:rotate(360deg) } } .trigger:focus-visible,button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,.time-value:focus-visible,.time-date:focus-visible { outline:2px solid var(--focus-outlineColor,var(--ck-focus)); outline-offset:2px }
-      .menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:-24px; width:min(420px,calc(100vw - 24px)); max-height:calc(100vh - 76px); overflow-y:scroll; overflow-x:hidden; scrollbar-gutter:stable; overscroll-behavior:contain; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:12px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); box-shadow:var(--shadow-floating-small,var(--ck-shadow)) } .menu.has-more { box-shadow:inset 0 -18px 14px -18px var(--fgColor-muted,var(--ck-fg-muted)),var(--shadow-floating-small,var(--ck-shadow)) } :host(.popup-surface) { display:block; width:100%; min-width:0; min-height:220px } :host(.popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:600px; border-radius:0 } :host(.times-surface) { display:block; width:100%; min-width:0 } :host(.times-surface) .times-page { width:min(920px,calc(100% - 32px)); min-height:calc(100vh - 48px); margin:0 auto; background:var(--bgColor-default,var(--ck-bg)); border-inline:1px solid var(--borderColor-muted,var(--ck-border-muted)) } .times-header h1 { margin:2px 0 0; font-size:24px; line-height:1.2 } .times-body { padding:20px 24px 40px } .times-toolbar { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:12px; margin-bottom:16px } .times-toolbar label { margin:0 } .times-toolbar select { width:100%; min-height:34px; margin-top:4px; padding:7px 32px 7px 8px; border:1px solid var(--control-borderColor-rest,var(--ck-control-border-rest)); border-radius:6px; background-color:var(--control-bgColor-rest,var(--ck-control-bg-rest)); color:var(--control-fgColor-rest,var(--ck-control-fg-rest)); appearance:none; background-image:linear-gradient(45deg,transparent 50%,var(--fgColor-muted,var(--ck-fg-muted)) 50%),linear-gradient(135deg,var(--fgColor-muted,var(--ck-fg-muted)) 50%,transparent 50%); background-position:right 17px center,right 12px center; background-size:5px 5px; background-repeat:no-repeat } .times-filter { grid-column:auto } .times-custom { display:grid; grid-column:1/-1; grid-template-columns:1fr 1fr auto; align-items:end; gap:12px } .times-apply { align-self:end; min-height:34px } .times-results { min-height:120px } .bulk-time { margin-top:24px; padding:14px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .bulk-time summary { font-weight:650; cursor:pointer } .bulk-time-input { min-height:160px; resize:vertical } .bulk-time-input::placeholder { color:var(--fgColor-muted,var(--ck-fg-muted)); opacity:.42 } .more-times { display:flex; justify-content:center; padding:12px 0 2px }
-      header,.header-actions,.section-head,.entry-row,.form-actions,.today-total { display:flex; align-items:center; justify-content:space-between; gap:12px } header { padding:12px 16px; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) } .menu-body { padding:14px 16px } .muted { color:var(--fgColor-muted,var(--ck-fg-muted)); font:var(--text-caption-shorthand,400 12px/1.25 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"); margin-top:3px } .eyebrow { color:var(--fgColor-muted,var(--ck-fg-muted)); font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"); letter-spacing:normal; margin-bottom:5px } .tracking-status strong { font-weight:900 } .tracking-another strong { display:inline-block; padding:1px 5px; border-radius:999px; background:var(--bgColor-attention-muted,var(--ck-bg-attention)); color:var(--fgColor-muted,var(--ck-fg-muted)) }
+      * { box-sizing:border-box } b,strong,h1,h2,h3,h4,h5,h6 { font-weight:600 } button,input,textarea,select { font:inherit } .trigger { display:inline-flex; align-items:center; justify-content:center; gap:3px; width:46px; height:32px; margin:0 8px 0 0; padding:0 6px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; background:var(--button-default-bgColor-rest,var(--ck-button-default-bg-rest)); color:var(--fgColor-muted,var(--ck-fg-muted)); cursor:pointer }
+      .trigger:hover { background:var(--button-default-bgColor-hover,var(--ck-button-default-bg-hover)) } .trigger:active:not(:disabled) { background:var(--button-default-bgColor-active,var(--ck-button-default-bg-active)) } .trigger[aria-expanded="true"] { background:var(--button-default-bgColor-selected,var(--ck-button-default-bg-selected)) } .clockoli-mark { display:block; width:20px; height:20px; flex:none; transform-origin:center } @media(prefers-reduced-motion: no-preference) { .trigger.running-current .clockoli-mark { animation:clockoli-task-spin 1s linear infinite } } @keyframes clockoli-task-spin { to { transform:rotate(360deg) } } .trigger:focus-visible,button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,.time-value:focus-visible,.time-date:focus-visible { outline:2px solid var(--focus-outlineColor,var(--ck-focus)); outline-offset:2px } input:not([type=radio],[type=checkbox]):focus-visible,textarea:focus-visible,select:focus-visible,.time-value:focus-visible,.time-date:focus-visible { outline-offset:-1px }
+      .menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:-24px; width:min(420px,calc(100vw - 24px)); max-height:calc(100vh - 76px); overflow-y:scroll; overflow-x:hidden; scrollbar-gutter:stable; overscroll-behavior:contain; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:12px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); box-shadow:var(--shadow-floating-small,var(--ck-shadow)) } .menu.has-more { box-shadow:inset 0 -18px 14px -18px var(--fgColor-muted,var(--ck-fg-muted)),var(--shadow-floating-small,var(--ck-shadow)) } :host(.popup-surface) { display:block; width:100%; min-width:0; min-height:220px } :host(.popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:600px; border-radius:0} :host(.times-surface) { display:block; width:100%; min-width:0 } :host(.times-surface) .times-page { width:min(920px,calc(100% - 32px)); min-height:calc(100vh - 48px); margin:0 auto; background:var(--bgColor-default,var(--ck-bg)); border-inline:1px solid var(--borderColor-muted,var(--ck-border-muted)) } .times-header h1 { margin:2px 0 0; font-size:24px; line-height:1.2 } .times-body { padding:20px 24px 40px } .times-toolbar { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:12px; margin-bottom:16px } .times-toolbar label { margin:0 } .times-toolbar select { width:100%; min-height:32px; margin-top:4px; padding:7px 32px 7px 8px; border:1px solid var(--control-borderColor-rest,var(--ck-control-border-rest)); border-radius:6px; background-color:var(--control-bgColor-rest,var(--ck-control-bg-rest)); color:var(--control-fgColor-rest,var(--ck-control-fg-rest)); appearance:none; background-image:linear-gradient(45deg,transparent 50%,var(--fgColor-muted,var(--ck-fg-muted)) 50%),linear-gradient(135deg,var(--fgColor-muted,var(--ck-fg-muted)) 50%,transparent 50%); background-position:right 17px center,right 12px center; background-size:5px 5px; background-repeat:no-repeat } .times-filter { grid-column:auto } .times-custom { display:grid; grid-column:1/-1; grid-template-columns:1fr 1fr auto; align-items:end; gap:12px } .times-apply { align-self:end; min-height:32px } .times-results { min-height:120px } .bulk-time { margin-top:24px; padding:14px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .bulk-time summary { font-weight:600; cursor:pointer } .bulk-time-input { min-height:160px; resize:vertical } .bulk-time-input::placeholder { color:var(--fgColor-muted,var(--ck-fg-muted)); opacity:.42 } .more-times { display:flex; justify-content:center; padding:12px 0 2px }
+      header,.header-actions,.section-head,.entry-row,.form-actions,.today-total { display:flex; align-items:center; justify-content:space-between; gap:12px } header { padding:12px 16px; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) } .menu-body { padding:14px 16px } .muted { color:var(--fgColor-muted,var(--ck-fg-muted)); font:var(--text-caption-shorthand,400 12px/1.25 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"); margin-top:3px } .eyebrow { color:var(--fgColor-muted,var(--ck-fg-muted)); font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"); letter-spacing:normal; margin-bottom:5px } .tracking-status strong { font-weight:600 } .tracking-another strong { display:inline-block; padding:1px 5px; border-radius:999px; background:var(--bgColor-attention-muted,var(--ck-bg-attention)); color:var(--fgColor-muted,var(--ck-fg-muted)) }
       a { color:var(--fgColor-accent,var(--ck-accent)); font-weight:600; text-decoration:none } a:hover { text-decoration:underline } .task-result { min-width:0 } .task-url { display:block; overflow:hidden; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:400; line-height:1.35; text-overflow:ellipsis; white-space:nowrap } .task-title { display:-webkit-box; overflow:hidden; margin-top:2px; color:var(--fgColor-accent,var(--ck-accent)); font-size:16px; font-weight:600; line-height:1.35; overflow-wrap:anywhere; -webkit-box-orient:vertical; -webkit-line-clamp:2 } .task-result-untitled .task-url { overflow:hidden; color:var(--fgColor-accent,var(--ck-accent)); font-size:16px; font-weight:600; text-overflow:ellipsis; white-space:nowrap } .active-task-result { margin-bottom:2px } .elapsed { margin:8px 0 10px; font:600 2rem/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
-      button { border:1px solid var(--button-default-borderColor-rest,var(--ck-button-default-border-rest)); border-radius:6px; padding:7px 12px; background:var(--button-default-bgColor-rest,var(--ck-button-default-bg-rest)); color:var(--button-default-fgColor-rest,var(--ck-button-default-fg-rest)); font-weight:600; cursor:pointer } button:hover { background:var(--button-default-bgColor-hover,var(--ck-button-default-bg-hover)) } button:active:not(:disabled) { background:var(--button-default-bgColor-active,var(--ck-button-default-bg-active)) } button:disabled { border-color:var(--button-default-borderColor-disabled,var(--ck-button-default-border-disabled)); background:var(--button-default-bgColor-disabled,var(--ck-button-default-bg-disabled)); color:var(--button-default-fgColor-disabled,var(--ck-button-default-fg-disabled)); cursor:default } .wide { width:100%; margin-top:10px } .primary { border-color:var(--button-primary-borderColor-rest,var(--ck-button-primary-border-rest)); background:var(--button-primary-bgColor-rest,var(--ck-button-primary-bg-rest)); color:var(--button-primary-fgColor-rest,var(--ck-button-primary-fg-rest)) } .primary:hover { background:var(--button-primary-bgColor-hover,var(--ck-button-primary-bg-hover)) } .primary:active:not(:disabled) { background:var(--button-primary-bgColor-active,var(--ck-button-primary-bg-active)) } .primary:disabled { border-color:var(--button-primary-borderColor-disabled,var(--ck-button-primary-border-disabled)); background:var(--button-primary-bgColor-disabled,var(--ck-button-primary-bg-disabled)); color:var(--button-primary-fgColor-disabled,var(--ck-button-primary-fg-disabled)) } .danger,.danger-outline { border-color:var(--button-danger-borderColor-rest,var(--ck-button-danger-border-rest)); background:var(--button-danger-bgColor-rest,var(--ck-button-danger-bg-rest)); color:var(--button-danger-fgColor-rest,var(--ck-button-danger-fg-rest)) } .danger:hover,.danger-outline:hover { border-color:var(--button-danger-borderColor-hover,var(--ck-button-danger-border-hover)); background:var(--button-danger-bgColor-hover,var(--ck-button-danger-bg-hover)); color:var(--button-danger-fgColor-hover,var(--ck-button-danger-fg-hover)) } .danger:active:not(:disabled),.danger-outline:active:not(:disabled) { border-color:var(--button-danger-borderColor-active,var(--ck-button-danger-border-active)); background:var(--button-danger-bgColor-active,var(--ck-button-danger-bg-active)); color:var(--button-danger-fgColor-active,var(--ck-button-danger-fg-active)) } .danger:disabled,.danger-outline:disabled { border-color:var(--button-danger-borderColor-rest,var(--ck-button-danger-border-rest)); background:var(--button-danger-bgColor-disabled,var(--ck-button-danger-bg-disabled)); color:var(--button-danger-fgColor-disabled,var(--ck-button-danger-fg-disabled)) }
-      .tracker-toolbar { justify-content:flex-end } .header-actions { justify-content:flex-end; gap:4px } .header-navigation { display:flex; align-items:center; gap:4px } .reports-button { display:inline-flex; align-items:center; gap:6px; padding:5px 7px }
-      .save-field { position:relative; display:block; width:100% } .save-field input,.save-field textarea { padding-right:34px }
-      .description-saved { color:var(--ck-success); font:700 11px/1.4 var(--fontStack-sansSerif); white-space:nowrap }
+      button { border:1px solid var(--button-default-borderColor-rest,var(--ck-button-default-border-rest)); border-radius:6px; min-height:32px; padding:5px 12px; line-height:20px; background:var(--button-default-bgColor-rest,var(--ck-button-default-bg-rest)); color:var(--button-default-fgColor-rest,var(--ck-button-default-fg-rest)); font-weight:500; cursor:pointer } button:hover { background:var(--button-default-bgColor-hover,var(--ck-button-default-bg-hover)) } button:active:not(:disabled) { background:var(--button-default-bgColor-active,var(--ck-button-default-bg-active)) } button:disabled { border-color:var(--button-default-borderColor-disabled,var(--ck-button-default-border-disabled)); background:var(--button-default-bgColor-disabled,var(--ck-button-default-bg-disabled)); color:var(--button-default-fgColor-disabled,var(--ck-button-default-fg-disabled)); cursor:default } .wide { width:100%; margin-top:10px } .primary { border-color:var(--button-primary-borderColor-rest,var(--ck-button-primary-border-rest)); background:var(--button-primary-bgColor-rest,var(--ck-button-primary-bg-rest)); color:var(--button-primary-fgColor-rest,var(--ck-button-primary-fg-rest)) } .primary:hover { background:var(--button-primary-bgColor-hover,var(--ck-button-primary-bg-hover)) } .primary:active:not(:disabled) { background:var(--button-primary-bgColor-active,var(--ck-button-primary-bg-active)) } .primary:disabled { border-color:var(--button-primary-borderColor-disabled,var(--ck-button-primary-border-disabled)); background:var(--button-primary-bgColor-disabled,var(--ck-button-primary-bg-disabled)); color:var(--button-primary-fgColor-disabled,var(--ck-button-primary-fg-disabled)) } .danger,.danger-outline { border-color:var(--button-danger-borderColor-rest,var(--ck-button-danger-border-rest)); background:var(--button-danger-bgColor-rest,var(--ck-button-danger-bg-rest)); color:var(--button-danger-fgColor-rest,var(--ck-button-danger-fg-rest)) } .danger:hover,.danger-outline:hover { border-color:var(--button-danger-borderColor-hover,var(--ck-button-danger-border-hover)); background:var(--button-danger-bgColor-hover,var(--ck-button-danger-bg-hover)); color:var(--button-danger-fgColor-hover,var(--ck-button-danger-fg-hover)) } .danger:active:not(:disabled),.danger-outline:active:not(:disabled) { border-color:var(--button-danger-borderColor-active,var(--ck-button-danger-border-active)); background:var(--button-danger-bgColor-active,var(--ck-button-danger-bg-active)); color:var(--button-danger-fgColor-active,var(--ck-button-danger-fg-active)) } .danger:disabled,.danger-outline:disabled { border-color:var(--button-danger-borderColor-rest,var(--ck-button-danger-border-rest)); background:var(--button-danger-bgColor-disabled,var(--ck-button-danger-bg-disabled)); color:var(--button-danger-fgColor-disabled,var(--ck-button-danger-fg-disabled)) }
+      .tracker-toolbar { justify-content:flex-end } .header-actions { justify-content:flex-end; gap:4px } .header-navigation { display:flex; align-items:center; gap:4px } .reports-button { display:inline-flex; align-items:center; gap:8px; min-height:32px; padding:5px 8px }
+      .save-field { position:relative; display:block; width:100% } .save-field input,.save-field textarea { padding-right:32px }
+      .description-saved { display:inline-flex; align-items:center; gap:4px; color:var(--ck-success); font:500 12px/20px var(--fontStack-sansSerif); white-space:nowrap }
       .description-saved[hidden] { display:none }
-      .description-overflow-hint { display:block; margin-top:3px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:11px; font-weight:500 }
+      .description-overflow-hint { display:block; margin-top:3px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:500 }
       .description-overflow-hint[hidden] { display:none }
-      .strip-description-field .description-saved { position:absolute; right:38px; top:50%; transform:translateY(-50%); padding:2px 4px; background:var(--bgColor-default,var(--ck-bg)); border-radius:3px }
-      .dialog-description-saved { display:inline-block; margin:4px 0 0 6px }
-      .entry-description-saved { display:inline-block; margin:4px 0 0 27px }
-      .save-check { position:absolute; z-index:1; top:50%; right:4px; display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; margin:0; padding:0; transform:translateY(-50%); border:0; border-radius:5px; background:transparent; color:var(--ck-success); font:800 18px/1 var(--fontStack-sansSerif); cursor:pointer }
-      .save-check:hover:not(:disabled) { border:0; background:color-mix(in srgb,var(--ck-success) 12%,transparent); color:var(--ck-success) } .save-check:disabled { border:0; background:transparent; color:color-mix(in srgb,var(--ck-success) 50%,transparent) } .save-check[hidden] { display:none } .reports-button,.icon-button,.link-button,.navigation-item { border:1px solid var(--button-invisible-borderColor-rest,var(--ck-button-invisible-border-rest)); background:var(--button-invisible-bgColor-rest,var(--ck-button-invisible-bg-rest)) } .reports-button,.icon-button { color:var(--button-invisible-iconColor-rest,var(--ck-button-invisible-icon-rest)) } .reports-button:hover,.icon-button:hover,.link-button:hover,.navigation-item:hover { border-color:var(--button-invisible-borderColor-hover,var(--ck-button-invisible-border-hover)); background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)) } .reports-button:hover,.icon-button:hover { color:var(--button-invisible-iconColor-hover,var(--ck-button-invisible-icon-hover)) } .reports-button:active:not(:disabled),.icon-button:active:not(:disabled),.link-button:active:not(:disabled),.navigation-item:active:not(:disabled) { background:var(--button-invisible-bgColor-active,var(--ck-button-invisible-bg-active)) } .reports-button:disabled,.icon-button:disabled,.link-button:disabled,.navigation-item:disabled { border-color:var(--button-invisible-borderColor-disabled,var(--ck-button-invisible-border-disabled)); background:var(--button-invisible-bgColor-disabled,var(--ck-button-invisible-bg-disabled)); color:var(--button-invisible-fgColor-disabled,var(--ck-button-invisible-fg-disabled)) } @media(prefers-reduced-motion: no-preference) { .icon-button.syncing svg { animation:clockoli-sync-spin .8s linear infinite; transform-origin:center } } @keyframes clockoli-sync-spin { to { transform:rotate(360deg) } } .today-total { margin-top:14px; padding:10px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      .strip-description-field .description-saved { position:absolute; right:38px; top:50%; transform:translateY(-50%); padding:2px 4px; background:var(--bgColor-default,var(--ck-bg)); border-radius:3px}
+      .dialog-description-saved { margin:4px 0 0 8px }
+      .entry-description-saved { margin:4px 0 0 24px }
+      .save-check { position:absolute; z-index:1; top:50%; right:4px; display:inline-flex; align-items:center; justify-content:center; width:24px; min-height:0; height:24px; margin:0; padding:0; transform:translateY(-50%); border:0; border-radius:6px; background:transparent; color:var(--ck-success); cursor:pointer }
+      .save-check:hover:not(:disabled) { border:0; background:color-mix(in srgb,var(--ck-success) 12%,transparent); color:var(--ck-success) } .save-check:disabled { border:0; background:transparent; color:color-mix(in srgb,var(--ck-success) 50%,transparent) } .save-check[hidden] { display:none } .reports-button,.icon-button,.link-button,.navigation-item { border:1px solid var(--button-invisible-borderColor-rest,var(--ck-button-invisible-border-rest)); background:var(--button-invisible-bgColor-rest,var(--ck-button-invisible-bg-rest)) } .reports-button,.icon-button { color:var(--button-invisible-iconColor-rest,var(--ck-button-invisible-icon-rest)) } .reports-button:hover,.icon-button:hover,.link-button:hover,.navigation-item:hover { border-color:var(--button-invisible-borderColor-hover,var(--ck-button-invisible-border-hover)); background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)) } .reports-button:hover,.icon-button:hover { color:var(--button-invisible-iconColor-hover,var(--ck-button-invisible-icon-hover)) } .reports-button:active:not(:disabled),.icon-button:active:not(:disabled),.link-button:active:not(:disabled),.navigation-item:active:not(:disabled) { background:var(--button-invisible-bgColor-active,var(--ck-button-invisible-bg-active)) } .reports-button:disabled,.icon-button:disabled,.link-button:disabled,.navigation-item:disabled { border-color:var(--button-invisible-borderColor-disabled,var(--ck-button-invisible-border-disabled)); background:var(--button-invisible-bgColor-disabled,var(--ck-button-invisible-bg-disabled)); color:var(--button-invisible-fgColor-disabled,var(--ck-button-invisible-fg-disabled)) } @media(prefers-reduced-motion: no-preference) { .icon-button.syncing svg { animation:clockoli-sync-spin .8s linear infinite; transform-origin:center } } @keyframes clockoli-sync-spin { to { transform:rotate(360deg) } } .today-total { margin-top:14px; padding:10px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
       .timeline-queue-status { margin:0 0 8px; font-size:12px; font-weight:600 }
-      .timeline-queue-status[hidden] { display:none } .today-total-value { font-size:16px } .icon-button,.link-button { padding:5px } .link-button { color:var(--fgColor-accent,var(--ck-accent)) } .section-head { margin-bottom:7px }
-      .time-range-editor { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px } .time-picker { min-width:0; margin:0; padding:10px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:10px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .time-picker legend { padding:0 5px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-weight:700 } .time-date { margin:0 0 8px; padding:5px 6px; background:var(--bgColor-default,var(--ck-bg)); font-size:12px } .time-picker-values { display:flex; align-items:center; justify-content:center; gap:6px } .time-value { width:62px; height:48px; margin:0; padding:4px; border-color:var(--control-borderColor-rest,var(--ck-control-border-rest)); background:var(--bgColor-default,var(--ck-bg)); font:700 26px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); text-align:center; font-variant-numeric:tabular-nums } .time-colon { font:700 24px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
-      .trigger-main { width:34px; margin-right:8px }
-      .entry-date-header { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px } .entry-date-header h2 { margin:0; font-size:14px; font-weight:650 } .entry-day-total,.inline-unsaved { color:var(--ck-fg-muted); font-size:12px; white-space:nowrap } .entry-record-task-identity { display:flex; align-items:flex-start; gap:10px; min-width:0 } .entry-record-task-result { flex:1; min-width:0 } .entry-record-favicon { margin-top:2px }
-      .entry { padding:8px 0 } .entry + .entry { margin-top:6px } .entry-record-task-result { margin-bottom:7px } .entry-record { padding:10px 12px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .entry-record + .entry-record { margin-top:8px } .entry-record.entry-overlap { padding:10px 12px; border-color:var(--borderColor-danger-muted,var(--ck-border-danger)); background:var(--bgColor-danger-muted,var(--ck-bg-danger)) } .overlap-warning { margin-bottom:5px; color:var(--fgColor-danger,var(--ck-danger)); font-size:12px; font-weight:700 } .entry-day { margin-bottom:2px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:13px; font-weight:650; white-space:nowrap } .entry-time-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-start; gap:8px; min-width:0; white-space:nowrap } .entry-time-range,.inline-time-range { flex:0 0 auto } .inline-time-line { display:flex; flex-wrap:nowrap; align-items:center; justify-content:flex-start; gap:4px; min-width:0; white-space:nowrap } .compact-time-picker { display:inline-flex; align-items:center; min-width:0; margin:0; padding:0; border:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)) } .compact-time-picker legend { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap } .compact-time-picker .time-date { display:none } .compact-time-picker .time-picker-values { display:inline-flex; justify-content:flex-start; gap:2px; white-space:nowrap } .compact-time-picker .time-value { width:34px; height:32px; margin:0; padding:2px; border-radius:5px; font-size:17px } .compact-time-picker .time-colon { font-size:17px } .inline-time-separator { color:var(--fgColor-muted,var(--ck-fg-muted)); font-weight:650 } .entry-time-range { color:var(--fgColor-default,var(--ck-fg)); font:600 13px/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); font-variant-numeric:tabular-nums } .inline-duration { flex:0 1 auto; min-width:0; overflow:hidden; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:13px; font-weight:650; text-overflow:ellipsis; white-space:nowrap } .entry-description { margin-top:4px; color:var(--fgColor-muted,var(--ck-fg-muted)); overflow-wrap:anywhere } .entry-description-editable { display:block; width:100%; padding:5px 7px; border:1px dashed var(--borderColor-default,var(--ck-border)); background:var(--bgColor-default,var(--ck-bg-editable)); color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:inherit; font-weight:400; line-height:inherit; text-align:left } .entry-description-editable:hover { border-style:solid; background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)); color:var(--fgColor-default,var(--ck-fg)) } .inline-metadata-editor { margin:6px 0 2px; padding:9px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:7px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .inline-metadata-editor label { margin:6px 0 0 } .inline-metadata-editor label:first-child { margin-top:0 } .inline-metadata-editor input,.inline-metadata-editor textarea { font-size:14px } .inline-metadata-editor textarea { width:100%; min-height:54px; max-height:200px; resize:vertical; padding-right:34px; overflow-y:auto; white-space:pre-wrap } .entry-actions { display:flex; flex:0 0 auto; align-items:center; gap:4px; opacity:0; pointer-events:none } .entry-actions.dirty { opacity:1; pointer-events:auto } .entry-actions.dirty .entry-edit,.entry-actions.dirty .entry-delete { display:none } .entry-actions button { padding:3px 5px; font-size:12px } .entry-record:hover .entry-actions,.entry-record:focus-within .entry-actions,.entry-actions-visible { opacity:1; pointer-events:auto }
- .queue-diagnostics { margin-top:18px; padding:10px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .queue-diagnostics summary { cursor:pointer; color:var(--fgColor-default,var(--ck-fg)); font-weight:700 } .queue-diagnostics-list { max-height:220px; margin:8px 0 0; padding:0 0 0 20px; overflow:auto; font:12px/1.45 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) } .queue-diagnostic-event { overflow-wrap:anywhere } .queue-diagnostic-event + .queue-diagnostic-event { margin-top:5px } .queue-diagnostic-time { margin-right:7px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-variant-numeric:tabular-nums }
- label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,var(--ck-control-border-rest)); border-radius:6px; background:var(--control-bgColor-rest,var(--ck-control-bg-rest)); color:var(--control-fgColor-rest,var(--ck-control-fg-rest)) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,var(--ck-control-fg-placeholder)) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,var(--ck-control-bg-hover)) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,var(--ck-control-bg-active)) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,var(--ck-control-border-disabled)); background:var(--control-bgColor-disabled,var(--ck-control-bg-disabled)); color:var(--control-fgColor-disabled,var(--ck-control-fg-disabled)) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,var(--ck-danger)); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:340px) { .entry-time-row { gap:3px } .inline-time-line { gap:1px } .compact-time-picker .time-picker-values { gap:1px } .compact-time-picker .time-value { width:27px; font-size:15px } .inline-duration { font-size:12px } .entry-actions { gap:1px } .entry-actions button { padding:2px; font-size:10px } } @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } .times-header { align-items:flex-start; flex-direction:column } .times-body { padding:16px } .times-toolbar { grid-template-columns:1fr } .times-filter { grid-column:auto } .times-custom { grid-column:auto; grid-template-columns:1fr } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } }
+      .timeline-queue-status[hidden] { display:none } .today-total-value { font-size:16px } .icon-button,.link-button { min-height:28px; padding:3px 5px } .link-button { color:var(--fgColor-accent,var(--ck-accent)) } .section-head { margin-bottom:7px }
+      .time-range-editor { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px } .time-picker { min-width:0; margin:0; padding:10px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .time-picker legend { padding:0 5px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-weight:600 } .time-date { margin:0 0 8px; padding:5px 6px; background:var(--bgColor-default,var(--ck-bg)); font-size:12px } .time-picker-values { display:flex; align-items:center; justify-content:center; gap:6px } .time-value { width:48px; height:32px; min-height:0; margin:0; padding:4px; border-color:var(--control-borderColor-rest,var(--ck-control-border-rest)); background:var(--bgColor-default,var(--ck-bg)); font:600 16px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); text-align:center; font-variant-numeric:tabular-nums } .time-colon { font:600 16px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
+      .trigger-main { width:32px; margin-right:8px }
+      .entry-date-header { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px } .entry-date-header h2 { margin:0; font-size:14px; font-weight:600 } .entry-day-total,.inline-unsaved { color:var(--ck-fg-muted); font-size:12px; white-space:nowrap } .entry-record-task-identity { display:flex; align-items:flex-start; gap:10px; min-width:0 } .entry-record-task-result { flex:1; min-width:0 } .entry-record-favicon { margin-top:2px }
+      .entry { padding:8px 0 } .entry + .entry { margin-top:6px } .entry-record-task-result { margin-bottom:7px } .entry-record { padding:10px 12px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .entry-record + .entry-record { margin-top:8px } .entry-record.entry-overlap { padding:10px 12px; border-color:var(--borderColor-danger-muted,var(--ck-border-danger)); background:var(--bgColor-danger-muted,var(--ck-bg-danger)) } .overlap-warning { margin-bottom:5px; color:var(--fgColor-danger,var(--ck-danger)); font-size:12px; font-weight:600 } .entry-day { margin-bottom:2px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:14px; font-weight:600; white-space:nowrap } .entry-time-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-start; gap:8px; min-width:0; white-space:nowrap } .entry-time-range,.inline-time-range { flex:0 0 auto } .inline-time-line { display:flex; flex-wrap:nowrap; align-items:center; justify-content:flex-start; gap:4px; min-width:0; white-space:nowrap } .compact-time-picker { display:inline-flex; align-items:center; min-width:0; margin:0; padding:0; border:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)) } .compact-time-picker legend { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap } .compact-time-picker .time-date { display:none } .compact-time-picker .time-picker-values { display:inline-flex; justify-content:flex-start; gap:2px; white-space:nowrap } .compact-time-picker .time-value { width:34px; height:32px; min-height:0; margin:0; padding:2px; border-radius:6px; font-size:14px } .compact-time-picker .time-colon { font-size:14px } .inline-time-separator { color:var(--fgColor-muted,var(--ck-fg-muted)); font-weight:600 } .entry-time-range { color:var(--fgColor-default,var(--ck-fg)); font:500 12px/20px var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); font-variant-numeric:tabular-nums } .inline-duration { flex:0 1 auto; min-width:0; overflow:hidden; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:400; text-overflow:ellipsis; white-space:nowrap } .entry-description { margin-top:4px; color:var(--fgColor-muted,var(--ck-fg-muted)); overflow-wrap:anywhere } .entry-description-editable { display:block; width:100%; padding:5px 7px; border:1px dashed var(--borderColor-default,var(--ck-border)); background:var(--bgColor-default,var(--ck-bg-editable)); color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:inherit; font-weight:400; line-height:inherit; text-align:left } .entry-description-editable:hover { border-style:solid; background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)); color:var(--fgColor-default,var(--ck-fg)) } .inline-metadata-editor { margin:6px 0 2px; padding:9px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .inline-metadata-editor label { margin:6px 0 0 } .inline-metadata-editor label:first-child { margin-top:0 } .inline-metadata-editor input,.inline-metadata-editor textarea { font-size:14px } .inline-metadata-editor textarea { width:100%; min-height:54px; max-height:200px; resize:vertical; padding-right:34px; overflow-y:auto; white-space:pre-wrap } .entry-actions { display:flex; flex:0 0 auto; align-items:center; gap:4px; opacity:0; pointer-events:none } .entry-actions.dirty { opacity:1; pointer-events:auto } .entry-actions.dirty .entry-edit,.entry-actions.dirty .entry-delete { display:none } .entry-actions button { padding:3px 5px; font-size:12px } .entry-record:hover .entry-actions,.entry-record:focus-within .entry-actions,.entry-actions-visible { opacity:1; pointer-events:auto }
+ .queue-diagnostics { margin-top:18px; padding:10px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .queue-diagnostics summary { cursor:pointer; color:var(--fgColor-default,var(--ck-fg)); font-weight:600 } .queue-diagnostics-list { max-height:220px; margin:8px 0 0; padding:0 0 0 20px; overflow:auto; font:12px/1.45 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) } .queue-diagnostic-event { overflow-wrap:anywhere } .queue-diagnostic-event + .queue-diagnostic-event { margin-top:5px } .queue-diagnostic-time { margin-right:7px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-variant-numeric:tabular-nums }
+ label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; min-height:32px; margin-top:4px; padding:5px 12px; line-height:20px; border:1px solid var(--control-borderColor-rest,var(--ck-control-border-rest)); border-radius:6px; background:var(--control-bgColor-rest,var(--ck-control-bg-rest)); color:var(--control-fgColor-rest,var(--ck-control-fg-rest)); font:400 14px/20px var(--fontStack-sansSerif,sans-serif) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,var(--ck-control-fg-placeholder)) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,var(--ck-control-bg-hover)) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,var(--ck-control-bg-active)) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,var(--ck-control-border-disabled)); background:var(--control-bgColor-disabled,var(--ck-control-bg-disabled)); color:var(--control-fgColor-disabled,var(--ck-control-fg-disabled)) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,var(--ck-danger)); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:340px) { .entry-time-row { gap:3px } .inline-time-line { gap:1px } .compact-time-picker .time-picker-values { gap:1px } .compact-time-picker .time-value { width:27px; font-size:14px } .inline-duration { font-size:12px } .entry-actions { gap:1px } .entry-actions button { padding:2px; font-size:12px } } @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } .times-header { align-items:flex-start; flex-direction:column } .times-body { padding:16px } .times-toolbar { grid-template-columns:1fr } .times-filter { grid-column:auto } .times-custom { grid-column:auto; grid-template-columns:1fr } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } }
       /* Activity redesign: compact, scan-first list rows. */
       :host(.times-surface) .times-page { width:min(920px,calc(100% - 32px)); min-height:calc(100vh - 48px); background:var(--bgColor-default,var(--ck-bg)); border-inline:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      :host(.times-surface[data-clockoli-width="full"]) .times-page { width:100%; border-inline:0 }
       :host(.times-surface) .times-body { padding:24px }
       :host(.times-surface) .times-view-modes { display:flex; justify-content:center; gap:0; margin-bottom:16px; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      :host(.times-surface) .times-view-button { min-height:40px; margin-bottom:-1px; padding:8px 18px; border:0; border-bottom:3px solid transparent; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-weight:600 }
+      :host(.times-surface) .times-view-button { min-height:32px; margin-bottom:-1px; padding:8px 18px; border:0; border-bottom:3px solid transparent; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-weight:600 }
       :host(.times-surface) .times-view-button:hover { background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)); color:var(--fgColor-default,var(--ck-fg)) }
-      :host(.times-surface) .times-view-button[aria-pressed="true"] { border-bottom-color:var(--ck-success); background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); font-weight:700 }
+      :host(.times-surface) .times-view-button[aria-pressed="true"] { border-bottom-color:var(--ck-success); background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); font-weight:600 }
       :host(.times-surface) .popup-timeline-section { min-width:0; margin-bottom:20px }
       :host(.times-surface) .popup-timeline-section[hidden],:host(.times-surface) .times-results[hidden] { display:none }
       :host(.times-surface) .times-toolbar { grid-template-columns:minmax(0,1fr); margin-bottom:22px }
       :host(.times-surface) .times-toolbar.times-visual { grid-template-columns:1fr; justify-items:end }
       .timeline-shell { position:relative }
-      .timeline-week-error,.timeline-edit-error { display:grid; justify-items:start; gap:8px; padding:12px 14px; border:1px solid var(--borderColor-danger-muted,var(--ck-border-danger)); border-radius:8px; background:var(--bgColor-danger-muted,var(--ck-bg-danger)) }
+      .timeline-week-error,.timeline-edit-error { display:grid; justify-items:start; gap:8px; padding:12px 14px; border:1px solid var(--borderColor-danger-muted,var(--ck-border-danger)); border-radius:6px; background:var(--bgColor-danger-muted,var(--ck-bg-danger)) }
       .timeline-shell:has(>.calendar-week-loading:not([hidden])) { min-height:240px }
       .calendar-week-loading { position:absolute; z-index:5; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; min-height:240px; background:color-mix(in srgb,var(--bgColor-default,var(--ck-bg)) 90%,transparent); color:var(--fgColor-default,var(--ck-fg)); font-size:14px; font-weight:600; pointer-events:none }
       .calendar-week-loading[hidden] { display:none }
-      .calendar-week-spinner { width:64px; height:64px; border:6px solid var(--borderColor-muted,var(--ck-border-muted)); border-top-color:var(--ck-success); border-radius:50%; animation:calendar-week-spin .8s linear infinite }
+      .calendar-week-spinner { width:64px; height:64px; border:4px solid var(--borderColor-muted,var(--ck-border-muted)); border-top-color:var(--ck-success); border-radius:50%; animation:calendar-week-spin .8s linear infinite }
       @keyframes calendar-week-spin { to { transform:rotate(360deg) } }
       @media(prefers-reduced-motion:reduce) { .calendar-week-spinner { animation:none; border-top-color:var(--ck-success); border-right-color:var(--ck-success) } }
       .week-navigation { box-sizing:border-box; display:grid; grid-template-columns:minmax(30px,1fr) auto minmax(30px,1fr); align-items:center; gap:8px; width:100%; margin:0; padding-inline:14px; white-space:nowrap }
-      .week-navigation-label { font-size:12px; font-weight:600; color:var(--fgColor-muted,var(--ck-fg-muted)); font-variant-numeric:tabular-nums }
-      .week-navigation-button { min-width:30px; min-height:30px; padding:2px 7px; font-size:20px; line-height:1 }
+      .week-navigation { position:relative }
+      .week-navigation-label { min-height:0; padding:0; border:0; background:none; font-size:12px; font-weight:500; color:var(--fgColor-muted,var(--ck-fg-muted)); font-variant-numeric:tabular-nums; cursor:pointer }
+      .week-navigation-label:hover { background:var(--button-default-bgColor-hover,var(--ck-button-default-bg-hover)) }
+      .week-navigation-picker { position:absolute; left:50%; bottom:0; width:1px; height:1px; min-height:0; margin:0; padding:0; border:0; opacity:0; pointer-events:none }
+      .week-navigation-button { display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; min-width:32px; min-height:32px; padding:0 }
       .week-navigation-button:first-child { justify-self:start }
       .week-navigation-button:last-child { justify-self:end }
       :host(.times-surface) .times-list-total { margin:0 0 8px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:600; text-align:center }
@@ -4223,60 +4667,56 @@
       :host(.times-surface) .times-filter[hidden] { display:none }
       :host(.times-surface) .times-search-pagination { display:flex; flex-wrap:wrap; justify-content:center; align-items:center; gap:8px; margin:18px 0 4px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-variant-numeric:tabular-nums; text-align:center }
       :host(.times-surface) .times-toolbar label { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:600 }
-      :host(.times-surface) .times-toolbar input,:host(.times-surface) .times-toolbar select { min-height:38px; background-color:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.times-surface) .times-toolbar input,:host(.times-surface) .times-toolbar select { min-height:32px; background-color:var(--bgColor-muted,var(--ck-bg-muted)) }
       .activity-list .section-head { margin-bottom:14px }
-      .activity-list .section-head strong { font-size:20px; font-weight:600 }
-      .activity-list .entry { padding:0; margin:0 0 16px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:10px; background:var(--bgColor-default,var(--ck-bg)) }
-      .activity-list .entry-date-header { margin:0; padding:11px 14px; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:9px 9px 0 0; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      .activity-list .section-head strong { font-size:16px; font-weight:600 }
+      .activity-list .entry { padding:0; margin:0 0 16px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; background:var(--bgColor-default,var(--ck-bg)) }
+      .activity-list .entry-date-header { margin:0; padding:8px 16px; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:5px 5px 0 0; background:var(--bgColor-muted,var(--ck-bg-muted)) }
       .activity-list { border-top:0 }
-      .activity-list .entry-record { position:relative; padding:14px 110px 14px 14px; border:0; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:0; background:var(--bgColor-default,var(--ck-bg)); transition:background .12s ease }
-      .activity-list .entry-record:last-child { border-bottom:0; border-radius:0 0 9px 9px }
+      .activity-list .entry-record { position:relative; padding:8px 110px 8px 16px; border:0; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:0; background:var(--bgColor-default,var(--ck-bg)); transition:background .12s ease }
+      .activity-list .entry-record:last-child { border-bottom:0; border-radius:0 0 5px 5px}
       .activity-list .entry-record + .entry-record { margin-top:0 }
       .activity-list .entry-record:hover { background:linear-gradient(90deg,var(--bgColor-default,var(--ck-bg)) 0,color-mix(in srgb,var(--bgColor-muted,var(--ck-bg-muted)) 45%,var(--bgColor-default,var(--ck-bg))) 100%) }
-      .activity-list .entry-record.entry-overlap { padding:14px 110px 14px 14px; border-bottom-color:var(--borderColor-danger-muted,var(--ck-border-danger)); background:var(--bgColor-danger-muted,var(--ck-bg-danger)) }
-      .activity-list .entry-time-row { gap:8px; min-height:18px; margin:0 0 8px; font:600 13px/1.35 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); letter-spacing:-.15px }
+      .activity-list .entry-record.entry-overlap { padding:8px 110px 8px 16px; border-bottom-color:var(--borderColor-danger-muted,var(--ck-border-danger)); background:var(--bgColor-danger-muted,var(--ck-bg-danger)) }
+      .activity-list .entry-time-row { gap:8px; min-height:20px; margin:0 0 4px; font:500 12px/20px var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
       .activity-list .entry-time-display { color:var(--fgColor-default,var(--ck-fg)) }
-      .activity-list .inline-duration { margin:0; color:var(--fgColor-muted,var(--ck-fg-muted)); font-family:var(--fontStack-sansSerif,"Mona Sans VF",sans-serif); font-weight:500 }
+      .activity-list .inline-duration { margin:0; color:var(--fgColor-muted,var(--ck-fg-muted)); font-family:var(--fontStack-sansSerif,"Mona Sans VF",sans-serif); font-weight:400 }
       .activity-list .inline-time-range { display:none }
       .activity-list .entry-editing .entry-time-display { display:none }
       .activity-list .entry-editing .inline-time-range { display:block }
       .activity-list .entry-record-task-result.activity-task-result { display:flex; flex:1; flex-direction:column }
-      .activity-list .activity-task-result .task-title { order:-1; max-width:720px; margin:0; font-size:15px }
+      .activity-list .activity-task-result .task-title { order:-1; max-width:720px; margin:0; font-size:14px }
       .activity-list .activity-task-result .task-url { width:max-content; max-width:100%; margin-top:2px; line-height:1.35 }
-      .activity-list .entry-record-task-identity { gap:9px }
-      .activity-list .entry-record-favicon { width:18px; height:18px; margin-top:1px; border-radius:4px }
+      .activity-list .entry-record-task-identity { gap:8px }
+      .activity-list .entry-record-favicon { width:18px; height:18px; margin-top:1px; border-radius:6px}
       .site-github-favicon { filter:var(--clockoli-github-favicon-filter,none) }
       @media(prefers-color-scheme:dark) { .site-github-favicon { filter:var(--clockoli-github-favicon-filter,brightness(0) invert(1)) } }
       .activity-list .entry-record-task-result { margin:0 }
       .entry-description-link { white-space:pre-wrap; overflow-wrap:anywhere }
-      .activity-list .entry-description-link { margin:5px 0 0 27px; padding:0; border:0; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:400; text-align:left }
+      .activity-list .entry-description-link { min-height:0; margin:4px 0 0 24px; padding:0; border:0; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:400; text-align:left }
       .activity-list .entry-description-link:hover { background:transparent; color:var(--fgColor-accent,var(--ck-accent)); text-decoration:underline }
-      .activity-list .entry-actions { position:absolute; top:12px; right:14px; gap:4px; opacity:0; transform:translateY(2px); transition:opacity .12s ease,transform .12s ease }
+      .activity-list .entry-actions { position:absolute; top:8px; right:8px; gap:4px; opacity:0; transform:translateY(2px); transition:opacity .12s ease,transform .12s ease }
       .activity-list .entry-record:hover .entry-actions,.activity-list .entry-record:focus-within .entry-actions,.activity-list .entry-actions-visible { opacity:1; transform:translateY(0); pointer-events:auto }
-      .activity-list .entry-actions .entry-edit,.activity-list .entry-actions .entry-delete,.activity-list .entry-actions .entry-track-control { width:30px; height:30px; padding:0; overflow:hidden; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:0 }
-      .activity-list .entry-actions .entry-track-control::after { content:'▶'; font-size:13px }
-      .activity-list .entry-actions .entry-stop::after { content:'■'; font-size:15px }
+      .activity-list .entry-actions .entry-edit,.activity-list .entry-actions .entry-delete,.activity-list .entry-actions .entry-track-control { display:inline-flex; align-items:center; justify-content:center; width:28px; min-height:28px; height:28px; padding:0; overflow:hidden; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:0 }
+      .activity-list .entry-actions svg { width:16px; height:16px; flex:none }
       .activity-list .entry-actions .entry-track-control:hover { border-color:var(--fgColor-accent,var(--ck-accent)); color:var(--fgColor-accent,var(--ck-accent)) }
       .activity-list .entry-actions .entry-stop { border-color:var(--borderColor-danger-muted,var(--ck-border-danger)); color:var(--fgColor-danger,var(--ck-danger)) }
-      .activity-list .entry-actions .entry-edit::after { content:'✎'; font-size:16px }
-      .activity-list .entry-actions .entry-delete::after { content:'×'; font-size:20px; font-weight:400; line-height:1 }
       .activity-list .entry-actions .entry-edit:hover { background:var(--bgColor-muted,var(--ck-bg-muted)); color:var(--fgColor-default,var(--ck-fg)) }
       .activity-list .entry-actions .entry-delete:hover { border-color:var(--borderColor-danger-muted,var(--ck-border-danger)); background:var(--bgColor-danger-muted,var(--ck-bg-danger)); color:var(--fgColor-danger,var(--ck-danger)) }
       .activity-list .entry-actions.dirty .entry-edit,.activity-list .entry-actions.dirty .entry-delete,.activity-list .entry-actions.dirty .entry-track-control { display:none }
-      .remote-timer-warning { display:grid; gap:8px; margin:0 0 14px; padding:12px 14px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-attention-muted,var(--ck-bg-attention)); color:var(--fgColor-default,var(--ck-fg)); font-size:13px; overflow-wrap:anywhere }
-      .remote-timer-warning button { justify-self:start }
-      :host(.times-surface) .bulk-time { margin-top:18px; padding:0; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
-      :host(.times-surface) .bulk-time summary { padding:10px 12px; font-weight:650 }
+      :host(.times-surface) .bulk-time { margin-top:18px; padding:0 12px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.times-surface) .bulk-time[open] { padding-bottom:12px }
+      :host(.times-surface) .bulk-time summary { padding:10px 0; font-weight:600 }
       :host(.times-surface) .bulk-time-examples { margin:8px 0 12px; padding:10px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:var(--bgColor-default,var(--ck-bg)) }
       :host(.times-surface) .bulk-time-examples strong { display:block; font-size:12px }
       :host(.times-surface) .bulk-time-examples pre { margin:4px 0 0; color:var(--fgColor-muted,var(--ck-fg-muted)); font:12px/1.6 var(--fontStack-monospace,ui-monospace,monospace); white-space:pre-wrap; overflow-wrap:anywhere }
-      :host(.times-surface) .bulk-time-feedback { position:fixed; z-index:1000; right:24px; bottom:24px; display:flex; align-items:center; gap:12px; box-sizing:border-box; width:max-content; max-width:calc(100vw - 32px); padding:12px 14px; border:1px solid var(--borderColor-default,var(--ck-border)); border-left:4px solid var(--ck-success); border-radius:8px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); box-shadow:var(--shadow-floating-small,var(--ck-shadow)); font-weight:600; overflow-wrap:anywhere }
+      :host(.times-surface) .bulk-time-feedback { position:fixed; z-index:1000; right:24px; bottom:24px; display:flex; align-items:center; gap:12px; box-sizing:border-box; width:max-content; max-width:calc(100vw - 32px); padding:12px 14px; border:1px solid var(--borderColor-default,var(--ck-border)); border-left:4px solid var(--ck-success); border-radius:6px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); box-shadow:var(--shadow-floating-small,var(--ck-shadow)); font-weight:600; overflow-wrap:anywhere }
       :host(.times-surface) .bulk-time-feedback-error { border-left-color:var(--ck-danger) }
-      :host(.times-surface) .bulk-time-feedback-dismiss { flex:none; min-width:28px; min-height:28px; margin-left:auto; padding:0 6px; border:0; border-radius:5px; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:20px; line-height:1; cursor:pointer }
+      :host(.times-surface) .bulk-time-feedback-dismiss { display:inline-flex; align-items:center; justify-content:center; flex:none; width:28px; min-height:28px; margin-left:auto; padding:0; border:0; border-radius:6px; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); cursor:pointer }
       :host(.times-surface) .bulk-time-feedback-dismiss:hover { background:var(--bgColor-muted,var(--ck-bg-muted)) }
       @media(max-width:480px) { :host(.times-surface) .bulk-time-feedback { right:16px; bottom:16px; left:16px; width:auto } }
-      @media(hover:none) { .activity-list .entry-actions { position:static; margin:10px 0 0 27px; opacity:1; transform:none; pointer-events:auto } .activity-list .entry-record { padding-right:14px } }
-      @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } :host(.times-surface) .times-body { padding:16px 12px 40px } :host(.times-surface) .times-toolbar { grid-template-columns:1fr } .activity-list .entry-record { padding-right:14px } .activity-list .entry-actions { position:static; margin:10px 0 0 27px; opacity:1; transform:none; pointer-events:auto } }
+      @media(hover:none) { .activity-list .entry-actions { position:static; margin:8px 0 0 24px; opacity:1; transform:none; pointer-events:auto } .activity-list .entry-record { padding-right:14px } }
+      @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } :host(.times-surface) .times-body { padding:16px 12px 40px } :host(.times-surface) .times-toolbar { grid-template-columns:1fr } .activity-list .entry-record { padding-right:14px } .activity-list .entry-actions { position:static; margin:8px 0 0 24px; opacity:1; transform:none; pointer-events:auto } }
       @media(max-width:400px) { .activity-list .inline-duration { display:block; width:100%; margin:3px 0 0 } }
     `);
 
@@ -4294,30 +4734,43 @@
     if (timesMode) style.textContent += `
       /* Activity dashboard: one compact information hierarchy above the calendar. */
       :host(.times-surface) { color-scheme:inherit }
-      :host(.times-surface) .times-page {width:min(1800px,calc(100% - 80px));min-height:calc(100vh - 116px);margin:0 auto 24px;border:0;border-radius:0;background:var(--bgColor-default,var(--ck-bg));box-shadow:none}
-      :host(.times-surface[data-clockoli-width="full"]) .times-page {width:calc(100% - 80px);margin:0 auto}
+      :host(.times-surface) .times-page {width:var(--clockoli-page-width);min-height:calc(100vh - 116px);margin:0 auto 24px;border:0;border-radius:0;background:var(--bgColor-default,var(--ck-bg));box-shadow:none}
       :host(.times-surface) .times-body {padding:0 0 30px}
-      :host(.times-surface) .times-toolbar:not(.times-visual) {display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:16px;margin:24px 0 20px}
+      :host(.times-surface) .times-toolbar:not(.times-visual) {display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:8px;margin:16px 0}
       :host(.times-surface) .times-filter {position:relative;width:100%;margin:0}
-      :host(.times-surface) .times-filter svg {position:absolute;top:50%;left:16px;transform:translateY(-50%);color:var(--fgColor-muted,var(--ck-fg-muted));pointer-events:none}
-      :host(.times-surface) .times-filter input {box-sizing:border-box;min-height:50px;margin-top:0;padding-left:44px;border-radius:8px}
-      :host(.times-surface) .times-toolbar:not(.times-visual) .week-navigation {display:grid;grid-template-columns:auto auto auto;gap:12px;width:auto;min-height:0;margin:0;padding:0}
-      :host(.times-surface) .times-toolbar .week-navigation-label {display:block;padding:11px 14px;border:1px solid var(--borderColor-muted,var(--ck-border-muted));border-radius:8px;color:var(--fgColor-muted,var(--ck-fg-muted));font-size:14px}
-      :host(.times-surface) .times-toolbar .week-navigation-button {min-width:46px;min-height:50px}
-      :host(.times-surface) .times-refresh {width:50px;height:50px;border:1px solid var(--borderColor-default,var(--ck-border));border-radius:8px;background:var(--bgColor-muted,var(--ck-bg-muted))}
+      :host(.times-surface) .times-filter svg {position:absolute;top:50%;left:8px;transform:translateY(-50%);color:var(--fgColor-muted,var(--ck-fg-muted));pointer-events:none}
+      :host(.times-surface) .times-filter input {box-sizing:border-box;min-height:32px;margin-top:0;padding-left:32px;border-radius:6px;font:400 14px/20px var(--fontStack-sansSerif)}
+      :host(.times-surface) .times-toolbar:not(.times-visual) .week-navigation {display:grid;grid-template-columns:auto auto auto;gap:8px;width:auto;min-height:0;margin:0;padding:0}
+      :host(.times-surface) .times-toolbar .week-navigation-label {display:block;padding:5px 12px;line-height:20px;border:1px solid var(--borderColor-muted,var(--ck-border-muted));border-radius:6px;color:var(--fgColor-muted,var(--ck-fg-muted));font-size:14px}
+      :host(.times-surface) .times-toolbar .week-navigation-button {min-width:32px;min-height:32px}
+      :host(.times-surface) .times-refresh {display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:1px solid var(--borderColor-default,var(--ck-border));border-radius:6px;background:var(--bgColor-muted,var(--ck-bg-muted))}
       :host(.times-surface) .times-refresh:hover {background:var(--button-default-bgColor-hover,var(--ck-button-default-bg-hover))}
       :host(.times-surface) .times-refresh[hidden] {display:none}
-      :host(.times-surface) .activity-list .entry {padding-bottom:12px}
-      :host(.times-surface) .activity-list .entry-record {margin:10px 12px 0;padding:12px 110px 12px 14px;border:1px solid var(--borderColor-muted,var(--ck-border-muted));border-radius:10px;background:var(--bgColor-muted,var(--ck-bg-muted))}
-      :host(.times-surface) .activity-list .entry-record + .entry-record {margin-top:10px}
-      :host(.times-surface) .activity-list .entry-record:last-child {border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted));border-radius:10px}
+      :host(.times-surface) .activity-list .entry {padding-bottom:8px}
+      :host(.times-surface) .activity-list .entry-record {margin:8px 8px 0;padding:8px 110px 8px 16px;border:1px solid var(--borderColor-muted,var(--ck-border-muted));border-radius:6px;background:var(--bgColor-muted,var(--ck-bg-muted))}
+      :host(.times-surface) .activity-list .entry-record + .entry-record {margin-top:8px}
+      :host(.times-surface) .activity-list .entry-record:last-child {border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted));border-radius:6px}
       :host(.times-surface) .times-toolbar.times-visual {min-height:0;margin:0;padding:0}
       :host(.times-surface) .popup-timeline-section {padding-top:24px;margin-bottom:16px}
-      :host(.times-surface) .week-navigation {min-height:50px;margin:0 0 4px;border-bottom:0}
+      :host(.times-surface) .times-loading-placeholder {display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;min-height:240px;padding:88px 16px 28px;border:1px solid var(--borderColor-muted,var(--ck-border-muted));border-radius:6px;background:var(--bgColor-muted,var(--ck-bg-muted));color:var(--fgColor-muted,var(--ck-fg-muted))}
+      :host(.times-surface) .times-loading-spinner {width:16px;height:16px;border:2px solid var(--borderColor-muted,var(--ck-border-muted));border-top-color:var(--fgColor-accent,var(--ck-accent));border-radius:50%;animation:activity-loading-spin .9s linear infinite}
+      @keyframes activity-loading-spin {to{transform:rotate(360deg)}}
+      :host(.times-surface) .times-load-error {display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:2px 14px;margin:16px 0;padding:10px 14px;border:1px solid var(--borderColor-muted,var(--ck-border-muted));border-left:4px solid var(--fgColor-attention,var(--ck-accent));border-radius:6px;background:var(--bgColor-muted,var(--ck-bg-muted))}
+      :host(.times-surface) .times-load-error-copy {display:grid;gap:2px;min-width:0}
+      :host(.times-surface) .times-load-error strong {font-size:14px}
+      :host(.times-surface) .times-load-error p {margin:0;color:var(--fgColor-muted,var(--ck-fg-muted));font-size:14px}
+      :host(.times-surface) .times-load-error-actions {display:flex;gap:8px;grid-column:2;grid-row:1}
+      :host(.times-surface) .times-load-error-actions button {min-height:32px;padding:4px 10px}
+      :host(.times-surface) .times-error-details {grid-column:1/-1;font-size:12px;color:var(--fgColor-muted,var(--ck-fg-muted))}
+      :host(.times-surface) .times-error-details summary {cursor:pointer}
+      :host(.times-surface) .times-error-details pre {white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0 0}
+      @media(max-width:460px){:host(.times-surface) .times-load-error-actions{grid-column:1/-1;grid-row:auto}}
+      @media(prefers-reduced-motion:reduce){:host(.times-surface) .times-loading-spinner{animation:none}}
+      :host(.times-surface) .week-navigation {min-height:32px;margin:0 0 4px;border-bottom:0}
       :host(.times-surface) .week-navigation {grid-template-columns:1fr 1fr}
       :host(.times-surface) .week-navigation-label,:host(.times-surface) .times-list-total {display:none}
       :host(.times-surface) .activity-list .section-head {justify-content:flex-end;margin-bottom:0}
-      :host(.times-surface) .week-navigation-button {border-radius:8px}
+      :host(.times-surface) .week-navigation-button {border-radius:6px}
       :host(.times-surface) .timeline-shell > .week-navigation {position:absolute;z-index:30;inset:0 0 auto;height:84px;min-height:0;margin:0;pointer-events:none}
       :host(.times-surface) .timeline-shell.calendar-week-navigation > .week-navigation {height:44px}
       :host(.times-surface) .timeline-shell > .week-navigation::before,
@@ -4331,7 +4784,7 @@
       @media(max-width:700px){:host(.times-surface) .popup-timeline-section{padding-top:16px}}
       @media(max-width:460px){:host(.times-surface) .activity-weekly-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
     `;
-    if (popupMode || fullWidthPopupOpen) style.textContent += `
+    if (popupMode) style.textContent += `
       :host(.popup-surface) .menu { max-height:min(720px,calc(100vh - 16px)); overflow-y:auto }
       :host(.popup-surface) .tracker-toolbar { display:grid; grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"brand end" "actions actions"; align-items:center; gap:8px; margin:0; padding:10px 12px 8px; border-top:0; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
       :host(.popup-surface) .timeline-brand { grid-area:brand; display:flex; justify-content:flex-start; min-width:0 }
@@ -4339,159 +4792,17 @@
       :host(.popup-surface) .timeline-toolbar-end { grid-area:end; display:flex; align-items:center }
       :host(.popup-surface) .header-actions { grid-area:actions; width:100%; justify-content:space-between; gap:0 }
       :host(.popup-surface) .header-navigation { width:100%; justify-content:space-between; gap:0 }
-      :host(.popup-surface) .reports-button { padding:5px 4px; font-size:12px }
-      :host(.popup-surface) .reports-button svg { width:14px; height:14px }
-      :host(.full-width-popup-surface) { position:fixed; z-index:2147483647; top:0; right:0; left:0; display:block; width:100vw; pointer-events:none }
-      :host(.full-width-popup-surface) .full-width-popup { width:100vw; max-width:none; max-height:min(720px,70vh); margin:0; overflow:auto; pointer-events:auto; border:1px solid var(--borderColor-default,var(--ck-border)); border-top:0; border-radius:0 0 12px 12px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); box-shadow:var(--shadow-floating-small,var(--ck-shadow-overlay)) }
-      :host(.full-width-popup-surface[data-clockoli-width="contained"]) .tracker-toolbar,:host(.full-width-popup-surface[data-clockoli-width="contained"]) .menu-body { max-width:1100px; margin-inline:auto }
-      :host(.full-width-popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:none; margin:0; overflow:visible; border:0; border-radius:0; box-shadow:none }
-      :host(.full-width-popup-surface) .menu-body { padding:0 }
-      :host(.full-width-popup-surface) .tracker-toolbar { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; min-height:48px; padding:8px var(--clockoli-gutter); border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      :host(.full-width-popup-surface) .timeline-brand { display:inline-flex; align-items:center; color:var(--fgColor-default,var(--ck-fg)) }
-      :host(.full-width-popup-surface) .clockoli-wordmark { display:block; width:auto; height:32px; object-fit:contain }
-      :host(.full-width-popup-surface) .header-actions { justify-self:center; display:flex; align-items:center; gap:2px }
-      :host(.full-width-popup-surface) .header-navigation { width:auto; justify-content:flex-start; gap:2px }
-      .timeline-view-modes { display:flex; gap:2px; padding:3px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:10px }
+      :host(.popup-surface) .reports-button { gap:4px; padding:5px 4px; font-size:12px }
+      .timeline-view-modes { display:flex; gap:1px; padding:1px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px}
       .popup-switch-action:not(:empty) { display:flex; align-self:center }
-      .popup-switch-action .popup-timeline-track { padding:6px 10px; font-size:12px }
-      .timeline-view-button { display:flex; align-items:center; justify-content:center; width:36px; height:36px; margin:0; padding:0; border:0; border-radius:8px; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); cursor:pointer }
-      .timeline-view-button svg { width:18px; height:18px; fill:currentColor }
+            .timeline-view-button { display:flex; align-items:center; justify-content:center; width:28px; height:28px; min-height:0; margin:0; padding:0; border:0; border-radius:6px; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); cursor:pointer }
+      .timeline-view-button svg { width:16px; height:16px; fill:currentColor }
       .timeline-view-button:hover { background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)); color:var(--fgColor-default,var(--ck-fg)) }
       .timeline-view-button[aria-pressed="true"] { background:var(--bgColor-success-muted,color-mix(in srgb,var(--ck-success) 14%,transparent)); color:var(--ck-success) }
       .timeline-view-button:focus-visible { outline:2px solid var(--focus-outlineColor,var(--ck-accent)); outline-offset:2px }
-      :host(.full-width-popup-surface) .timeline-toolbar-end { justify-self:end; display:flex; align-items:center; gap:12px }
-      :host(.full-width-popup-surface) .popup-timeline-track { white-space:nowrap }
-      :host(.full-width-popup-surface) .popup-timeline-close { width:30px; height:30px; padding:0; border:0; border-radius:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)); font-size:24px; font-weight:400; line-height:1 }
-      @media(max-width:520px) {
-        :host(.full-width-popup-surface) .tracker-toolbar { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"brand end" "actions actions"; row-gap:4px }
-        :host(.full-width-popup-surface) .timeline-brand { grid-area:brand }
-        :host(.full-width-popup-surface) .clockoli-wordmark { height:24px }
-        :host(.full-width-popup-surface) .timeline-toolbar-end { grid-area:end }
-        :host(.full-width-popup-surface) .header-actions { grid-area:actions; justify-self:stretch; width:100%; flex-wrap:wrap }
-        :host(.full-width-popup-surface) .header-navigation { display:grid; flex:1 1 100%; width:100%; max-width:100%; grid-template-columns:repeat(4,minmax(0,1fr)); gap:2px; overflow:visible }
-        :host(.full-width-popup-surface) .header-navigation .reports-button { min-width:0; justify-content:center; gap:3px; padding:5px 2px; font-size:10px; white-space:nowrap }
-        :host(.full-width-popup-surface) .header-navigation .reports-button svg { width:12px; height:12px }
-      }
-      :host(.full-width-popup-surface) .popup-timeline-section { box-sizing:border-box; position:relative; width:100%; margin:0; padding:16px var(--clockoli-gutter); border:0; border-radius:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)) }
-      :host(.full-width-popup-surface) .popup-list-total { margin:0 0 8px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:600; text-align:center }
-      :host(.full-width-popup-surface) .popup-list-total[hidden] { display:none }
-      :host(.full-width-popup-surface) .timeline-shell { position:relative; width:100%; min-width:0 }
-      :host(.full-width-popup-surface) .task-timeline-host { width:100%; min-height:108px }
-      .active-task-strip { display:flex; align-items:center; gap:12px; padding:14px var(--clockoli-gutter); border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      .active-task-strip.is-active { box-sizing:border-box; width:min(1600px,calc(100% - 2 * var(--clockoli-gutter))); gap:14px; margin:10px auto 0; padding:10px 16px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:12px; background:linear-gradient(100deg,color-mix(in srgb,var(--ck-success) 5%,var(--ck-bg)),var(--bgColor-default,var(--ck-bg)) 45%); box-shadow:0 2px 10px color-mix(in srgb,var(--ck-fg) 5%,transparent) }
-      .popup-overview-layout { box-sizing:border-box; display:grid; grid-template-columns:minmax(190px,1fr) minmax(0,3fr); align-items:stretch; gap:12px; width:calc(100% - 2 * var(--clockoli-gutter)); margin:14px auto 0 }
-      :host(.full-width-popup-surface[data-clockoli-width="full"]) .popup-overview-layout { grid-template-columns:minmax(0,1fr) minmax(0,7fr) }
-      .popup-overview-layout .activity-weekly-summary { box-sizing:border-box; min-width:0; padding:12px 14px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:12px; background:var(--bgColor-muted,var(--ck-bg-muted)); font:400 14px/1.5 var(--fontStack-sansSerif) }
-      .popup-overview-layout .activity-weekly-heading { margin:0 0 6px; color:var(--fgColor-default,var(--ck-fg)); font-size:13px; font-weight:700 }
-      .popup-overview-layout .activity-weekly-range,.popup-overview-layout .activity-weekly-icon { display:none }
-      .popup-overview-layout .activity-weekly-cards { display:grid; grid-template-columns:1fr }
-      .popup-overview-layout .activity-weekly-card { min-width:0; padding:5px 0; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      .popup-overview-layout .activity-weekly-card:last-child { border-bottom:0 }
-      .popup-overview-layout .activity-weekly-copy { display:flex; flex-direction:row-reverse; justify-content:space-between; align-items:baseline; gap:4px; min-width:0 }
-      .popup-overview-layout .activity-weekly-value { color:var(--fgColor-default,var(--ck-fg)); font-size:13px; font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap }
-      .popup-overview-layout .activity-weekly-card:first-child .activity-weekly-value { color:var(--fgColor-success,var(--ck-success)) }
-      .popup-overview-layout .activity-weekly-name { min-width:0; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:11px }
-      .popup-overview-layout .active-task-strip,.popup-overview-layout .active-task-strip.is-active { box-sizing:border-box; width:100%; height:100%; min-height:84px; margin:0; padding:12px 24px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:12px; background:linear-gradient(100deg,color-mix(in srgb,var(--ck-success) 6%,var(--ck-bg)),var(--ck-bg) 65%,color-mix(in srgb,var(--ck-success) 5%,var(--ck-bg))); box-shadow:none }
-      .popup-overview-layout .active-task-strip.is-active { display:grid; grid-template-columns:minmax(0,1fr) max-content; grid-template-rows:auto auto 1fr; align-items:start; gap:8px 22px }
-      .popup-overview-layout .active-task-strip .running-status-live { grid-column:1; grid-row:1; justify-self:start }
-      .popup-overview-layout .active-task-strip .strip-task-copy { grid-column:1; grid-row:2; max-width:100% }
-      .popup-overview-layout .active-task-strip .strip-description-field { grid-column:1; grid-row:3; width:min(100%,560px); max-width:none; min-width:0 }
-      .popup-overview-layout .active-task-strip .running-status-stats { grid-column:2; grid-row:1/span 2; justify-self:end; margin:0 }
-      .popup-overview-layout .active-task-strip > .danger { grid-column:2; grid-row:3; justify-self:end; align-self:start; min-height:36px }
-      .popup-overview-layout .active-task-strip .strip-idle { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:13px; font-weight:700 }
-      @media(max-width:1299px) { :host(.full-width-popup-surface[data-clockoli-width="full"]) .popup-overview-layout { grid-template-columns:minmax(190px,1fr) minmax(0,3fr) } }
-      @media(max-width:900px) { .popup-overview-layout,:host(.full-width-popup-surface[data-clockoli-width="full"]) .popup-overview-layout { grid-template-columns:1fr } }
       :host(.popup-surface) .popup-overview-layout { grid-template-columns:1fr }
-      @media(max-width:640px) { .popup-overview-layout .active-task-strip.is-active { grid-template-columns:minmax(0,1fr); grid-template-rows:none; padding:12px; gap:10px } .popup-overview-layout .active-task-strip .running-status-live,.popup-overview-layout .active-task-strip .strip-task-copy,.popup-overview-layout .active-task-strip .strip-description-field,.popup-overview-layout .active-task-strip .running-status-stats,.popup-overview-layout .active-task-strip > .danger { grid-column:1; grid-row:auto; justify-self:start } .popup-overview-layout .active-task-strip .running-status-stats,.popup-overview-layout .active-task-strip > .danger { justify-self:end } }
-      .active-task-strip .running-status-live { flex:none; display:inline-flex; align-items:center; gap:8px; padding:5px 10px; border-radius:999px; background:color-mix(in srgb,var(--ck-success) 13%,transparent); color:var(--ck-success); font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; white-space:nowrap }
-      .active-task-strip .running-status-live::before { content:""; width:8px; height:8px; border-radius:50%; background:currentColor; box-shadow:0 0 0 3px color-mix(in srgb,var(--ck-success) 16%,transparent) }
-      .site-favicon { display:block; width:20px; height:20px; flex:none; border-radius:4px; object-fit:contain; background:var(--bgColor-default,var(--ck-bg)) }
-      .site-monogram { display:grid; place-items:center; color:var(--fgColor-default,var(--ck-fg)); font-size:12px; font-weight:600; line-height:1 }
-      .strip-task-copy { display:block; flex:0 1 auto; min-width:0; max-width:340px } .strip-task,.strip-idle { min-width:0 } .strip-task .task-url { display:none } .strip-task.task-result-untitled .task-url { display:block }
-      .strip-task .task-title,.strip-task.task-result-untitled .task-url { display:block; overflow:hidden; margin:0; color:var(--fgColor-default,var(--ck-fg)); font-size:15px; font-weight:650; text-overflow:ellipsis; white-space:nowrap }
-      .strip-description-field { flex:0 1 230px; min-width:160px; max-width:250px }
-      .strip-description,.today-description { width:100%; min-height:0; margin:2px 0 0; padding:1px 96px 1px 0; border:0; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:400; line-height:1.3 }
-      .strip-description { box-sizing:border-box; min-height:36px; margin:0; padding:6px 78px 6px 10px; border:1px solid var(--control-borderColor-rest,var(--ck-border)); border-radius:8px; background:var(--control-bgColor-rest,var(--ck-bg)); resize:none; max-height:180px; overflow-y:auto; white-space:pre-wrap }
-      .strip-description:hover { background:var(--control-bgColor-hover,var(--ck-bg-muted)) }
-      .strip-description:focus-visible { outline:2px solid var(--focus-outlineColor,var(--ck-accent)); outline-offset:2px }
-      .today-description:hover,.today-description:focus { background:transparent; box-shadow:inset 0 -1px var(--borderColor-default,var(--ck-border)) }
-      .active-task-strip button,.running-elapsed { flex:none; white-space:nowrap } .running-elapsed { font-variant-numeric:tabular-nums }
-      .active-task-strip .running-status-stats { display:flex; flex:none; max-width:100%; margin-left:auto; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:9px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
-      .active-task-strip .running-status-start-field { box-sizing:border-box; position:relative; display:flex; align-items:center; flex:none; min-width:100px; padding:5px 8px 5px 11px; border-right:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      .active-task-strip .running-status-start-field:focus-within { box-shadow:inset 0 0 0 2px var(--fgColor-accent,var(--ck-accent)) }
-      .active-task-strip .running-status-start-label { display:flex; flex-direction:column; gap:2px; margin:0; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:11px; font-weight:600; line-height:1.2; white-space:nowrap }
-      .active-task-strip .running-status-start-value { display:inline-flex; align-items:center; gap:4px; height:24px }
-      .active-task-strip .running-status-start { box-sizing:border-box; width:55px; height:24px; margin:0; padding:2px 0; border:0; border-bottom:1px dashed var(--fgColor-accent,var(--ck-accent)); border-radius:0; background:transparent; color:var(--fgColor-default,var(--ck-fg)); font:650 14px/20px var(--fontStack-sansSerif); font-variant-numeric:tabular-nums; cursor:text }
-      .active-task-strip .running-status-start:hover { border-bottom-style:solid }
-      .active-task-strip .running-status-start:focus-visible { outline:none }
-      .active-task-strip .running-status-start-save,.active-task-strip .running-status-start-saved { position:absolute; right:3px; bottom:4px; display:grid; width:24px; height:26px; place-items:center }
-      .active-task-strip .running-status-start-save { padding:0; border:0; border-radius:5px; background:transparent; color:var(--fgColor-success,var(--ck-success)); font:800 18px/1 var(--fontStack-sansSerif); cursor:pointer }
-      .active-task-strip .running-status-start-saved { color:var(--fgColor-success,var(--ck-success)); font-size:0 }
-      .active-task-strip .running-status-start-saved::before { content:'✓'; font-size:17px; font-weight:800 }
-      .active-task-strip .running-status-start-save[hidden],.active-task-strip .running-status-start-saved[hidden] { display:none }
-      .active-task-strip .running-status-metrics { display:flex; align-items:stretch; flex:none; white-space:nowrap; font-variant-numeric:tabular-nums }
-      .active-task-strip .running-status-elapsed,.active-task-strip .running-status-today { display:flex; flex-direction:column; gap:2px; min-width:0; padding:5px 11px; color:var(--fgColor-default,var(--ck-fg)); font-size:14px; font-weight:650; line-height:1.2 }
-      .active-task-strip .running-status-today { border-left:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      .active-task-strip .running-status-metric-label { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:11px; font-weight:600; line-height:1.2 }
-      .active-task-strip .running-status-metric-value { min-height:24px; line-height:24px }
-      @media(max-width:900px) { .active-task-strip.is-active { flex-wrap:wrap; gap:10px 14px } .active-task-strip .strip-task-copy { flex-basis:calc(100% - 150px) } }
-      @media(max-width:640px) { .active-task-strip.is-active { padding:12px; gap:10px } .active-task-strip .strip-task-copy { order:1; flex-basis:100% } .active-task-strip .strip-description-field { order:2; flex-basis:100%; max-width:none; min-width:0 } .active-task-strip .running-status-stats { order:3; margin-left:0 } .active-task-strip > .danger { order:4; margin-left:auto; padding:6px 10px; font-size:12px } .active-task-strip > .popup-timeline-track { order:5; flex-basis:100% } }
-      @media(prefers-color-scheme:dark) { .active-task-strip.is-active { box-shadow:0 2px 10px color-mix(in srgb,var(--ck-fg) 15%,transparent) } }
-      .today-list,.panel-feedback,.timeline-overlaps,.page-tracking-hint { padding:0 var(--clockoli-gutter) 16px } .panel-feedback:empty,.timeline-overlaps:empty { display:none }
-      .today-list-totals { display:flex; gap:24px; margin-bottom:10px } .today-list-totals .today-total { margin:0; padding:0; border:0; background:none; gap:6px }
-      @media(max-width:520px) { .active-task-strip { flex-wrap:wrap } .strip-task-copy,.strip-idle { flex-basis:70% } }
-
-      :host(.full-width-popup-surface) .task-timeline-host { width:100%; min-height:108px }
-      /* Keep popup chrome compact so the week view owns the available height. */
-      :host(.full-width-popup-surface) .tracker-toolbar { grid-template-columns:auto auto minmax(0,1fr) auto; gap:12px; padding-block:6px }
-      :host(.full-width-popup-surface) .header-actions { justify-self:center }
-      :host(.full-width-popup-surface) .timeline-toolbar-end { gap:8px }
-      .tracker-toolbar .activity-weekly-summary { display:flex; align-items:center; gap:10px; min-width:0; padding:4px 8px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
-      .tracker-toolbar .activity-weekly-heading { flex:none; margin:0; font-size:10px }
-      .tracker-toolbar .activity-weekly-range,.tracker-toolbar .activity-weekly-icon { display:none }
-      .tracker-toolbar .activity-weekly-cards { display:flex; align-items:center; gap:8px; min-width:0 }
-      .tracker-toolbar .activity-weekly-card { min-width:0; padding:0 0 0 8px; border-left:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      .tracker-toolbar .activity-weekly-copy { display:flex; flex-direction:column; gap:0; min-width:0; white-space:nowrap }
-      .tracker-toolbar .activity-weekly-name { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:9px; line-height:1.2 }
-      .tracker-toolbar .activity-weekly-value { color:var(--fgColor-default,var(--ck-fg)); font-size:11px; line-height:1.3; font-weight:700; font-variant-numeric:tabular-nums }
-      .tracker-toolbar .activity-weekly-card:first-child .activity-weekly-value { color:var(--fgColor-success,var(--ck-success)) }
-      .popup-switch-action .popup-timeline-track { padding:6px 10px; border-color:var(--button-primary-borderColor-rest,var(--ck-button-primary-border-rest)); background:var(--button-primary-bgColor-rest,var(--ck-button-primary-bg-rest)); color:var(--button-primary-fgColor-rest,var(--ck-button-primary-fg-rest)); white-space:nowrap }
+      .popup-switch-action .popup-timeline-track { padding:5px 12px; border-color:var(--button-primary-borderColor-rest,var(--ck-button-primary-border-rest)); background:var(--button-primary-bgColor-rest,var(--ck-button-primary-bg-rest)); color:var(--button-primary-fgColor-rest,var(--ck-button-primary-fg-rest)); white-space:nowrap }
       .popup-switch-action .popup-timeline-track:hover:not(:disabled) { background:var(--button-primary-bgColor-hover,var(--ck-button-primary-bg-hover)) }
-      .popup-overview-layout { display:block; margin:8px auto 0 }
-      .popup-overview-layout .active-task-strip,.popup-overview-layout .active-task-strip.is-active { display:flex; align-items:center; gap:12px; width:100%; height:auto; min-height:56px; margin:0; padding:7px 12px }
-      .popup-overview-layout .active-task-strip.is-active .running-status-live,
-      .popup-overview-layout .active-task-strip.is-active .strip-task-copy,
-      .popup-overview-layout .active-task-strip.is-active .strip-description-field,
-      .popup-overview-layout .active-task-strip.is-active .running-status-stats,
-      .popup-overview-layout .active-task-strip.is-active > .danger { grid-column:auto; grid-row:auto; justify-self:auto; align-self:center }
-      .popup-overview-layout .active-task-strip.is-active .running-status-live { padding:4px 7px; font-size:10px }
-      .popup-overview-layout .active-task-strip.is-active .strip-task-copy { flex:0 1 26%; max-width:420px }
-      .popup-overview-layout .active-task-strip.is-active .strip-description-field { flex:1 1 180px; width:auto; max-width:none; min-width:120px }
-      .popup-overview-layout .active-task-strip.is-active .strip-description:not(:focus) { max-height:36px }
-      .popup-overview-layout .active-task-strip.is-active .strip-description-field:not(:focus-within) .description-overflow-hint { display:none }
-      .popup-overview-layout .active-task-strip.is-active .running-status-stats { flex:none; margin-left:auto }
-      .popup-overview-layout .active-task-strip.is-active > .danger { flex:none; min-height:36px; padding:6px 10px }
-      .popup-overview-layout .active-task-strip .running-status-quick-start { display:flex; flex:1; align-items:center; gap:12px; min-width:0 }
-      .popup-overview-layout .active-task-strip .running-status-quick-label { flex:none; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:11px; white-space:nowrap }
-      .popup-overview-layout .active-task-strip .running-status-recent { display:flex; flex:1; gap:8px; min-width:0; overflow-x:auto }
-      .popup-overview-layout .active-task-strip .running-status-recent-task { display:inline-flex; flex:1 1 0; align-items:center; gap:8px; min-width:0; max-width:300px; min-height:36px; padding:5px 8px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)); text-align:left }
-      .popup-overview-layout .active-task-strip .running-status-recent-task:nth-child(3n+1) { border-color:color-mix(in srgb,var(--ck-success) 40%,var(--ck-border)); background:color-mix(in srgb,var(--ck-success) 10%,var(--ck-bg)) }
-      .popup-overview-layout .active-task-strip .running-status-recent-task:nth-child(3n+2) { border-color:color-mix(in srgb,var(--ck-danger) 40%,var(--ck-border)); background:color-mix(in srgb,var(--ck-danger) 10%,var(--ck-bg)) }
-      .popup-overview-layout .active-task-strip .running-status-recent-task:nth-child(3n+3) { border-color:color-mix(in srgb,var(--ck-accent) 40%,var(--ck-border)); background:color-mix(in srgb,var(--ck-accent) 9%,var(--ck-bg)) }
-      .popup-overview-layout .active-task-strip .running-status-recent-task:hover:not(:disabled) { border-color:var(--fgColor-accent,var(--ck-accent)) }
-      .popup-overview-layout .active-task-strip .running-status-recent-play::before { content:'▶'; color:var(--ck-success); font-size:11px }
-      .popup-overview-layout .active-task-strip .running-status-recent-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px }
-      .popup-overview-layout .active-task-strip .running-status-recent-empty { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:11px }
-      @media(max-width:1450px) { :host(.full-width-popup-surface) .tracker-toolbar { grid-template-columns:auto minmax(0,1fr) auto; grid-template-areas:"brand stats end" "nav nav nav"; row-gap:3px } :host(.full-width-popup-surface) .timeline-brand { grid-area:brand } :host(.full-width-popup-surface) .tracker-toolbar .activity-weekly-summary { grid-area:stats; justify-self:start } :host(.full-width-popup-surface) .header-actions { grid-area:nav } :host(.full-width-popup-surface) .timeline-toolbar-end { grid-area:end } }
-      @media(max-width:900px) { .popup-overview-layout .active-task-strip.is-active { flex-wrap:wrap } .popup-overview-layout .active-task-strip.is-active .strip-task-copy { flex:1 1 40%; max-width:none } .popup-overview-layout .active-task-strip.is-active .strip-description-field { flex:1 1 40% } .popup-overview-layout .active-task-strip.is-active .running-status-stats { margin-left:auto } }
-      @media(min-width:901px) {
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active { display:grid; grid-template-columns:minmax(0,1fr) max-content; grid-template-rows:auto auto 1fr; align-items:start; gap:8px 22px }
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip .running-status-live { grid-column:1; grid-row:1; justify-self:start }
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip .strip-task-copy { grid-column:1; grid-row:2; max-width:100% }
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip .strip-description-field { grid-column:1; grid-row:3; width:100%; max-width:none; min-width:0 }
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip .running-status-stats { grid-column:2; grid-row:1/span 2; justify-self:end; margin-left:0 }
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip > .danger { grid-column:2; grid-row:3; justify-self:stretch; align-self:start; width:100% }
-      }
       :host(.popup-surface) .tracker-toolbar { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"brand end" "stats stats" "actions actions"; gap:4px; padding:8px 12px }
       :host(.popup-surface) .tracker-toolbar .activity-weekly-summary { grid-area:stats; width:100%; justify-content:space-between }
       :host(.popup-surface) .tracker-toolbar .activity-weekly-cards { justify-content:space-between; flex:1 }
@@ -4509,11 +4820,10 @@
       :host(.popup-surface) .popup-overview-layout .active-task-strip .running-status-recent-task { flex:0 0 145px }
       :host(.popup-surface) .popup-overview-layout .active-task-strip:not(.is-active) { display:grid; grid-template-columns:minmax(0,1fr); gap:8px; align-items:start }
       :host(.popup-surface) .strip-idle-status { display:flex; flex-direction:column; align-items:flex-start; gap:4px }
-      :host(.popup-surface) .strip-idle { padding:4px 8px; border-radius:999px; background:var(--bgColor-muted,var(--ck-bg-muted)); text-transform:uppercase }
-      :host(.popup-surface) .strip-idle-caption { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:11px }
+      :host(.popup-surface) .strip-idle { padding:0 7px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:999px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.popup-surface) .strip-idle-caption { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px }
       :host(.popup-surface) .popup-overview-layout .active-task-strip:not(.is-active) .running-status-quick-start { display:grid; grid-template-columns:minmax(0,1fr); width:100% }
       :host(.popup-surface) .popup-overview-layout .active-task-strip:not(.is-active) .running-status-recent { width:100% }
-      /* Keep the toolbar popup's Activity hierarchy within its scrollable width. */
       :host(.popup-surface) .popup-overview-layout .activity-weekly-summary { margin-bottom:10px; padding:12px }
       :host(.popup-surface) .popup-overview-layout .activity-weekly-label { display:none }
       :host(.popup-surface) .popup-overview-layout .activity-weekly-range { display:block; font-size:14px }
@@ -4522,7 +4832,7 @@
       :host(.popup-surface) .popup-overview-layout .activity-weekly-card:last-child { border-right:0 }
       :host(.popup-surface) .popup-overview-layout .activity-weekly-copy { flex-direction:column; align-items:flex-start; gap:0 }
       :host(.popup-surface) .popup-overview-layout .activity-weekly-value { font-size:16px }
-      :host(.popup-surface) .popup-overview-layout .activity-weekly-name { font-size:10px }
+      :host(.popup-surface) .popup-overview-layout .activity-weekly-name { font-size:12px }
       :host(.popup-surface) .popup-timeline-section { padding-top:16px }
       :host(.popup-surface) .popup-timeline-section[hidden],:host(.popup-surface) .popup-list-toolbar[hidden] { display:none }
       :host(.popup-surface) .timeline-shell > .week-navigation { position:absolute; z-index:30; inset:0 0 auto; grid-template-columns:1fr 1fr; height:84px; min-height:0; margin:0; padding:0 6px; border:0; pointer-events:none }
@@ -4532,86 +4842,28 @@
       :host(.popup-surface) .timeline-shell > .week-navigation::before { left:0; background:linear-gradient(90deg,color-mix(in srgb,var(--bgColor-muted,var(--ck-bg-muted)) 90%,var(--fgColor-muted,var(--ck-fg-muted))),transparent) }
       :host(.popup-surface) .timeline-shell > .week-navigation::after { right:0; background:linear-gradient(270deg,color-mix(in srgb,var(--bgColor-muted,var(--ck-bg-muted)) 90%,var(--fgColor-muted,var(--ck-fg-muted))),transparent) }
       :host(.popup-surface) .timeline-shell > .week-navigation .week-navigation-button { position:relative; z-index:1; pointer-events:auto }
-      :host(.popup-surface) .popup-list-toolbar { display:grid; grid-template-columns:minmax(0,1fr) 40px; align-items:center; gap:8px; min-width:0; margin:16px 12px 12px }
+      :host(.popup-surface) .popup-list-toolbar { display:grid; grid-template-columns:minmax(0,1fr) 32px; align-items:center; gap:8px; min-width:0; margin:16px 12px 12px }
       :host(.popup-surface) .popup-list-toolbar .times-filter { position:relative; grid-column:1/-1; min-width:0; margin:0 }
-      :host(.popup-surface) .popup-list-toolbar .times-filter svg { position:absolute; top:50%; left:12px; transform:translateY(-50%); color:var(--fgColor-muted,var(--ck-fg-muted)); pointer-events:none }
-      :host(.popup-surface) .popup-list-toolbar .times-filter input { box-sizing:border-box; min-height:44px; margin:0; padding-left:38px; border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
-      :host(.popup-surface) .popup-list-toolbar .week-navigation { grid-column:1; grid-row:2; grid-template-columns:40px auto 40px; justify-self:end; width:max-content; max-width:100%; min-width:0; min-height:0; margin:0; padding:0; border:0; gap:8px }
-      :host(.popup-surface) .popup-list-toolbar .week-navigation-label { box-sizing:border-box; display:flex; align-items:center; justify-content:center; overflow:hidden; height:40px; padding:0 8px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:8px; color:var(--fgColor-muted,var(--ck-fg-muted)); text-align:center; text-overflow:ellipsis }
-      :host(.popup-surface) .popup-list-toolbar .week-navigation-button { width:40px; height:40px; border-radius:8px }
-      :host(.popup-surface) .popup-list-toolbar .times-refresh { grid-column:2; grid-row:2; width:40px; height:40px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.popup-surface) .popup-list-toolbar .times-filter svg { position:absolute; top:50%; left:8px; transform:translateY(-50%); color:var(--fgColor-muted,var(--ck-fg-muted)); pointer-events:none }
+      :host(.popup-surface) .popup-list-toolbar .times-filter input { box-sizing:border-box; min-height:32px; margin:0; padding-left:32px; font:400 14px/20px var(--fontStack-sansSerif); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.popup-surface) .popup-list-toolbar .week-navigation { grid-column:1; grid-row:2; grid-template-columns:32px auto 32px; justify-self:end; width:max-content; max-width:100%; min-width:0; min-height:0; margin:0; padding:0; border:0; gap:8px }
+      :host(.popup-surface) .popup-list-toolbar .week-navigation-label { box-sizing:border-box; display:flex; align-items:center; justify-content:center; overflow:hidden; height:32px; padding:0 8px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; color:var(--fgColor-muted,var(--ck-fg-muted)); text-align:center; text-overflow:ellipsis }
+      :host(.popup-surface) .popup-list-toolbar .week-navigation-button { width:32px; height:32px; border-radius:6px}
+      :host(.popup-surface) .popup-list-toolbar .times-refresh { display:inline-flex; align-items:center; justify-content:center; grid-column:2; grid-row:2; width:32px; height:32px; padding:0; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
       :host(.popup-surface) .today-list { margin:0 12px 16px }
       :host(.popup-surface) .activity-list .entry { margin:0 0 12px; border:0; background:transparent }
-      :host(.popup-surface) .activity-list .entry-record,:host(.popup-surface) .activity-list .entry-record.entry-overlap { margin:8px 0 0; padding:12px 14px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:10px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.popup-surface) .activity-list .entry-record,:host(.popup-surface) .activity-list .entry-record.entry-overlap { margin:8px 0 0; padding:12px 14px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
       :host(.popup-surface) .activity-list .entry-record + .entry-record { margin-top:8px }
-      :host(.popup-surface) .activity-list .entry-record:last-child { border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:10px }
-      :host(.popup-surface) .activity-list .entry-actions { position:static; margin:10px 0 0 27px; opacity:1; transform:none; pointer-events:auto }
+      :host(.popup-surface) .activity-list .entry-record:last-child { border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px}
+      :host(.popup-surface) .activity-list .entry-actions { position:static; margin:8px 0 0 24px; opacity:1; transform:none; pointer-events:auto }
       :host(.popup-surface) .times-search-pagination { display:flex; flex-wrap:wrap; justify-content:center; gap:8px; margin:16px 0; font-size:12px }
-      @media(max-width:520px) { :host(.full-width-popup-surface) .tracker-toolbar { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"brand end" "stats stats" "nav nav" } :host(.full-width-popup-surface) .tracker-toolbar .activity-weekly-summary { width:100%; justify-content:space-between } :host(.full-width-popup-surface) .tracker-toolbar .activity-weekly-cards { justify-content:space-between; flex:1 } :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip .running-status-quick-start { flex-wrap:wrap; gap:6px } :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip .running-status-recent-task { flex:0 0 145px } }
-      /* The injected page panel uses the same Activity hierarchy, not toolbar chrome. */
-      :host(.full-width-popup-surface) .tracker-toolbar { grid-template-areas:none; grid-template-columns:auto minmax(0,1fr) auto; gap:12px; padding-block:10px }
-      :host(.full-width-popup-surface) .timeline-brand,:host(.full-width-popup-surface) .header-actions,:host(.full-width-popup-surface) .timeline-toolbar-end { grid-area:auto }
-      :host(.full-width-popup-surface) .header-actions { justify-self:center }
-      :host(.full-width-popup-surface) .timeline-toolbar-end { justify-self:end }
-      :host(.full-width-popup-surface) .popup-overview-layout,:host(.full-width-popup-surface[data-clockoli-width="full"]) .popup-overview-layout { display:grid; grid-template-columns:minmax(190px,1fr) minmax(0,7fr); align-items:stretch; gap:12px; margin:14px auto 0 }
-      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-summary { padding:12px 14px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
-      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-heading { margin:0 0 6px; font-size:13px }
-      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-label { display:none }
-      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-range { display:block }
-      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-card { padding:5px 0; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-card:last-child { border-bottom:0 }
-      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-copy { flex-direction:row-reverse; justify-content:space-between; font-size:14px }
-      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-value { font-size:13px }
-      :host(.full-width-popup-surface) .popup-overview-layout .activity-weekly-name { font-size:11px }
-      :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip:not(.is-active) { min-height:84px; padding:12px 24px; gap:14px }
-      :host(.full-width-popup-surface) .strip-idle-status { display:flex; flex-direction:column; flex:none; gap:4px; min-width:150px; padding-right:20px; border-right:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
-      :host(.full-width-popup-surface) .strip-idle { align-self:flex-start; padding:4px 8px; border-radius:999px; background:var(--bgColor-muted,var(--ck-bg-muted)); text-transform:uppercase }
-      :host(.full-width-popup-surface) .strip-idle-caption { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px }
-      :host(.full-width-popup-surface) .popup-timeline-section { padding-top:24px }
-      :host(.full-width-popup-surface) .popup-timeline-section[hidden],:host(.full-width-popup-surface) .popup-list-toolbar[hidden] { display:none }
-      :host(.full-width-popup-surface) .timeline-shell > .week-navigation { position:absolute; z-index:30; inset:0 0 auto; grid-template-columns:1fr 1fr; height:84px; min-height:0; margin:0; padding:0 12px; border:0; pointer-events:none }
-      :host(.full-width-popup-surface) .timeline-shell.calendar-week-navigation > .week-navigation { height:44px }
-      :host(.full-width-popup-surface) .timeline-shell > .week-navigation .week-navigation-label { display:none }
-      :host(.full-width-popup-surface) .timeline-shell > .week-navigation::before,:host(.full-width-popup-surface) .timeline-shell > .week-navigation::after { content:""; position:absolute; inset-block:0; width:90px; pointer-events:none }
-      :host(.full-width-popup-surface) .timeline-shell > .week-navigation::before { left:0; background:linear-gradient(90deg,color-mix(in srgb,var(--bgColor-muted,var(--ck-bg-muted)) 90%,var(--fgColor-muted,var(--ck-fg-muted))),transparent) }
-      :host(.full-width-popup-surface) .timeline-shell > .week-navigation::after { right:0; background:linear-gradient(270deg,color-mix(in srgb,var(--bgColor-muted,var(--ck-bg-muted)) 90%,var(--fgColor-muted,var(--ck-fg-muted))),transparent) }
-      :host(.full-width-popup-surface) .timeline-shell > .week-navigation .week-navigation-button { position:relative; z-index:1; min-width:44px; min-height:40px; border-radius:8px; pointer-events:auto }
-      :host(.full-width-popup-surface) .timeline-shell.calendar-week-navigation > .week-navigation .week-navigation-button { min-width:30px; min-height:30px }
-      :host(.full-width-popup-surface) .popup-list-toolbar { box-sizing:border-box; display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:16px; width:calc(100% - 2 * var(--clockoli-gutter)); margin:24px auto 20px }
-      :host(.full-width-popup-surface) .popup-list-toolbar .times-filter { position:relative; min-width:0; margin:0 }
-      :host(.full-width-popup-surface) .popup-list-toolbar .times-filter svg { position:absolute; top:50%; left:16px; transform:translateY(-50%); color:var(--fgColor-muted,var(--ck-fg-muted)); pointer-events:none }
-      :host(.full-width-popup-surface) .popup-list-toolbar .times-filter input { box-sizing:border-box; min-height:50px; margin:0; padding-left:44px; border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
-      :host(.full-width-popup-surface) .popup-list-toolbar .week-navigation { grid-template-columns:46px auto 46px; gap:12px; width:auto; min-height:0; margin:0; padding:0; border:0 }
-      :host(.full-width-popup-surface) .popup-list-toolbar .week-navigation-label { padding:11px 14px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:8px; font-size:14px }
-      :host(.full-width-popup-surface) .popup-list-toolbar .week-navigation-button { width:46px; height:50px; border-radius:8px }
-      :host(.full-width-popup-surface) .popup-list-toolbar .times-refresh { width:50px; height:50px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:8px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
-      :host(.full-width-popup-surface) .today-list { padding-bottom:16px }
-      :host(.full-width-popup-surface) .activity-list .entry { margin-bottom:12px; border:0; background:transparent }
-      :host(.full-width-popup-surface) .activity-list .entry-record,:host(.full-width-popup-surface) .activity-list .entry-record.entry-overlap { margin:10px 12px 0; padding:12px 110px 12px 14px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:10px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
-      :host(.full-width-popup-surface) .activity-list .entry-record + .entry-record { margin-top:10px }
-      :host(.full-width-popup-surface) .activity-list .entry-record:last-child { border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:10px }
-      @media(max-width:900px) { :host(.full-width-popup-surface) .popup-overview-layout,:host(.full-width-popup-surface[data-clockoli-width="full"]) .popup-overview-layout { grid-template-columns:minmax(0,1fr) } :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip:not(.is-active) { min-height:110px } :host(.full-width-popup-surface) .tracker-toolbar { grid-template-areas:"brand end" "nav nav"; grid-template-columns:minmax(0,1fr) auto } :host(.full-width-popup-surface) .timeline-brand { grid-area:brand } :host(.full-width-popup-surface) .header-actions { grid-area:nav; justify-self:stretch } :host(.full-width-popup-surface) .timeline-toolbar-end { grid-area:end } }
-      @media(max-width:900px) {
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active { display:grid; grid-template-columns:minmax(0,1fr) max-content; grid-template-rows:auto auto auto; align-items:start; gap:8px 12px }
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active .running-status-live { grid-column:1; grid-row:1; justify-self:start }
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-task-copy { grid-column:1; grid-row:2; min-width:0 }
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-description-field { grid-column:1; grid-row:3; width:100%; min-width:0; max-width:none }
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active .running-status-stats { grid-column:2; grid-row:1/span 2; justify-self:end; margin:0 }
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active > .danger { box-sizing:border-box; grid-column:2; grid-row:3; justify-self:stretch; width:100%; margin:0 }
-      }
-      @media(max-width:359px) {
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-task-copy,
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-description-field { grid-column:1/-1 }
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active .running-status-stats { grid-row:4 }
-        :host(.full-width-popup-surface) .popup-overview-layout .active-task-strip.is-active > .danger { grid-row:5 }
-      }
-      @media(max-width:700px) { :host(.full-width-popup-surface) .popup-list-toolbar { grid-template-columns:minmax(0,1fr) auto; gap:10px } :host(.full-width-popup-surface) .popup-list-toolbar .times-filter { grid-column:1/-1 } :host(.full-width-popup-surface) .popup-list-toolbar .week-navigation { grid-column:1; justify-self:start; gap:8px } :host(.full-width-popup-surface) .popup-list-toolbar .times-refresh { grid-column:2 } :host(.full-width-popup-surface) .activity-list .entry-record,:host(.full-width-popup-surface) .activity-list .entry-record.entry-overlap { padding-right:14px } :host(.full-width-popup-surface) .activity-list .entry-actions { position:static; margin:10px 0 0 27px; opacity:1; transform:none; pointer-events:auto } }
     `;
-    if (fullWidthPopupOpen) {
-      if (preserveFullWidthTimeline) refreshMountedTimeline();
-      else renderFullWidthPopup(style);
-    }
-    if (fullWidthPopupOpen) startPanelClock();
+    if (timesMode || popupMode) style.textContent += `
+      :host .timeline-shell.calendar-week-navigation > .week-navigation { display:flex; align-items:center; justify-content:center; gap:0; right:auto; width:62px }
+      :host .timeline-shell.calendar-week-navigation > .week-navigation::before,:host .timeline-shell.calendar-week-navigation > .week-navigation::after { display:none }
+      :host .timeline-shell.calendar-week-navigation > .week-navigation .week-navigation-button { min-width:28px; min-height:28px; width:28px; height:28px; border-radius:6px 0 0 6px }
+      :host .timeline-shell.calendar-week-navigation > .week-navigation .week-navigation-button:last-child { margin-left:-1px; border-radius:0 6px 6px 0 }
+    `;
     if (!shadow || !root?.isConnected) return;
     if (timesMode) {
       shadow.append(style, renderTimesPage(preservedActivityTimeline));
@@ -4620,6 +4872,7 @@
         refreshMountedTimeline();
         timelineInstance.restoreCalendarScroll?.(preservedActivityCalendarScroll);
       }
+      renderActionSourceContext();
       return;
     }
     if (popupMode) { shadow.append(style, renderMenu()); updateActivityWeekSummary(); restoreMenuScroll(preservedMenuScrollTop); return; }
@@ -4627,11 +4880,10 @@
     const currentRunning = sameTask(taskFromLocation(), pageState.active);
     const main = el('button', undefined, `trigger trigger-main${pageState.active ? ' running' : ''}${currentRunning ? ' running-current' : ''}`); main.type = 'button';
     main.setAttribute('aria-label', pageState.active ? `Time tracker running: ${formatElapsed(pageState.active.startedAt)}` : 'Time tracker');
-    main.setAttribute('aria-haspopup', 'dialog'); main.setAttribute('aria-expanded', String(fullWidthPopupOpen));
-    main.title = pageState.active ? 'Time tracker is running' : 'Open time tracker'; main.append(clockoliMark(22));
+    main.title = pageState.active ? 'Open Clockoli (timer running)' : 'Open Clockoli'; main.append(clockoliMark(20));
     main.addEventListener('click', async event => {
       if (!event.isTrusted) return;
-      await toggleFullWidthPopup();
+      await send({ type: 'OPEN_PREFERRED_SURFACE' });
     });
     shadow.append(style, main);
     restoreMenuScroll(preservedMenuScrollTop);
@@ -4645,7 +4897,7 @@
     catch (error) { errorText = error.message; errorCode = error.code || 'error'; }
     actionAnimationReady = true;
     renderUi();
-    if ((menuOpen || fullWidthPopupOpen) && pageState.configured) {
+    if (menuOpen && pageState.configured) {
       try { await refreshRecent(); }
       catch (error) { setError(error); }
     }
@@ -4681,24 +4933,34 @@
     return true;
   }
 
-  function handleDocumentClick(event) {
-    const path = event.composedPath();
-    if (fullWidthPopupOpen && !path.includes(fullWidthPopupRoot) && !path.includes(root) && !path.includes(timeEntryFormHost)) {
-      closeFullWidthPopup({ restoreFocus: false });
-    }
-    if (menuOpen && !path.includes(root)) closeMenu();
-  }
-
   if (!extensionPageMode) globalThis.ClockoliInstantTooltips?.attach(document, { selector: '.clockoli-participant-time' });
   if (!popupMode && !timesMode) document.addEventListener('visibilitychange', () => {
-    if (document.hidden && fullWidthPopupOpen) closeFullWidthPopup({ restoreFocus: false });
-    if (!actionSurfaceMode) updateTaskAnimation();
-  });
-  if (!popupMode && !timesMode) globalThis.addEventListener?.('blur', () => {
-    if (fullWidthPopupOpen) closeFullWidthPopup({ restoreFocus: false });
+    updateTaskAnimation();
   });
 
   if (timesMode) {
+    const sourceBanner = document.getElementById?.('activity-source-context');
+    if (sourceBanner) {
+      chrome.runtime.onMessage?.addListener?.(message => {
+        if (message?.type === 'TOOLBAR_CONTEXT_UPDATED') {
+          void refreshActionSourceContext().catch(setError);
+        }
+      });
+      void refreshActionSourceContext().catch(setError);
+      document.getElementById('activity-source-track')?.addEventListener('click', async event => {
+        if (!event.isTrusted || !actionSourceTask) return;
+        const task = actionSourceTask;
+        if (sameTask(task, pageState.active)) return;
+        try { await trackCurrentTimelineTask({ sourceTask: task, preserveSavedDescription: true }); }
+        catch { /* trackCurrentTimelineTask displays the error. */ }
+        finally { renderActionSourceContext(); }
+      });
+      document.getElementById('activity-source-dismiss')?.addEventListener('click', event => {
+        if (!event.isTrusted) return;
+        actionSourceTask = null;
+        renderActionSourceContext();
+      });
+    }
     document.addEventListener('clockoli:local-tracking-changed', event => {
       const detail = event.detail ?? {};
       if (detail.type === 'STOP' && detail.completion?.entry?.id) {
@@ -4732,7 +4994,6 @@
     void loadSelectedTimes();
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) {
-        void refreshRemoteTimerStatus().catch(setError);
         void refreshRecent(true).then(refreshActivityState).catch(setError);
       }
     });
@@ -4746,6 +5007,10 @@
     void restoreActivityViewMode();
     refreshPopupTask().then(async () => {
       applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: false }));
+      if (!pageState.configured) {
+        await send({ type: 'OPEN_OPTIONS' });
+        return;
+      }
       renderUi();
       let recentReady = false;
       if (pageState.configured) {
@@ -4761,38 +5026,8 @@
       }
       if (pageState.configured) await loadActivityCalendarWeek(weekWindow());
     }).catch(setError);
-  } else if (actionSurfaceMode) {
-    if (chrome.runtime.onMessage?.addListener) chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-      if (handleLocalPreferencesChanged(message)) return undefined;
-      if (message?.type === 'DISMISS_FULL_WIDTH_POPUP') {
-        if (fullWidthPopupOpen) closeFullWidthPopup({ restoreFocus: false });
-        return undefined;
-      }
-      if (message?.type !== 'TOGGLE_FULL_WIDTH_POPUP') return undefined;
-      void toggleFullWidthPopup().then(opened => sendResponse({ ok: true, opened })).catch(error => sendResponse({ ok: false, error: error.message }));
-      return true;
-    });
-    document.addEventListener('click', handleDocumentClick);
-    document.addEventListener('keydown', event => {
-      if (fullWidthPopupOpen && event.key === 'Escape' && !event.defaultPrevented && !timeEntryFormDialog?.open) closeFullWidthPopup();
-    });
-    void toggleFullWidthPopup();
   } else {
-    if (chrome.runtime.onMessage?.addListener) chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-      if (handleLocalPreferencesChanged(message)) return undefined;
-      if (message?.type === 'DISMISS_FULL_WIDTH_POPUP') {
-        if (fullWidthPopupOpen) closeFullWidthPopup({ restoreFocus: false });
-        return undefined;
-      }
-      if (message?.type !== 'TOGGLE_FULL_WIDTH_POPUP') return undefined;
-      void toggleFullWidthPopup().then(opened => sendResponse({ ok: true, opened })).catch(error => sendResponse({ ok: false, error: error.message }));
-      return true;
-    });
-    document.addEventListener('click', handleDocumentClick);
-    document.addEventListener('keydown', event => {
-      if (fullWidthPopupOpen && event.key === 'Escape' && !event.defaultPrevented && !timeEntryFormDialog?.open) { closeFullWidthPopup(); return; }
-      if (menuOpen && event.key === 'Escape' && !event.defaultPrevented) closeMenu();
-    });
+    chrome.runtime.onMessage?.addListener?.(message => { handleLocalPreferencesChanged(message); });
     motionPreference?.addEventListener?.('change', updateTaskAnimation);
     watchClockoliTimeline();
     navigationCheck();

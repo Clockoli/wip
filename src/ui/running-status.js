@@ -9,7 +9,18 @@ const LONG_ENTRY_HOURS = 12;
 const STATE_POLL_MS = 5_000;
 const RECENT_TASK_LIMIT = 3;
 
-export function mountRunningStatus(container, { send, onChange, showToday = true }) {
+const CHECK_PATH = 'M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z';
+const PLAY_PATH = 'M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm4.879-2.773 4.264 2.559a.25.25 0 0 1 0 .428l-4.264 2.559A.25.25 0 0 1 6 10.559V5.442a.25.25 0 0 1 .379-.215Z';
+const OCTICON_NS = 'http://www.w3.org/2000/svg';
+function octicon(path) {
+  const svg = document.createElementNS(OCTICON_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16'); svg.setAttribute('width', '16'); svg.setAttribute('height', '16');
+  svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('fill', 'currentColor');
+  const shape = document.createElementNS(OCTICON_NS, 'path'); shape.setAttribute('d', path); svg.append(shape);
+  return svg;
+}
+
+export function mountRunningStatus(container, { send, onChange, onReconnect, onAuthExpired, onAuthRestored, showToday = true }) {
   const document = container.ownerDocument || globalThis.document;
   const row = document.createElement('div'); row.className = 'running-status-row';
   const make = (tag, className) => {
@@ -33,10 +44,10 @@ export function mountRunningStatus(container, { send, onChange, showToday = true
   description.rows = 1; description.maxLength = 2000; description.placeholder = 'Description (optional)';
   description.setAttribute('aria-label', 'Description');
   const saveDescription = make('button', 'running-status-description-save');
-  saveDescription.type = 'button'; saveDescription.textContent = '✓';
+  saveDescription.type = 'button'; saveDescription.append(octicon(CHECK_PATH));
   saveDescription.title = 'Save description'; saveDescription.setAttribute('aria-label', 'Save description');
   const saved = make('span', 'running-status-description-saved');
-  saved.textContent = '✓ Saved'; saved.setAttribute('role', 'status');
+  saved.textContent = 'Saved'; saved.prepend(octicon(CHECK_PATH)); saved.setAttribute('role', 'status');
   const moreLines = make('small', 'running-status-description-more');
   moreLines.textContent = '↓ More lines — scroll'; moreLines.hidden = true;
   descriptionField.append(description, saveDescription, saved, moreLines);
@@ -49,11 +60,17 @@ export function mountRunningStatus(container, { send, onChange, showToday = true
   const startValue = make('span', 'running-status-start-value'); startValue.append(start);
   startLabel.append(startCaption, startValue);
   const saveStart = make('button', 'running-status-start-save'); saveStart.type = 'button';
-  saveStart.textContent = '✓'; saveStart.title = 'Save start'; saveStart.setAttribute('aria-label', 'Save start');
+  saveStart.append(octicon(CHECK_PATH)); saveStart.title = 'Save start'; saveStart.setAttribute('aria-label', 'Save start');
   const startSaved = make('span', 'running-status-start-saved');
-  startSaved.textContent = '✓ Saved'; startSaved.setAttribute('role', 'status'); startSaved.hidden = true;
+  startSaved.textContent = 'Saved'; startSaved.prepend(octicon(CHECK_PATH)); startSaved.setAttribute('role', 'status'); startSaved.hidden = true;
   startField.append(startLabel, saveStart, startSaved);
   const error = make('div', 'running-status-error'); error.setAttribute('role', 'alert'); error.hidden = true;
+  const reconnect = make('button', 'running-status-reconnect');
+  reconnect.type = 'button'; reconnect.textContent = onReconnect ? 'Reconnect GitHub' : 'Sign in again with GitHub';
+  reconnect.addEventListener('click', () => {
+    if (onReconnect) { onReconnect(); return; }
+    chrome.runtime.openOptionsPage()?.catch?.(() => showError(new Error('Could not open Settings. Open Clockoli Settings to sign in again.')));
+  });
   const idleGroup = make('div', 'running-status-idle-group');
   const idleHint = make('span', 'running-status-idle-hint');
   idleHint.textContent = 'Start a task to begin';
@@ -63,9 +80,14 @@ export function mountRunningStatus(container, { send, onChange, showToday = true
   const stats = make('div', 'running-status-stats'); stats.append(startField, metrics);
   row.replaceChildren(idleGroup, quickStart, live, task, descriptionField, stats, stop);
   for (const node of [live, task, descriptionField, stats, stop]) node.hidden = true;
-  container.classList.add('running-status'); container.setAttribute('aria-label', 'Running status');
-  container.replaceChildren(row, error);
+  container.classList.add('running-status', 'is-loading'); container.setAttribute('aria-label', 'Running status');
+  if (container.id === 'activity-running-status') {
+    row.append(error);
+    container.replaceChildren(row);
+  } else container.replaceChildren(row, error);
   let state = null, readAt = 0, reportDate = '', requestId = 0, busy = false, destroyed = false, recentKey = '';
+  let refreshFailure = null;
+  let surfacedRateLimit = '';
   let shownTimer = '', acceptedDescription = '', pendingAccepted = null;
   let focusDescriptionOnLoad = true;
   let savingDescription = null, submittedDescription = null, saveAgain = false, hideSavedTimer = null;
@@ -76,7 +98,29 @@ export function mountRunningStatus(container, { send, onChange, showToday = true
     .replace(/ {2,}/g, ' ').trim().slice(0, 2000);
 
   function showError(cause) {
-    error.textContent = cause?.message || ''; error.hidden = !error.textContent;
+    error.replaceChildren();
+    error.setAttribute('data-error-code', cause?.code || '');
+    if (container.id === 'activity-running-status') {
+      const retryAt = cause?.code === 'rate_limit' && typeof cause.retryAt === 'string' ? cause.retryAt : '';
+      const key = cause?.code === 'rate_limit' ? `rate_limit:${retryAt}` : '';
+      if (key !== surfacedRateLimit) {
+        surfacedRateLimit = key;
+        document.dispatchEvent(new CustomEvent('clockoli:tracking-rate-limit', {
+          detail: key ? { code: 'rate_limit', retryAt } : null,
+        }));
+      }
+    }
+    if (cause?.code === 'auth_expired' && onAuthExpired) {
+      onAuthExpired();
+      error.textContent = ''; error.hidden = true;
+      return;
+    }
+    error.textContent = cause?.code === 'auth_expired' ? 'GitHub sign-in required.'
+      : cause?.code === 'rate_limit'
+        ? globalThis.ClockoliRecovery?.describeConnectionError?.(cause).headline || 'GitHub rate limit reached'
+        : cause?.message || '';
+    if (cause?.code === 'auth_expired') error.append(reconnect);
+    error.hidden = !error.textContent;
   }
 
   function resizeDescription() {
@@ -117,7 +161,7 @@ export function mountRunningStatus(container, { send, onChange, showToday = true
       if (pendingAccepted === null || latest === pendingAccepted) {
         acceptedDescription = latest;
         pendingAccepted = null;
-        description.value = latest;
+        if (description.value !== latest) description.value = latest;
       }
     }
     descriptionField.hidden = !active;
@@ -251,15 +295,16 @@ export function mountRunningStatus(container, { send, onChange, showToday = true
       try {
         const taskUrl = normalizeStoredTaskIdentity(entry);
         const taskTitle = String(entry.taskTitle ?? entry.issueTitle ?? '').trim().slice(0, 300);
+        const taskDescription = String(entry.description ?? '').trim().slice(0, 2000);
         const end = Date.parse(entry.endedAt || ''), start = Date.parse(entry.startedAt || '');
-        candidates.push({ taskUrl, taskTitle, timestamp: Number.isFinite(end) ? end : (Number.isFinite(start) ? start : 0) });
+        candidates.push({ taskUrl, taskTitle, taskDescription, timestamp: Number.isFinite(end) ? end : (Number.isFinite(start) ? start : 0) });
       } catch { /* Ignore invalid cached task identities. */ }
     }
     candidates.sort((a, b) => b.timestamp - a.timestamp);
     const seen = new Set(), recent = [];
     for (const candidate of candidates) {
       if (seen.has(candidate.taskUrl)) continue;
-      seen.add(candidate.taskUrl); recent.push({ taskUrl: candidate.taskUrl, taskTitle: candidate.taskTitle });
+      seen.add(candidate.taskUrl); recent.push({ taskUrl: candidate.taskUrl, taskTitle: candidate.taskTitle, taskDescription: candidate.taskDescription });
       if (recent.length === RECENT_TASK_LIMIT) break;
     }
     return recent;
@@ -274,9 +319,15 @@ export function mountRunningStatus(container, { send, onChange, showToday = true
         const button = make('button', 'running-status-recent-task'); button.type = 'button';
         button.title = item.taskUrl;
         button.setAttribute('aria-label', 'Start tracking ' + label);
-        const play = make('span', 'running-status-recent-play'); play.setAttribute('aria-hidden', 'true');
+        const play = make('span', 'running-status-recent-play'); play.setAttribute('aria-hidden', 'true'); play.append(octicon(PLAY_PATH));
         const name = make('span', 'running-status-recent-name'); name.textContent = label;
         button.append(play, name);
+        if (item.taskDescription) {
+          const subtitle = make('span', 'running-status-recent-description');
+          subtitle.textContent = item.taskDescription.replace(/\s+/g, ' ');
+          button.append(subtitle);
+          button.setAttribute('aria-description', subtitle.textContent);
+        }
         button.addEventListener('click', () => startRecentTask(item));
         recentList.append(button);
       }
@@ -308,10 +359,10 @@ export function mountRunningStatus(container, { send, onChange, showToday = true
     const stoppedWithConflict = pendingStop && state.pendingWrites.some(item => item.operation === 'completeTimer' && item.status === 'conflict');
     container.classList.toggle('is-active', Boolean(active));
     container.classList.toggle('is-idle', Boolean(state.configured && !active));
-    container.classList.toggle('is-pending-stop', Boolean(pendingStop));
-    idle.textContent = stoppedWithConflict ? 'Stop needs attention' : pendingStop ? 'Stop waiting to sync' : 'Not tracking';
-    idleHint.textContent = stoppedWithConflict ? 'Review the conflict in Activity List'
-      : pendingStop ? 'Do not stop this timer again' : 'Start a task to begin';
+    container.classList.toggle('is-conflicted-stop', Boolean(stoppedWithConflict));
+    idle.textContent = stoppedWithConflict ? 'Stop needs attention' : 'Not tracking';
+    idleHint.textContent = stoppedWithConflict ? 'Review sync issues in Activity'
+      : 'Start a task to begin';
     idle.hidden = Boolean(active);
     quickStart.hidden = !state.configured || Boolean(active);
     if (!quickStart.hidden) renderRecent();
@@ -329,11 +380,18 @@ export function mountRunningStatus(container, { send, onChange, showToday = true
 
   async function readState(refresh = false) {
     const id = ++requestId;
+    let localLoaded = false;
     try {
       // Read durable local state first, even when GitHub cannot be reached.
       const local = await send({ type: 'GET_PAGE_STATE' });
       if (destroyed || id !== requestId) return;
-      state = local; readAt = Date.now(); reportDate = localDate(); render(); showError(local.summaryError);
+      state = local; readAt = Date.now(); reportDate = localDate(); container.classList.toggle('is-loading', false); render();
+      localLoaded = true;
+      if (local.summaryError?.code === 'auth_expired'
+        || (local.summaryError?.code === 'rate_limit' && refreshFailure?.code !== 'auth_expired')) {
+        refreshFailure = local.summaryError;
+      }
+      showError(local.summaryError || refreshFailure);
       if (focusDescriptionOnLoad && state.active) {
         focusDescriptionOnLoad = false;
         if (!document.activeElement || document.activeElement === document.body) description.focus({ preventScroll: true });
@@ -341,25 +399,36 @@ export function mountRunningStatus(container, { send, onChange, showToday = true
       if (refresh && local.configured) {
         const remote = await send({ type: 'GET_PAGE_STATE', refresh: true });
         if (destroyed || id !== requestId) return;
-        state = remote; readAt = Date.now(); reportDate = localDate(); render(); showError(remote.summaryError);
+        state = remote; readAt = Date.now(); reportDate = localDate(); render();
+        const wasExpired = refreshFailure?.code === 'auth_expired';
+        refreshFailure = remote.summaryError?.code === 'auth_expired' ? remote.summaryError
+          : remote.summaryError?.code === 'rate_limit' && !wasExpired ? remote.summaryError
+            : remote.summaryError ? refreshFailure : null;
+        showError(remote.summaryError);
+        if (wasExpired && !remote.summaryError) onAuthRestored?.();
       }
     } catch (cause) {
-      if (!destroyed && id === requestId) showError(cause);
+      if (!destroyed && id === requestId) {
+        refreshFailure = cause?.code === 'auth_expired' || (localLoaded && cause?.code === 'rate_limit') ? cause : null;
+        container.classList.toggle('is-loading', false);
+        showError(refreshFailure || new Error('Could not load tracking status. Reload Activity to try again.'));
+      }
     }
   }
 
-  async function startRecentTask({ taskUrl, taskTitle }) {
+  async function startRecentTask({ taskUrl, taskTitle, taskDescription }) {
     if (busy || destroyed || !state?.configured || state.active) return;
     busy = true; ++requestId; showError(); render();
-    let failure = null;
+    let failure = null, started = null;
     try {
       // The status may have changed in another tab since the buttons were shown.
       const current = await send({ type: 'GET_PAGE_STATE' });
       if (destroyed) return;
       state = current; readAt = Date.now(); reportDate = localDate(); render();
       if (!current.configured || current.active) return;
-      const active = await send({ type: 'START', taskUrl, taskTitle });
+      const active = await send({ type: 'START', taskUrl, taskTitle, ...(taskDescription ? { description: taskDescription } : {}) });
       if (destroyed) return;
+      started = active;
       // The accepted local timer is immediately available, even before GitHub sync.
       state = { ...state, active }; readAt = Date.now(); reportDate = localDate(); render();
       await onChange?.({ type: 'START', active });
@@ -367,8 +436,13 @@ export function mountRunningStatus(container, { send, onChange, showToday = true
     finally {
       if (!destroyed) {
         await readState();
+        if (destroyed) return;
         busy = false; render();
         if (failure) showError(failure);
+        else if (started && timerKey(state?.active) === timerKey(started)) {
+          description.focus({ preventScroll: true });
+          if (description.value) description.select();
+        }
       }
     }
   }
@@ -412,10 +486,12 @@ export function mountRunningStatus(container, { send, onChange, showToday = true
     if (!document.hidden && !busy) void readState(reportDate !== localDate());
   }, STATE_POLL_MS);
   void readState(true);
-  return () => {
+  const dispose = () => {
     destroyed = true; ++requestId; clearInterval(tick); clearInterval(poll);
     document.removeEventListener('visibilitychange', onVisibility);
   };
+  dispose.refresh = () => readState(true);
+  return dispose;
 }
 
 // Activity's content renderer is a classic script with a private message helper.

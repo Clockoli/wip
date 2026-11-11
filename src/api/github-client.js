@@ -242,7 +242,7 @@ function taskSnapshot(repository, node, type, capturedAt) {
 }
 
 export class GitHubClient {
-  constructor({ token, credentialProvider = null, owner, repo, branch = 'main', expectedRepositoryId = undefined, branchMode = 'custom', fetchImpl = fetch, now = () => new Date(), validationCache = null, requestDiagnostics = null, rateLimitGate = null }) {
+  constructor({ token, credentialProvider = null, owner, repo, branch = 'main', expectedRepositoryId = undefined, branchMode = 'custom', fetchImpl = fetch, now = () => new Date(), validationCache = null, requestDiagnostics = null, rateLimitGate = null, requestTimeoutMs = 30_000 }) {
     if ((!token || typeof token !== 'string') && !credentialProvider?.getAccessToken) throw new Error('GitHub credentials are required');
     this.token = token || '';
     this.credentialProvider = credentialProvider;
@@ -262,6 +262,7 @@ export class GitHubClient {
     this.validationCache = validationCache;
     this.requestDiagnostics = typeof requestDiagnostics === 'function' ? requestDiagnostics : null;
     this.rateLimitGate = rateLimitGate;
+    this.requestTimeoutMs = requestTimeoutMs;
   }
 
   get repositoryKey() { return `${this.owner}/${this.repo}@${this.branch}`; }
@@ -292,33 +293,54 @@ export class GitHubClient {
     };
     const requestWithToken = async token => {
       await this.rateLimitGate?.ready();
-      return this.fetchImpl(`https://api.github.com${path}`, {
-        ...options,
-        cache: 'no-store',
-        headers: {
-          Accept: 'application/vnd.github+json',
-          Authorization: `Bearer ${token}`,
-          'X-GitHub-Api-Version': '2022-11-28',
-          ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-          ...options.headers,
-        },
-      });
+      const controller = new AbortController();
+      const parent = options.signal;
+      const abortFromParent = () => controller.abort(parent.reason);
+      if (parent?.aborted) abortFromParent();
+      else parent?.addEventListener('abort', abortFromParent, { once: true });
+      const timeout = setTimeout(() => controller.abort(new DOMException('GitHub request timed out', 'TimeoutError')), this.requestTimeoutMs);
+      try {
+        const response = await this.fetchImpl(`https://api.github.com${path}`, {
+          ...options, signal: controller.signal,
+          cache: 'no-store',
+          headers: {
+            Accept: 'application/vnd.github+json',
+            Authorization: `Bearer ${token}`,
+            'X-GitHub-Api-Version': '2022-11-28',
+            ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+            ...options.headers,
+          },
+        });
+        let body = null;
+        if (response.status !== 304) try { body = await response.json(); } catch (error) {
+          if (controller.signal.aborted) throw error;
+          /* Empty response. */
+        }
+        return { response, body };
+      } catch (error) {
+        if (controller.signal.reason?.name === 'TimeoutError') throw new GitHubApiError('GitHub did not respond in time.', 0, 'network_timeout');
+        if (parent?.aborted) throw parent.reason ?? error;
+        if (error instanceof TypeError) throw new GitHubApiError('Could not connect to GitHub.', 0, 'network_error');
+        throw error;
+      } finally {
+        clearTimeout(timeout);
+        parent?.removeEventListener('abort', abortFromParent);
+      }
     };
     let token = this.credentialProvider ? await this.credentialProvider.getAccessToken() : this.token;
-    let response;
-    try { response = await requestWithToken(token); }
+    let response, body;
+    try { ({ response, body } = await requestWithToken(token)); }
     catch (error) { report('network_error'); throw error; }
     if (response.status === 401 && this.credentialProvider) {
       token = await this.credentialProvider.getAccessToken({ forceRefresh: true, rejectedToken: token });
-      try { response = await requestWithToken(token); }
+      try { ({ response, body } = await requestWithToken(token)); }
       catch (error) { report('network_error'); throw error; }
     }
     if (allowNotModified && response.status === 304) {
       report(response.status);
       return { body: null, status: response.status, headers: response.headers, notModified: true };
     }
-    let body = null;
-    try { body = await response.json(); } catch { /* empty response */ }
+
     if (!response.ok) {
       report(response.status);
       if (response.status === 401) throw new GitHubAuthenticationError();
@@ -393,10 +415,14 @@ export class GitHubClient {
       }
       ids.add(user.id); logins.add(user.login.toLowerCase());
     }
-    return { users: collaborators.slice(0, 4).map(user => ({
+    const profiles = collaborators.map(user => ({
       id: user.id, login: user.login, avatarUrl: githubAvatarUrl(user.avatar_url, user.id),
-    })), hasMore: collaborators.length > 4,
-    avatarUsers: collaborators.map(user => ({ login: user.login, avatarUrl: githubAvatarUrl(user.avatar_url, user.id) })) };
+    }));
+    return { users: profiles.slice(0, 4), hasMore: profiles.length > 4,
+      ...(profiles.length > 4 ? { moreUsers: profiles.slice(4) } : {}),
+      // GitHub provides 100 collaborators per page. A full page might have more.
+      ...(profiles.length === 100 ? { truncated: true } : {}),
+      avatarUsers: profiles.map(({ login, avatarUrl }) => ({ login, avatarUrl })) };
   }
 
   async listRepositoryCollaboratorProfiles() {
@@ -445,9 +471,15 @@ export class GitHubClient {
         ids.add(user.id); logins.add(user.login.toLowerCase());
         users.push({ id: user.id, login: user.login, avatarUrl: githubAvatarUrl(user.avatar_url, user.id) });
       }
-      if (users.length > 4 || invitations.length < 100) return { users: users.slice(0, 4), hasMore: users.length > 4 };
+      if (users.length > 4 || invitations.length < 100) {
+        return { users: users.slice(0, 4), hasMore: users.length > 4,
+          ...(users.length > 4 ? { moreUsers: users.slice(4) } : {}),
+          ...(invitations.length === 100 ? { truncated: true } : {}) };
+      }
     }
-    return { users: users.slice(0, 4), hasMore: false, incomplete: true };
+    return { users: users.slice(0, 4), hasMore: users.length > 4,
+      ...(users.length > 4 ? { moreUsers: users.slice(4) } : {}),
+      incomplete: true };
   }
 
   async getAuthenticatedUser() { return (await this.getAuthenticatedIdentity()).login; }
@@ -489,7 +521,7 @@ export class GitHubClient {
       token: this.token, credentialProvider: this.credentialProvider,
       owner: this.owner, repo: this.repo, branch,
       expectedRepositoryId: this.expectedRepositoryId,
-      branchMode, fetchImpl: this.fetchImpl, rateLimitGate: this.rateLimitGate,
+      branchMode, fetchImpl: this.fetchImpl, rateLimitGate: this.rateLimitGate, requestTimeoutMs: this.requestTimeoutMs,
     });
   }
 
@@ -555,7 +587,25 @@ export class GitHubClient {
     }
   }
 
+  async listBranchesWithSha(prefix, { maxBranches = 1000, signal } = {}) {
+    const normalized = String(prefix || '');
+    validateBranch(`${normalized}probe`);
+    const base = `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`;
+    const body = await this.request(`${base}/git/matching-refs/heads/${encodePath(normalized)}`, { signal });
+    if (!Array.isArray(body) || body.length > maxBranches) throw new GitHubApiError('Clockoli user branch discovery exceeded its bounded result budget.', 422, 'branch_discovery_budget');
+    const fullPrefix = `refs/heads/${normalized}`;
+    return body.filter(item => String(item?.ref || '').startsWith(fullPrefix)).map(item => {
+      const branch = validateBranch(item.ref.slice('refs/heads/'.length));
+      const headSha = item?.object?.sha;
+      if (item?.object?.type !== 'commit' || typeof headSha !== 'string' || !/^[0-9a-f]{40}$/i.test(headSha)) {
+        throw new GitHubApiError('GitHub returned an invalid personal branch reference.', 502, 'invalid_github_response');
+      }
+      return { branch, headSha };
+    }).sort((a, b) => a.branch.localeCompare(b.branch));
+  }
+
   async listBranches(prefix, { maxBranches = 1000, signal } = {}) {
+    // Keep the existing name-only API independent of the SHA-aware variant.
     const normalized = String(prefix || '');
     validateBranch(`${normalized}probe`);
     const base = `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`;
@@ -600,10 +650,31 @@ export class GitHubClient {
     return repository;
   }
 
-  async getText(path, { signal } = {}) {
-    const body = await this.request(`${this.contentUrl(path)}?ref=${encodeURIComponent(this.branch)}`, { signal });
-    if (Array.isArray(body) || body.type !== 'file') throw new GitHubApiError('Expected a file', 422);
+  async getText(path, { signal, ref = this.branch } = {}) {
+    if (typeof ref !== 'string' || (!/^[0-9a-f]{40}$/i.test(ref) && validateBranch(ref) !== ref)) {
+      throw new Error('Invalid GitHub content ref');
+    }
+    const body = await this.request(`${this.contentUrl(path)}?ref=${encodeURIComponent(ref)}`, { signal });
+    if (Array.isArray(body) || body?.type !== 'file') throw new GitHubApiError('Expected a file', 422);
+    if (typeof body.content !== 'string' || (body.encoding === 'none' && body.size > 0)) {
+      throw new GitHubApiError('GitHub did not inline the file content.', 422, 'inline_content_unavailable');
+    }
     return { path, sha: body.sha, text: decodeBase64Utf8(body.content) };
+  }
+
+  // Pin the complete read to the SHA discovered from matching refs. Only large
+  // files need the Git tree/blob fallback (Contents API does not inline them).
+  async getTextAtCommit(path, headSha, { signal } = {}) {
+    if (typeof headSha !== 'string' || !/^[0-9a-f]{40}$/i.test(headSha)) throw new Error('Invalid Git commit SHA');
+    try { return await this.getText(path, { signal, ref: headSha }); }
+    catch (error) { if (error?.code !== 'inline_content_unavailable') throw error; }
+    const base = `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`;
+    const commit = await this.request(`${base}/git/commits/${headSha}`, { signal });
+    const tree = await this.request(`${base}/git/trees/${encodeURIComponent(commit.tree?.sha)}?recursive=1`, { signal });
+    if (tree.truncated || !Array.isArray(tree.tree)) throw new GitHubApiError('Repository tree is too large to read task indexes', 422);
+    const file = tree.tree.find(item => item.path === path && item.type === 'blob');
+    if (!file?.sha) throw new GitHubNotFoundError();
+    return this.getBlobText(path, file.sha, { signal });
   }
 
   async listRepositoryEntries({ signal } = {}) {

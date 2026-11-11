@@ -2,7 +2,6 @@ import { recordDate } from '../domain/reporting.js';
 import { normalizeReportingUtc } from '../domain/local-settings.js';
 import { parseMonthlyRecords, parseMonthlyRecordsPath } from '../domain/work-records.js';
 import { parseTaskIndex, taskIndexRecord, TASK_INDEX_PATH } from '../domain/task-index.js';
-import { normalizeTaskTitle } from '../domain/records.js';
 import { entryDateParts, normalizeStoredTaskIdentity, taskUrlOf, validatePathSegment } from '../domain/values.js';
 import { discoverUserStorageBranches } from './user-storage-branch.js';
 
@@ -134,8 +133,21 @@ export async function loadDestinationRecords(destinations, read, { signal, concu
       else readStatus.push({ ...base, status: 'error', error: sanitizedReadError(result.reason) });
     });
     if (!successful.length) {
-      const error = new Error('All configured time repositories failed to load.');
-      error.code = 'all_destinations_failed'; error.readStatus = readStatus; throw error;
+      const codes = readStatus.map(item => item.error.code);
+      const networkOnly = codes.every(code => code === 'network_error' || code === 'network_timeout');
+      const timedOut = networkOnly && codes.every(code => code === 'network_timeout');
+      const rateLimited = codes.every(code => code === 'rate_limit');
+      const error = new Error(networkOnly
+        ? timedOut ? 'GitHub did not respond in time.' : 'Could not connect to GitHub.'
+        : rateLimited ? 'GitHub rate limit reached.'
+        : 'All configured time repositories failed to load.');
+      error.code = networkOnly ? timedOut ? 'network_timeout' : 'network_error'
+        : rateLimited ? 'rate_limit' : 'all_destinations_failed';
+      if (rateLimited) {
+        const retries = readStatus.map(item => item.error.retryAt).filter(value => value && Number.isFinite(Date.parse(value)));
+        if (retries.length) error.retryAt = retries.sort((left, right) => Date.parse(right) - Date.parse(left))[0];
+      }
+      error.readStatus = readStatus; throw error;
     }
     const merged = merge(successful, inputs.map(destination => destination.id));
     return { ...merged, readStatus, partial: successful.length !== inputs.length || merged.conflicts.length > 0 };
@@ -181,11 +193,13 @@ function normalizeCache(value, repositoryKey) {
     && (value.snapshotReady === true || (!hasSnapshotMarker && files.length > 0));
   const catalog = value.catalog;
   const validCatalog = catalog && typeof catalog.etag === 'string' && /^[0-9a-f]{40}$/i.test(catalog.indexSha)
-    && typeof catalog.indexText === 'string' && catalog.titles && typeof catalog.titles === 'object'
-    && !Array.isArray(catalog.titles);
+    && typeof catalog.indexText === 'string';
+  const verifiedHead = validCatalog && /^[0-9a-f]{40}$/i.test(catalog.headSha || '')
+    && Number.isSafeInteger(catalog.user?.id) && catalog.user.id > 0 && typeof catalog.user.login === 'string';
   return { version: CACHE_VERSION, repositoryKey, etag: typeof value.etag === 'string' ? value.etag : '', snapshotReady, files, blobs,
     ...(validCatalog ? { catalog: { etag: catalog.etag, indexSha: catalog.indexSha, indexText: catalog.indexText,
-      titles: catalog.titles } } : {}),
+      ...(verifiedHead ? { headSha: catalog.headSha, user: { id: catalog.user.id, login: catalog.user.login } } : {}),
+    } } : {}),
   };
 }
 
@@ -351,11 +365,12 @@ export class ReportService {
   }
 
   async loadRepositoryTaskCatalog({ defaultBranch, signal, budgets = {} } = {}) {
-    if (!defaultBranch || typeof this.github.forBranch !== 'function' || typeof this.github.listBranches !== 'function') {
+    if (!defaultBranch || typeof this.github.forBranch !== 'function'
+        || (typeof this.github.listBranches !== 'function' && typeof this.github.listBranchesWithSha !== 'function')) {
       throw new Error('A marked time repository is required for task search');
     }
     const users = await discoverUserStorageBranches(this.github.forBranch(defaultBranch, 'default'), {
-      signal, concurrency: this.concurrency,
+      signal, concurrency: this.concurrency, cache: this.cache,
     });
     const maxUsers = budgetValue(budgets.maxUsers, DEFAULT_TASK_USER_BUDGET, 'user');
     if (users.length > maxUsers) throw taskScanBudgetError('users', users.length, maxUsers);
@@ -372,63 +387,57 @@ export class ReportService {
           concurrency: this.concurrency, requestLimiter: this.requestLimiter });
         const key = user.github.repositoryKey || 'repository';
         const cache = await service.readCache(key), previous = cache.catalog;
-        const snapshot = await this.requestLimiter.run(() => user.github.listTextFilesSnapshot('times/', {
-          etag: previous?.etag || '', includeActive: TASK_INDEX_PATH, signal: branchSignal,
-        }), branchSignal);
-        if (snapshot.notModified && !previous) throw new Error('Task index cache is incomplete');
-        const indexFile = snapshot.notModified ? null : snapshot.files?.find(file => file.path === TASK_INDEX_PATH);
-        if (!snapshot.notModified && !indexFile) throw new Error(`Clockoli task index is missing for ${user.login}`);
-        const indexSha = indexFile?.sha ?? previous.indexSha;
+        let indexSha, indexText, etag = '';
+        let knownBytes = 0;
+        if (user.headSha && previous?.headSha === user.headSha
+            && previous.user?.id === user.id && previous.user?.login === user.login) {
+          // The branch has not moved: the already verified index is authoritative.
+          ({ indexSha, indexText } = previous);
+        } else if (user.headSha && typeof user.github.getTextAtCommit === 'function') {
+          // A single pinned Contents API read replaces ref -> commit -> tree -> blob.
+          const file = await this.requestLimiter.run(
+            () => user.github.getTextAtCommit(TASK_INDEX_PATH, user.headSha, { signal: branchSignal }), branchSignal);
+          indexSha = file.sha;
+          indexText = indexSha === previous?.indexSha ? previous.indexText : file.text;
+          if (!/^[0-9a-f]{40}$/i.test(indexSha)) throw new Error('Clockoli task index SHA is invalid');
+        } else {
+          // Legacy clients and test doubles retain the original snapshot path.
+          const snapshot = await this.requestLimiter.run(() => user.github.listTextFilesSnapshot('times/', {
+            etag: previous?.etag || '', includeActive: TASK_INDEX_PATH, signal: branchSignal,
+          }), branchSignal);
+          if (snapshot.notModified && !previous) throw new Error('Task index cache is incomplete');
+          const indexFile = snapshot.notModified ? null : snapshot.files?.find(file => file.path === TASK_INDEX_PATH);
+          if (!snapshot.notModified && !indexFile) throw new Error(`Clockoli task index is missing for ${user.login}`);
+          indexSha = indexFile?.sha ?? previous.indexSha;
+          knownBytes = Number.isSafeInteger(indexFile?.size) ? indexFile.size : 0;
+          etag = snapshot.etag || '';
+          if (knownBytes > budgetValue(budgets.maxBytes, Number.MAX_SAFE_INTEGER, 'byte')) {
+            throw taskScanBudgetError('bytes', knownBytes, budgets.maxBytes);
+          }
+          indexText = indexSha === previous?.indexSha ? previous.indexText
+            : (await this.requestLimiter.run(() => user.github.getBlobText(TASK_INDEX_PATH, indexSha, { signal: branchSignal }), branchSignal)).text;
+        }
         if (budgetValue(budgets.maxFiles, Number.MAX_SAFE_INTEGER, 'file') < 1) throw taskScanBudgetError('files', 1, budgets.maxFiles);
         consumeTaskScanBudget(budget, 'files', 1);
-        const knownBytes = Number.isSafeInteger(indexFile?.size) ? indexFile.size : 0;
-        if (knownBytes > budgetValue(budgets.maxBytes, Number.MAX_SAFE_INTEGER, 'byte')) {
-          throw taskScanBudgetError('bytes', knownBytes, budgets.maxBytes);
-        }
-        consumeTaskScanBudget(budget, 'bytes', knownBytes);
-        const indexText = indexSha === previous?.indexSha ? previous.indexText
-          : (await this.requestLimiter.run(() => user.github.getBlobText(TASK_INDEX_PATH, indexSha, { signal: branchSignal }), branchSignal)).text;
         const indexBytes = new TextEncoder().encode(indexText).length;
         if (indexBytes > budgetValue(budgets.maxBytes, Number.MAX_SAFE_INTEGER, 'byte')) {
           throw taskScanBudgetError('bytes', indexBytes, budgets.maxBytes);
         }
-        consumeTaskScanBudget(budget, 'bytes', Math.max(0, indexBytes - knownBytes));
+        consumeTaskScanBudget(budget, 'bytes', Math.max(indexBytes, knownBytes));
         const index = parseTaskIndex(indexText, { user: user.login });
         const summaries = Object.entries(index.tasks);
-        const needsHistory = summaries.some(([, summary]) => !Object.hasOwn(summary, 'title'));
-        let titles = snapshot.notModified ? previous?.titles : null;
-        if (needsHistory && !titles) {
-          const remaining = { ...budgets,
-            maxFiles: budgetValue(budgets.maxFiles, Number.MAX_SAFE_INTEGER, 'file') - 1,
-            maxBytes: budgetValue(budgets.maxBytes, Number.MAX_SAFE_INTEGER, 'byte') - indexBytes };
-          const records = await service.loadUserRange({ startDate: '0001-01-01', endDate: '9999-12-31' }, user.login,
-            { signal: branchSignal, resourceBudget: budget }, remaining);
-          const owners = new Map(summaries.flatMap(([taskUrl, summary]) => summary.recordIds.map(id => [id, taskUrl])));
-          const found = new Set(), latest = new Map();
-          for (const record of records) {
-            if (found.has(record.id)) throw new Error(`Duplicate completed record ID for ${user.login}`);
-            if (owners.get(record.id) !== record.taskUrl) {
-              throw new Error(`Clockoli task index does not match completed records for ${user.login}`);
-            }
-            found.add(record.id);
-            const title = normalizeTaskTitle(record.taskTitle || record.issueTitle);
-            if (title) latest.set(record.taskUrl, title);
-          }
-          if (found.size !== owners.size) throw new Error(`Clockoli task index does not match completed records for ${user.login}`);
-          titles = Object.fromEntries(latest);
-        } else {
-          const count = summaries.reduce((total, [, item]) => total + item.recordIds.length, 0);
-          if (count > budgetValue(budgets.maxRecords, Number.MAX_SAFE_INTEGER, 'record')) {
-            throw taskScanBudgetError('records', count, budgets.maxRecords);
-          }
-          consumeTaskScanBudget(budget, 'records', count);
+        const count = summaries.reduce((total, [, item]) => total + item.recordIds.length, 0);
+        if (count > budgetValue(budgets.maxRecords, Number.MAX_SAFE_INTEGER, 'record')) {
+          throw taskScanBudgetError('records', count, budgets.maxRecords);
         }
+        consumeTaskScanBudget(budget, 'records', count);
         branchSignal?.throwIfAborted();
         const fresh = await service.readCache(key);
-        fresh.catalog = { etag: snapshot.etag || '', indexSha, indexText, titles: titles || {} };
+        fresh.catalog = { etag, indexSha, indexText,
+          ...(user.headSha ? { headSha: user.headSha, user: { id: user.id, login: user.login } } : {}) };
         await service.saveCache(fresh);
         return { tasks: summaries.map(([taskUrl, summary]) => ({ taskUrl,
-          title: summary.title ?? (typeof titles?.[taskUrl] === 'string' ? normalizeTaskTitle(titles[taskUrl]) : ''),
+          title: summary.title ?? '',
           user: user.login, recordIds: summary.recordIds, titleSourceId: summary.titleSourceId })),
         recordIds: summaries.flatMap(([, summary]) => summary.recordIds) };
       });
