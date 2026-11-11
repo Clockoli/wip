@@ -305,7 +305,7 @@
 
 
   <section id="clients-settings" class="card" aria-labelledby="clients-title">
-    <div class="card-heading"><div><h2 id="clients-title">Clients</h2><p>Clients own billable rates and may also have invoice details. All details remain in this browser and its settings backups.</p></div></div>
+    <div class="card-heading"><div><h2 id="clients-title">Clients (invoice recipients)</h2><p>Add each company or person you bill. Clients own billable rates and may also have invoice details. All details remain in this browser and its settings backups.</p></div></div>
     <form id="clients-form">
       <fieldset class="clients-fieldset"><legend>Clients</legend>
         <div id="clients-list" class="clients-list"></div>
@@ -321,6 +321,7 @@
     </div>
     <form id="billing-form">
       <label>Client<select id="rates-client" required><option value="">— Choose a client —</option></select></label>
+      <label>Time repository for GitHub user suggestions<select id="rates-destination"></select></label>
       <p id="rates-client-help" class="help">Create and save a client before assigning rates. Every rate belongs to the selected client.</p>
       <div id="rates-list" class="rates-list"></div>
       <p id="rate-date-help" class="help">Leave End date empty if the rate is still current. Clockoli applies it through today and keeps it current until you add a later rate period.</p>
@@ -336,16 +337,22 @@
 
   <section id="invoicing-settings" class="card" aria-labelledby="invoicing-title">
     <div class="card-heading">
-      <div><h2 id="invoicing-title">Invoicing</h2><p>Set seller details, numbering and payment defaults. Clients and their rate cards are managed above; rates and invoice details are never written to the GitHub repository.</p></div>
+      <div><h2 id="invoicing-title">Invoicing</h2><p>Set your business details, bank accounts, numbering and payment defaults. Clients and their rate cards are managed above; rates and invoice details are never written to the GitHub repository.</p></div>
     </div>
     <form id="invoicing-form">
-      <fieldset><legend>Seller</legend>
+      <fieldset><legend>Your business details</legend>
         <div class="invoicing-party-grid">
           <label>Name<input id="seller-name" maxlength="200" autocomplete="organization"></label>
           <label>Email<input id="seller-email" type="email" maxlength="200" autocomplete="email"></label>
           <label class="wide-field">Address<textarea id="seller-address" maxlength="1000" rows="1" autocomplete="street-address"></textarea></label>
           <label>Tax ID<input id="seller-tax-id" maxlength="200" autocomplete="off"></label>
         </div>
+      </fieldset>
+      <fieldset><legend>Bank details</legend>
+        <p class="help">Save multiple bank accounts and choose which one appears on each invoice. Keep a settings backup in a safe place.</p>
+        <div id="bank-accounts-list" class="bank-accounts-list"></div>
+        <button id="add-bank-account" type="button" class="secondary">Add bank account</button>
+        <label>Default bank account<select id="default-bank-account"><option value="">None</option></select></label>
       </fieldset>
       <fieldset><legend>Invoice defaults</legend>
         <div class="invoicing-defaults-grid">

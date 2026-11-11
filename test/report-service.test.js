@@ -148,6 +148,17 @@ test('destination loads isolate ordinary failures, reject all failures, and prop
   await assert.rejects(() => loadDestinationRecords(destinations, async () => {
     throw Object.assign(new Error('token=private'), { code: 'network_timeout' });
   }), error => error?.code === 'network_timeout' && !error.message.includes('private'));
+  const firstReset = '2026-11-09T21:37:00Z', lastReset = '2026-11-09T21:42:00Z';
+  await assert.rejects(() => loadDestinationRecords(destinations, async destination => {
+    throw Object.assign(new Error('token=private'), {
+      code: 'rate_limit', retryAt: destination.id === 'github:1' ? firstReset : lastReset,
+    });
+  }), error => error?.code === 'rate_limit' && error.retryAt === lastReset
+    && !error.message.includes('private') && error.readStatus.every(item => item.error.code === 'rate_limit'));
+  await assert.rejects(() => loadDestinationRecords(destinations, async destination => {
+    throw Object.assign(new Error('private'), { code: destination.id === 'github:1' ? 'rate_limit' : 'permission' });
+  }), error => error?.code === 'all_destinations_failed'
+    && error.readStatus.some(item => item.error.code === 'rate_limit'));
   await assert.rejects(() => loadDestinationRecords(destinations, async destination => {
     throw Object.assign(new Error('private'), { code: destination.id === 'github:1' ? 'network_error' : 'permission' });
   }), error => error?.code === 'all_destinations_failed');

@@ -68,17 +68,17 @@ Enable packaged integrations, such as Clockify migration, after reviewing their 
 
 Open **More settings** for clients, client-specific rates, invoicing, backups, and advanced options.
 
-### Clients
+### Clients (invoice recipients)
 
-Create and save a client before adding rates. Clients can be used for reporting without filling in invoice details.
+Create and save each client before adding rates. One business may invoice multiple clients; clients can be used for reporting without filling in invoice details.
 
 ### Billable rates
 
-Select a client to manage its private GitHub-user rates and effective dates. There are no global rates. See [Billable rates](billable-rates.md).
+Select a client to manage its private GitHub-user rates and effective dates. Choose a connected time repository to suggest its collaborators in the GitHub user field; manual logins remain available. There are no global rates. See [Billable rates](billable-rates.md).
 
 ### Invoicing
 
-Seller details, numbering, payment terms, tax, and notes. Client details are managed in Clients above. See [Invoicing](invoicing.md).
+**Your business details**, multiple bank accounts with an optional default, numbering, payment terms, tax, and notes. Client details are managed in **Clients (invoice recipients)** above. Choose the bank account for each invoice in Reports, or omit bank details. See [Invoicing](invoicing.md).
 
 ### Backup & restore
 
@@ -87,7 +87,7 @@ Seller details, numbering, payment terms, tax, and notes. Client details are man
 - recent-entry and reporting preferences;
 - project rules and client assignments;
 - each client's hourly rates and currencies;
-- invoicing details such as seller, clients, and payment terms;
+- invoicing details such as your business, clients, bank accounts, and payment terms;
 - credential-free repository references and, for routed installations, the default destination.
 
 Backups contain client-specific rate cards but exclude credentials, device codes, active timers, pending writes, and tracked time. The Activity view, interface width, and toolbar click preferences stay on this browser and are not included. See [Settings backup exclusions](data-and-privacy.md#settings-backup-exclusions).
