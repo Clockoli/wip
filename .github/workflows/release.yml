@@ -14,6 +14,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   package:
@@ -60,6 +61,24 @@ jobs:
           echo "release_ref=$RELEASE_REF" >> "$GITHUB_OUTPUT"
           echo "dry_run=$DRY_RUN" >> "$GITHUB_OUTPUT"
           echo "sign_safari=$SIGN_SAFARI" >> "$GITHUB_OUTPUT"
+      - name: Require private regressions for the tagged source
+        if: steps.context.outputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse "$RELEASE_REF^{commit}")"
+          RUN_ID="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?event=push&branch=main&head_sha=${SHA}&per_page=100" \
+            | jq -s -r --arg sha "$SHA" \
+              '[.[].workflow_runs[] | select(.head_sha == $sha and .event == "push" and .head_branch == "main")]
+               | sort_by(.id) | last | .id // empty')"
+          if [[ ! "$RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo 'No trusted main CI run for the tagged commit' >&2
+            exit 1
+          fi
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs?filter=latest&per_page=100" \
+            | jq -s -e '[.[].jobs[] | select(.name == "private-regressions")]
+                        | sort_by(.id) | last | .conclusion == "success"' >/dev/null
       - uses: actions/setup-node@v4
         with:
           node-version: 22
