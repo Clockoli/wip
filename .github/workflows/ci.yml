@@ -160,7 +160,7 @@ jobs:
         with:
           repository: Clockoli/tests
           path: test-private
-          ssh-key: ${{ secrets.PRIVATE_TESTS_DEPLOY_KEY }}
+          token: ${{ secrets.PRIVATE_TESTS_READ_TOKEN }}
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:

@@ -36,8 +36,8 @@ test('public CI runs private regressions for trusted main and same-repository PR
     "github.event.pull_request.user.login != 'dependabot[bot]'))");
   assert.match(privateJob, /repository: Clockoli\/tests(?:\s|$)/);
   assert.doesNotMatch(ci, /Clockoli\/tests-private/);
-  assert.match(privateJob, /ssh-key: \$\{\{ secrets\.PRIVATE_TESTS_DEPLOY_KEY \}\}/);
-  assert.doesNotMatch(privateJob, /token: \$\{\{ secrets\.PRIVATE_TESTS_READ_TOKEN \}\}/);
+  assert.match(privateJob, /token: \$\{\{ secrets\.PRIVATE_TESTS_READ_TOKEN \}\}/);
+  assert.doesNotMatch(privateJob, /PRIVATE_TESTS_DEPLOY_KEY|ssh-key:/);
   assert.match(privateJob, /persist-credentials: false/);
   assert.match(privateJob, /npm run test:private/);
   assert.match(privateJob, /RUNNER_TEMP\/private-regressions\.log/);
