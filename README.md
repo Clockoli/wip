@@ -1,164 +1,224 @@
-# Clockoli
+<p align="center">
+  <img src="src/assets/clockoli.svg" width="96" alt="Clockoli logo">
+</p>
 
-Developer setup, architecture rules, testing, browser verification, and release packaging are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
+<h1 align="center">Clockoli</h1>
 
-Clockoli is a Chrome/Chromium time tracker that stores your records in a private GitHub repository you control. It has no Clockoli application server and no separate time-tracking database.
+<p align="center">
+  <strong>Time tracking that lives in your GitHub repo.</strong><br>
+  A browser extension that tracks time on any task URL and writes readable records to private GitHub repositories you control. There is no Clockoli server.
+</p>
 
-Track a GitHub issue, a pull request, a document, a support ticket, or any other HTTP(S) URL. Clockoli captures the URL as the task identity; a title and description are optional.
+<p align="center">
+  <a href="https://chromewebstore.google.com/detail/clockoli/omkikhlcnbjpfbiicogjekhjgmbajmnl"><img alt="Chrome Web Store version" src="https://img.shields.io/chrome-web-store/v/omkikhlcnbjpfbiicogjekhjgmbajmnl?label=Chrome%20Web%20Store"></a>
+  <a href="https://github.com/clockoli/clockoli/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/clockoli/clockoli/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+</p>
+
+<p align="center">
+  <a href="https://clockoli.com/">Website</a> ·
+  <a href="#install">Install</a> ·
+  <a href="docs/getting-started.md">Getting started</a> ·
+  <a href="docs/README.md">Documentation</a> ·
+  <a href="CHANGELOG.md">Changelog</a> ·
+  <a href="https://clockoli.com/extension-privacy/">Privacy policy</a>
+</p>
+
+<p align="center">
+  <img src="docs/images/timeline.png" width="860" alt="The Clockoli panel: a running timer for a GitHub issue above a timeline of the day's tracked tasks">
+</p>
 
 ## Why Clockoli
 
-Most time trackers put your records in a vendor database. Clockoli writes readable text files to Git instead:
+Most time trackers keep your hours in a vendor database. Clockoli writes them to Git instead:
 
-- **You own the data.** Access, retention, backup, and deletion follow the rules of your GitHub repository.
-- **The history is inspectable.** Time files are readable without Clockoli, and edits remain visible in Git history.
-- **There is no Clockoli backend.** The extension talks directly to GitHub.
-- **It works beyond one issue tracker.** Any valid HTTP(S) URL can be a task.
-- **It still feels native on GitHub.** A stopwatch appears in the GitHub header, while the browser toolbar popup works on other sites.
-- **Team reporting does not require a second data silo.** Team members can write to isolated personal branches in one shared private repository; Reports reads them together.
+- **Your data stays in your repository.** Hours go to a private GitHub repository you choose, so you decide who can read them, how long they are kept and when they are deleted.
+- **Back up everything with one command.** `git clone` copies every entry you have tracked. Each completed entry is one line of JSON in a monthly file, in a [documented format](docs/data-format-v1.md), so the copy stays readable without Clockoli.
+- **Ask an AI where the time went.** Point an AI agent at the clone and ask which tasks ran over or how many hours to bill this month. No export step, no Clockoli API.
+- **See every change, and undo it.** Each synchronized edit or deletion is a Git commit, so `git log` shows what changed and when, and an earlier version can be restored from history. Several edits made before a sync arrive as one commit.
+- **No Clockoli account or server.** The extension talks directly to GitHub. There is nothing to sign up for, and your GitHub credentials stay in the extension.
+- **Your rates stay in your browser.** Reports, billable amounts and invoices are calculated locally. Hourly rates and invoice details live only in browser storage: they are never written to the time repository, so teammates who share it never see them, and no tracker server holds them. The only copy outside the browser is a settings backup file you export yourself. Mixed-currency reports send only currency codes and dates to the [Frankfurter](https://frankfurter.dev/) exchange-rate service.
+- **Any URL is a task.** GitHub issues and pull requests, documents, support tickets, dashboards: the page address is the task identity, and a title is optional.
 
-Clockoli is a good fit when data ownership and auditability matter more than one-click SaaS onboarding. See [Why Clockoli](docs/why-clockoli.md) for a detailed comparison and the tradeoffs.
+Clockoli fits teams that already work in GitHub and care more about owning and auditing their data than about one-click SaaS onboarding. [Why Clockoli](docs/why-clockoli.md) explains the tradeoffs, and [clockoli.com](https://clockoli.com/#compare) compares it with Toggl Track, Clockify, Harvest, Kimai and solidtime.
 
-## Current beta installation
+## Install
 
-Clockoli currently runs as a trusted unpacked extension. This checkout and its locally built package identify as `v0.1.30`; the published `v0.1.11` GitHub release predates the features documented here.
+**Chrome and other Chromium browsers (102+):** [add Clockoli from the Chrome Web Store](https://chromewebstore.google.com/detail/clockoli/omkikhlcnbjpfbiicogjekhjgmbajmnl). It updates automatically.
 
-1. Clone or update this repository:
+<details>
+<summary><strong>Firefox (140+) and Safari (18+, macOS) preview</strong>: manual install from a GitHub release</summary>
 
-   ```bash
-   git clone git@github.com:clockoli/clockoli.git
-   cd clockoli
-   git switch main
-   git pull --ff-only
-   ```
+<br>
 
-2. Open `chrome://extensions` in Chrome or another Chromium browser.
-3. Turn on **Developer mode** with the toggle in the top-right corner of that page.
-4. Select **Load unpacked** (top-left), open the `clockoli` directory you just cloned, and confirm. It is the directory that contains `manifest.json`.
-5. Clockoli Settings opens automatically. Complete the three GitHub connection steps:
-   1. **Connect GitHub.** Select **Copy code to clipboard and connect GitHub**. GitHub opens in a new tab: paste the copied one-time code, select **Continue**, and approve. Switch back to the Settings tab; Clockoli detects the authorization automatically.
-   2. **Choose private data storage.** Select **Create private repository** and submit GitHub's prefilled form for `clockoli-data` (or choose **Use existing repository**). Creating the repository does not give Clockoli access to it, so return to Settings, select **Grant repository access**, choose **Only select repositories** on GitHub, and add `clockoli-data`.
-   3. **Validate.** When Settings shows **Private repository access found**, select **Validate and connect**. Clockoli verifies a repository write and shows **Connected**.
-6. Pin Clockoli so it is visible on non-GitHub pages: select the puzzle-piece **Extensions** button to the right of the address bar, then the pin icon next to **Clockoli**.
+Firefox and Safari builds are still in testing. They are not listed on addons.mozilla.org or the Mac App Store, so these installs do not update automatically.
 
-If a trusted maintainer gives you a current package, extract the ZIP first and load the extracted directory. Chrome cannot load the ZIP directly. Unpacked extensions do not update automatically; pull or replace the files and select **Reload** on `chrome://extensions` after an update.
+**Firefox**
 
-Full setup instructions: [Getting started](docs/getting-started.md).
+1. Download `Clockoli-X.Y.Z-firefox-signed.xpi` from a [GitHub release](https://github.com/clockoli/clockoli/releases).
+2. Open `about:addons`, choose the gear menu → **Install Add-on From File**, and select the file.
 
-## Start tracking
+A release without a signed XPI can only be loaded temporarily, from `about:debugging#/runtime/this-firefox`.
 
-1. Open the page you want to track.
-2. Select the Clockoli toolbar icon.
-3. Choose **Start tracking this task**.
-4. When you finish, open Clockoli and choose **Stop and save**. Add a description if it will help later.
+**Safari**
 
-On GitHub, the same controls are available from the stopwatch beside your avatar. The arrow next to it opens **Tasks**, **Times**, and **Reports**.
+1. Download `Clockoli-X.Y.Z-safari-extension.zip` from a [GitHub release](https://github.com/clockoli/clockoli/releases) and extract it.
+2. In Safari Settings → Advanced, turn on **Show features for web developers**.
+3. In Safari Settings → Developer, choose **Add Temporary Extension…** and select the extracted folder.
 
-Clockoli permits one running timer per connected GitHub account. If the panel says **Tracking another task**, stop the active timer before starting the current page.
+Safari removes temporary extensions after 24 hours or when you quit Safari; add the folder again to keep using Clockoli. A signed Safari app will remove this step.
+
+</details>
+
+Store reviews can make the Chrome Web Store version trail the latest GitHub release. [Install Clockoli](docs/install.md) covers every install path, including loading this repository unpacked for development.
+
+## Quick start
+
+1. **Connect GitHub.** Open **Settings**; the focused welcome screen opens by itself after installation. Clockoli uses GitHub [device flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow): you enter a one-time code on github.com and approve access, so you never create or paste a token. If your browser asks for access to GitHub, allow it.
+2. **Connect a private time repository.** Paste a repository URL or `owner/name`, or create a new one from the Clockoli template, then confirm **Connect repository**.
+3. **Track a task.** On a GitHub issue or pull request, use the stopwatch next to your avatar. On any other page, click the Clockoli toolbar button and choose **Track this task**. Choose **Stop and save** when you finish.
+
+Your GitHub account signs you in, a source repository may own the issue you track, and a time repository stores your records. These can all be different. The [setup guide](docs/getting-started.md) explains repository access.
 
 ## Features
 
-### Tracking and correction
+### Track
 
-- Track any canonical HTTP(S) URL; task titles are optional.
-- GitHub-header integration plus a toolbar popup for other sites.
-- One GitHub-backed active timer per user, visible across connected browsers.
-- Optional descriptions, up to 2,000 characters.
-- Live elapsed time and rotating totals for Today, This week, Last week, and This month.
-- Recent entries labeled Today, Yesterday, or by weekday.
-- Direct one-line `HH : MM - HH : MM` time correction in the main panel.
-- Start and Stop remain directly editable inline; wheel/trackpad gestures scroll normally and never change a time value.
-- Automatic adjacent-boundary repair: moving Start into the previous interval moves the previous Stop; moving Stop into the next interval moves the next Start. The linked records are saved atomically.
-- One unified inline draft for URL, optional title, Start, Stop, and description; Enter or **Save time** saves the complete draft.
-- Conflict-safe **Delete**, with the prior version retained in Git history.
-- Overlap warnings and a confirmation before saving entries longer than 12 hours.
+- Start a timer on any HTTP(S) page from the toolbar, or from the stopwatch built into GitHub issue and pull-request pages.
+- Keep one running timer: starting another task stops the current one first. Timer changes are queued locally and synchronized with GitHub, so they survive going offline.
+- See live **Today** and **This week** totals, and switch to a recent task from **Top tasks**.
 
-### Tasks
+<p align="center">
+  <img src="docs/images/top-tasks.png" width="600" alt="Top tasks: recently tracked tasks with totals and Start buttons">
+</p>
 
-- A **Recently tracked work** page for the current user.
-- Deduplication by canonical task URL.
-- Search by URL or optional title.
-- Period filters from two weeks to one year.
-- Totals include completed sessions and the currently running session.
-- Aggregated completed and running time per task.
+### Correct
 
-### Times
+- Edit entries in a timeline, calendar or list. Drag and resize blocks; moving an entry into its neighbour adjusts the neighbour in the same commit.
+- Delete entries, add completed entries in bulk on the Activity page, and merge task identities that refer to the same work.
 
-- A dedicated history page with day, week, month, and custom inclusive periods.
-- Filter tracked entries by URL or optional title while preserving active linked drafts.
-- Add multiple dated URL tasks in one all-or-nothing bulk import.
-- Edit and delete historical rows with the same inline controls as the main tracker.
+<p align="center">
+  <img src="docs/images/calendar.png" width="600" alt="Activity calendar: a day of tracked blocks that can be dragged and resized">
+</p>
 
-### Reports and billing
+### Report and bill
 
-- Repository-wide reporting across marker-backed `clockoli/users/` personal branches; the default branch remains metadata-only.
-- Preset weekly, monthly, quarterly, and yearly periods, plus a custom date range.
-- People and Source facets. A Source is a GitHub owner/repository for GitHub tasks or a hostname for another URL.
-- Total time, average time per distinct task, distinct task count, and billable amount.
-- Independent Day, Week, Month, Person, Source, and Task chart dimensions.
-- CSV and JSON timesheet downloads.
-- Native print/save-to-PDF.
-- Mixed-currency billable charts converted by day with locally cached rates from [Frankfurter](https://github.com/lineofflight/frankfurter).
-- Browser-local effective-dated hourly rates with a currency sign or description stored in each rate. Rates and calculated money are never written to the data repository.
+- Report across personal and organization time repositories, with breakdowns by day, week, month, person, source or task.
+- Export CSV or JSON timesheets, or print a report to PDF.
+- Set effective-dated hourly rates per person **for each client**. Rates stay in your browser and are never written to the repository; mixed currencies are converted at each day's exchange rate.
+- Create numbered, taxed invoices from a filtered report and print them or save them as PDF. Invoices are generated in the browser and never committed.
 
-### Storage, sync, and privacy
+<p align="center">
+  <img src="docs/images/reports.png" width="600" alt="Reports: hours per day stacked by person, with CSV, JSON, Print and Create invoice actions">
+</p>
 
-- Backend-free GitHub App Device Flow with an advanced fine-grained PAT option.
-- Dedicated private GitHub data repository, with one marked personal branch per user.
-- Human-readable monthly JSONL files with UTC timestamps plus explicit local dates and IANA timezones.
-- Exact per-task indexes for fast all-time participant totals without scanning monthly history.
-- SHA-protected edits and deletes; multi-file corrections use one atomic Git commit.
-- Locally queued Stop operations with automatic retry when GitHub is temporarily unavailable.
-- Settings backup in readable JSON without credentials, active timers, pending writes, or tracked time.
-- Credentials and local settings remain in extension-origin IndexedDB and are not exposed to GitHub pages.
+### Work as a team
 
-See [Features](docs/features.md) for complete behavior and [Data, privacy, and security](docs/data-and-privacy.md) for the storage model.
+- Teammates track into the same private repository, each on a personal branch, and Reports reads them as one view.
+- If you administer a time repository, invite teammates to it from Settings.
+- Import Clockify history with the optional [Clockify add-on](docs/add-ons.md), with a preview and explicit mapping of Clockify users to GitHub users.
 
-## Documentation
+The [documentation](docs/README.md) describes every behavior in detail, grouped by topic.
 
-- [Documentation index](docs/README.md)
-- [Getting started](docs/getting-started.md)
-- [Feature guide](docs/features.md)
-- [Why Clockoli](docs/why-clockoli.md)
-- [Data, privacy, and security](docs/data-and-privacy.md)
-- [Time-data repository setup](docs/time-data-repository.md)
-- [Troubleshooting](docs/troubleshooting.md)
+## Your data and permissions
+
+Each completed entry is one JSON line in `times/{YYYY-MM}/{login}.jsonl`; a running timer lives in its own file under `active/`. The [data format](docs/data-format-v1.md) is versioned (`schema_version` 1).
+
+Clockoli sends data only to GitHub, plus currency codes and dates to the [Frankfurter](https://frankfurter.dev/) exchange-rate service when a report converts currencies. It contains no analytics.
+
+| Access | Why |
+|---|---|
+| `api.github.com` | Read and write time records in the repositories you connect; read titles of issues and pull requests you track. |
+| `github.com/login` | GitHub device-flow sign-in. |
+| `github.com/*` (content script) | Show the stopwatch and tracker panel on GitHub pages. |
+| `api.frankfurter.dev` | Historical exchange rates for mixed-currency reports. |
+| `activeTab`, `scripting` | Read the current tab's URL and title and show the tracker panel when you click the toolbar button. |
+| `alarms` | Retry queued writes to GitHub once a minute. |
+| `favicon` (Chrome only) | Show each task's site icon. |
+| `app.clockify.me` (optional) | Requested only when you enable the Clockify import add-on. |
+
+Anyone who can read a time repository can read the URLs, titles, timestamps and descriptions in it. See [Data, privacy, and security](docs/data-and-privacy.md) for the full storage model.
 
 ## Current limitations
 
-- Chrome/Chromium 102 or newer; no Firefox package.
-- Current beta installation is unpacked and has no automatic updates.
-- Start, Stop, and task switches are accepted durably in the local queue, then reconciled with GitHub asynchronously; unresolved conflicts can still require user action.
-- One active timer per connected GitHub account.
-- Manual time entry is available through the Times bulk importer; reminders, a mobile app, and an advanced side-by-side conflict editor are not included.
-- The GitHub header control appears only on `github.com`; use the toolbar popup for other sites.
-- Billable rates are local to each browser and are not shared with teammates.
-- Anyone who can read the data repository can read stored URLs, titles, timestamps, and descriptions.
+- Chrome and other Chromium browsers are the supported platform. Firefox and Safari builds are still in testing and update manually.
+- There is no mobile app, no reminders and no side-by-side conflict editor. Unresolved sync conflicts can need your action.
+- Everyone who tracks time needs a GitHub account. GitHub outages and API rate limits affect Clockoli.
+- Git history makes edits visible, but repository administrators can rewrite it. It is not a tamper-proof audit log.
+
+## Documentation
+
+The [documentation index](docs/README.md) groups every guide by topic. Common starting points:
+
+- [Install Clockoli](docs/install.md)
+- [Getting started](docs/getting-started.md)
+- [Track a task](docs/tracking.md)
+- [Add and edit time](docs/editing-time.md)
+- [Reports](docs/reports.md) and [Invoicing](docs/invoicing.md)
+- [Work as a team](docs/teams.md)
+- [Data, privacy, and security](docs/data-and-privacy.md)
+- [Packaged add-ons](docs/add-ons.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Browser release support](docs/browser-releases.md)
+
+## License
+
+Copyright (c) 2026 Manticore Software LTD (https://manticoresearch.com).
+See [COPYRIGHT](COPYRIGHT) for the scope of the copyright notice.
+
+Clockoli's original source code is licensed under the [GNU General Public License
+v3.0 only (GPL-3.0-only)](LICENSE). Third-party components retain their
+respective licenses; see [third-party notices](THIRD_PARTY_NOTICES.md) and
+[licensing and source releases](docs/licensing.md).
+
+The official browser releases include license notices, and each release is
+accompanied by a corresponding source archive. The Clockoli name and logo
+are not licensed as trademarks for misleading or unauthorized use.
 
 ## Development
 
-Requires Node.js 20+. There are no runtime or test dependencies.
+Requires Node.js 20.19+ (CI uses Node.js 22) and Python 3 for release packaging. The extension has no runtime package dependencies; the timeline component and test tooling live in this repository as an npm workspace.
 
 ```bash
+git clone https://github.com/Clockoli/clockoli.git
+cd clockoli
+npm ci
+npx playwright install chromium
 npm test
+npm run test:browser
 npm run check
 ```
 
-`npm run check` validates the Manifest V3 package inventory, referenced files, security invariants, and JavaScript syntax.
+Maintainers with access to the private regression tests should clone them into
+`test-private/` **inside the Clockoli checkout** (that is, `clockoli/test-private/`):
 
-### Repository map
-
-```text
-src/api/          GitHub API client
-src/auth/         GitHub App Device Flow and credential rotation
-src/background/   Manifest V3 service worker and message boundary
-src/content/      GitHub header control and shared tracking panel
-src/domain/       records, task URLs, reports, settings, and text format
-src/options/      onboarding and settings
-src/popup/        browser toolbar popup
-src/reports/      analytics and export page
-src/services/     tracking, sync, repository, and reporting services
-src/storage/      extension-origin IndexedDB adapter
-src/tasks/        recently tracked work page
-test/             dependency-free Node tests
+```bash
+git clone git@github.com:Clockoli/tests.git test-private
+npm run test:private
 ```
+
+The `test-private/` directory is ignored by the public repository. If you do
+not have access to it, skip `npm run test:private`; the public commands above
+work without the private checkout. See [CONTRIBUTING.md](CONTRIBUTING.md) for
+focused private-test commands and testing guidance.
+
+Public CI runs the public tests without a private checkout. On trusted pushes
+to `main`, a separate job checks out the private suite with a read-only token
+and tests the exact commit. Fork pull requests do not receive private-test
+access.
+
+### Try the extension locally (Chromium)
+
+1. Open `chrome://extensions` in Chrome or another Chromium browser.
+2. Enable **Developer mode** with the toggle in the top-right corner.
+3. Select **Load unpacked** (top-left), choose your cloned `clockoli/` directory (the one containing `manifest.json`), and confirm.
+4. The Settings welcome screen opens automatically. Select **Connect GitHub**. Clockoli shows a one-time code and tries to copy it. If copying succeeds, GitHub opens after a five-second countdown (or select **Open GitHub now**). Otherwise select **Copy** and **Open GitHub to enter code**. Paste the code on GitHub, approve Clockoli, and return to Settings; authorization is detected automatically.
+5. Connect a private time repository. Choose **Create my own repository** → **Create a new time repository** (GitHub suggests `clockoli-data`), or **Join a team** for a shared repository. Enter its URL or `owner/name` in Settings and select **Check**. If prompted, select **Grant access**; on GitHub choose **Only select repositories** and include the time repository. Creating a repository alone does not grant app access. Confirm the offered action (**Initialize repository**, **Connect repository**, or **Join repository**) in Clockoli.
+6. Pin Clockoli to the browser toolbar for use outside GitHub: open the puzzle-piece **Extensions** menu next to the address bar and select the pin next to **Clockoli**.
+
+An unpacked extension does not update automatically. After pulling changes, select **Reload** on the Clockoli card in `chrome://extensions`; refresh open GitHub tabs after content-script changes. See [Getting started](docs/getting-started.md) for the full setup flow and [CONTRIBUTING.md](CONTRIBUTING.md) for browser verification and release packaging.
+
+## Support and security
+
+- Report bugs and request features in [GitHub Issues](https://github.com/clockoli/clockoli/issues).
+- Report security vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+- For anything else, email [contact@clockoli.com](mailto:contact@clockoli.com).

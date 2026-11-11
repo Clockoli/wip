@@ -2,15 +2,27 @@
   const ROOT_ID = 'clockoli-root';
   const POPUP_ROOT_ID = 'clockoli-popup-root';
   const TIMES_ROOT_ID = 'clockoli-times-root';
-  const timesMode = location.protocol === 'chrome-extension:' && location.pathname.endsWith('/src/times/times.html');
-  const popupMode = location.protocol === 'chrome-extension:' && !timesMode;
+  const extensionPageMode = location.href.startsWith(chrome.runtime.getURL(''));
+  const timesMode = extensionPageMode && location.pathname.endsWith('/src/times/times.html');
+  const popupMode = extensionPageMode && !timesMode;
   const STOPWATCH_PATH = 'M5.75.75A.75.75 0 0 1 6.5 0h3a.75.75 0 0 1 0 1.5h-.75v1l-.001.041a6.724 6.724 0 0 1 3.464 1.435l.007-.006.75-.75a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734l-.75.75-.006.007a6.75 6.75 0 1 1-10.548 0L2.72 5.03l-.75-.75a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018l.75.75.007.006A6.72 6.72 0 0 1 7.25 2.541V1.5H6.5a.75.75 0 0 1-.75-.75ZM8 14.5a5.25 5.25 0 1 0-.001-10.501A5.25 5.25 0 0 0 8 14.5Zm.389-6.7 1.33-1.33a.75.75 0 1 1 1.061 1.06L9.45 8.861A1.503 1.503 0 0 1 8 10.75a1.499 1.499 0 1 1 .389-2.95Z';
-  const TRIANGLE_PATH = 'm4.427 7.427 3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 7H4.604a.25.25 0 0 0-.177.427Z';
+
   const SYNC_PATH = 'M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z';
-  const TASKS_PATH = 'M2 2.75A.75.75 0 0 1 2.75 2h1.5a.75.75 0 0 1 0 1.5h-1.5A.75.75 0 0 1 2 2.75Zm4 0A.75.75 0 0 1 6.75 2h6.5a.75.75 0 0 1 0 1.5h-6.5A.75.75 0 0 1 6 2.75ZM2 8a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5A.75.75 0 0 1 2 8Zm4 0a.75.75 0 0 1 .75-.75h6.5a.75.75 0 0 1 0 1.5h-6.5A.75.75 0 0 1 6 8Zm-4 5.25a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 0 1.5h-1.5a.75.75 0 0 1-.75-.75Zm4 0a.75.75 0 0 1 .75-.75h6.5a.75.75 0 0 1 0 1.5h-6.5a.75.75 0 0 1-.75-.75Z';
-  const ACTIVITY_PATH = 'M8 1.5A6.5 6.5 0 1 1 1.5 8a.75.75 0 0 1 1.5 0A5 5 0 1 0 8 3a4.96 4.96 0 0 0-3.535 1.465L5.53 5.53A.75.75 0 0 1 4.47 6.59L2.14 4.26a.75.75 0 0 1 0-1.06L4.47.87A.75.75 0 1 1 5.53 1.93l-.79.79A6.46 6.46 0 0 1 8 1.5Zm.75 3.25v2.94l1.78 1.78a.75.75 0 1 1-1.06 1.06l-2-2A.75.75 0 0 1 7.25 8V4.75a.75.75 0 0 1 1.5 0Z';
-  const REPORTS_PATH = 'M1.75 1.5a.75.75 0 0 0-.75.75v11.5c0 .414.336.75.75.75h12.5a.75.75 0 0 0 0-1.5H2.5V2.25a.75.75 0 0 0-.75-.75Zm3.5 8a.75.75 0 0 0-.75.75v1.5a.75.75 0 0 0 1.5 0v-1.5a.75.75 0 0 0-.75-.75Zm3-3a.75.75 0 0 0-.75.75v4.5a.75.75 0 0 0 1.5 0v-4.5a.75.75 0 0 0-.75-.75Zm3-3a.75.75 0 0 0-.75.75v7.5a.75.75 0 0 0 1.5 0v-7.5a.75.75 0 0 0-.75-.75Z';
-  const GEAR_PATH = 'M8 0a8.2 8.2 0 0 1 .701.031C9.444.095 9.99.645 10.16 1.29l.288 1.107c.018.066.079.158.212.224.231.114.454.243.668.386.123.082.233.09.299.071l1.103-.303c.644-.176 1.392.021 1.82.63.27.385.506.792.704 1.218.315.675.111 1.422-.364 1.891l-.814.806c-.049.048-.098.147-.088.294.016.257.016.515 0 .772-.01.147.038.246.088.294l.814.806c.475.469.679 1.216.364 1.891a7.977 7.977 0 0 1-.704 1.217c-.428.61-1.176.807-1.82.63l-1.102-.302c-.067-.019-.177-.011-.3.071a5.909 5.909 0 0 1-.668.386c-.133.066-.194.158-.211.224l-.29 1.106c-.168.646-.715 1.196-1.458 1.26a8.006 8.006 0 0 1-1.402 0c-.743-.064-1.289-.614-1.458-1.26l-.289-1.106c-.018-.066-.079-.158-.212-.224a5.738 5.738 0 0 1-.668-.386c-.123-.082-.233-.09-.299-.071l-1.103.303c-.644.176-1.392-.021-1.82-.63a8.12 8.12 0 0 1-.704-1.218c-.315-.675-.111-1.422.363-1.891l.815-.806c.05-.048.098-.147.088-.294a6.214 6.214 0 0 1 0-.772c.01-.147-.038-.246-.088-.294l-.815-.806C.635 6.045.431 5.298.746 4.623a7.92 7.92 0 0 1 .704-1.217c.428-.61 1.176-.807 1.82-.63l1.102.302c.067.019.177.011.3-.071.214-.143.437-.272.668-.386.133-.066.194-.158.211-.224l.29-1.106C6.009.645 6.556.095 7.299.03 7.53.01 7.764 0 8 0Zm3 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM9.5 8a1.5 1.5 0 1 0-3.001.001A1.5 1.5 0 0 0 9.5 8Z';
+  const TASKS_PATH = 'M5.75 2.5h8.5a.75.75 0 0 1 0 1.5h-8.5a.75.75 0 0 1 0-1.5Zm0 5h8.5a.75.75 0 0 1 0 1.5h-8.5a.75.75 0 0 1 0-1.5Zm0 5h8.5a.75.75 0 0 1 0 1.5h-8.5a.75.75 0 0 1 0-1.5ZM2 14a1 1 0 1 1 0-2 1 1 0 0 1 0 2Zm1-6a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM2 4a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z';
+  const ACTIVITY_PATH = 'm.427 1.927 1.215 1.215a8.002 8.002 0 1 1-1.6 5.685.75.75 0 1 1 1.493-.154 6.5 6.5 0 1 0 1.18-4.458l1.358 1.358A.25.25 0 0 1 3.896 6H.25A.25.25 0 0 1 0 5.75V2.104a.25.25 0 0 1 .427-.177ZM7.75 4a.75.75 0 0 1 .75.75v2.992l2.028.812a.75.75 0 0 1-.557 1.392l-2.5-1A.751.751 0 0 1 7 8.25v-3.5A.75.75 0 0 1 7.75 4Z';
+  const REPORTS_PATH = 'M1.5 1.75V13.5h13.75a.75.75 0 0 1 0 1.5H.75a.75.75 0 0 1-.75-.75V1.75a.75.75 0 0 1 1.5 0Zm14.28 2.53-5.25 5.25a.75.75 0 0 1-1.06 0L7 7.06 4.28 9.78a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042l3.25-3.25a.75.75 0 0 1 1.06 0L10 7.94l4.72-4.72a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042Z';
+  const GEAR_PATH = 'M8 0a8.2 8.2 0 0 1 .701.031C9.444.095 9.99.645 10.16 1.29l.288 1.107c.018.066.079.158.212.224.231.114.454.243.668.386.123.082.233.09.299.071l1.103-.303c.644-.176 1.392.021 1.82.63.27.385.506.792.704 1.218.315.675.111 1.422-.364 1.891l-.814.806c-.049.048-.098.147-.088.294.016.257.016.515 0 .772-.01.147.038.246.088.294l.814.806c.475.469.679 1.216.364 1.891a7.977 7.977 0 0 1-.704 1.217c-.428.61-1.176.807-1.82.63l-1.102-.302c-.067-.019-.177-.011-.3.071a5.909 5.909 0 0 1-.668.386c-.133.066-.194.158-.211.224l-.29 1.106c-.168.646-.715 1.196-1.458 1.26a8.006 8.006 0 0 1-1.402 0c-.743-.064-1.289-.614-1.458-1.26l-.289-1.106c-.018-.066-.079-.158-.212-.224a5.738 5.738 0 0 1-.668-.386c-.123-.082-.233-.09-.299-.071l-1.103.303c-.644.176-1.392-.021-1.82-.63a8.12 8.12 0 0 1-.704-1.218c-.315-.675-.111-1.422.363-1.891l.815-.806c.05-.048.098-.147.088-.294a6.214 6.214 0 0 1 0-.772c.01-.147-.038-.246-.088-.294l-.815-.806C.635 6.045.431 5.298.746 4.623a7.92 7.92 0 0 1 .704-1.217c.428-.61 1.176-.807 1.82-.63l1.102.302c.067.019.177.011.3-.071.214-.143.437-.272.668-.386.133-.066.194-.158.211-.224l.29-1.106C6.009.645 6.556.095 7.299.03 7.53.01 7.764 0 8 0Zm-.571 1.525c-.036.003-.108.036-.137.146l-.289 1.105c-.147.561-.549.967-.998 1.189-.173.086-.34.183-.5.29-.417.278-.97.423-1.529.27l-1.103-.303c-.109-.03-.175.016-.195.045-.22.312-.412.644-.573.99-.014.031-.021.11.059.19l.815.806c.411.406.562.957.53 1.456a4.709 4.709 0 0 0 0 .582c.032.499-.119 1.05-.53 1.456l-.815.806c-.081.08-.073.159-.059.19.162.346.353.677.573.989.02.03.085.076.195.046l1.102-.303c.56-.153 1.113-.008 1.53.27.161.107.328.204.501.29.447.222.85.629.997 1.189l.289 1.105c.029.109.101.143.137.146a6.6 6.6 0 0 0 1.142 0c.036-.003.108-.036.137-.146l.289-1.105c.147-.561.549-.967.998-1.189.173-.086.34-.183.5-.29.417-.278.97-.423 1.529-.27l1.103.303c.109.029.175-.016.195-.045.22-.313.411-.644.573-.99.014-.031.021-.11-.059-.19l-.815-.806c-.411-.406-.562-.957-.53-1.456a4.709 4.709 0 0 0 0-.582c-.032-.499.119-1.05.53-1.456l.815-.806c.081-.08.073-.159.059-.19a6.464 6.464 0 0 0-.573-.989c-.02-.03-.085-.076-.195-.046l-1.102.303c-.56.153-1.113.008-1.53-.27a4.44 4.44 0 0 0-.501-.29c-.447-.222-.85-.629-.997-1.189l-.289-1.105c-.029-.11-.101-.143-.137-.146a6.6 6.6 0 0 0-1.142 0ZM11 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM9.5 8a1.5 1.5 0 1 0-3.001.001A1.5 1.5 0 0 0 9.5 8Z';
+  const CHECK_PATH = 'M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z';
+  const X_PATH = 'M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z';
+  const CHEVRON_LEFT_PATH = 'M9.78 12.78a.75.75 0 0 1-1.06 0L4.47 8.53a.75.75 0 0 1 0-1.06l4.25-4.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042L6.06 8l3.72 3.72a.75.75 0 0 1 0 1.06Z';
+  const CHEVRON_RIGHT_PATH = 'M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z';
+  const PLAY_PATH = 'M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm4.879-2.773 4.264 2.559a.25.25 0 0 1 0 .428l-4.264 2.559A.25.25 0 0 1 6 10.559V5.442a.25.25 0 0 1 .379-.215Z';
+  const STOP_PATH = 'M5.75 4h4.5c.966 0 1.75.784 1.75 1.75v4.5A1.75 1.75 0 0 1 10.25 12h-4.5A1.75 1.75 0 0 1 4 10.25v-4.5C4 4.784 4.784 4 5.75 4Z';
+  const PENCIL_PATH = 'M11.013 1.427a1.75 1.75 0 0 1 2.474 0l1.086 1.086a1.75 1.75 0 0 1 0 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 0 1-.927-.928l.929-3.25c.081-.286.235-.547.445-.758l8.61-8.61Zm.176 4.823L9.75 4.81l-6.286 6.287a.253.253 0 0 0-.064.108l-.558 1.953 1.953-.558a.253.253 0 0 0 .108-.064Zm1.238-3.763a.25.25 0 0 0-.354 0L10.811 3.75l1.439 1.44 1.263-1.263a.25.25 0 0 0 0-.354Z';
+  const TRASH_PATH = 'M11 1.75V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75ZM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.748 1.748 0 0 1 10.595 15h-5.19a1.75 1.75 0 0 1-1.741-1.575l-.66-6.6a.75.75 0 1 1 1.492-.15ZM6.5 1.75V3h3V1.75a.25.25 0 0 0-.25-.25h-2.5a.25.25 0 0 0-.25.25Z';
+  const SEARCH_PATH = 'M10.68 11.74a6 6 0 0 1-7.922-8.982 6 6 0 0 1 8.982 7.922l3.04 3.04a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215ZM11.5 7a4.499 4.499 0 1 0-8.997 0A4.499 4.499 0 0 0 11.5 7Z';
+  const TASKLIST_PATH = 'M2 2h4a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1Zm4.655 8.595a.75.75 0 0 1 0 1.06L4.03 14.28a.75.75 0 0 1-1.06 0l-1.5-1.5a.749.749 0 0 1 .326-1.275.749.749 0 0 1 .734.215l.97.97 2.095-2.095a.75.75 0 0 1 1.06 0ZM9.75 2.5h5.5a.75.75 0 0 1 0 1.5h-5.5a.75.75 0 0 1 0-1.5Zm0 5h5.5a.75.75 0 0 1 0 1.5h-5.5a.75.75 0 0 1 0-1.5Zm0 5h5.5a.75.75 0 0 1 0 1.5h-5.5a.75.75 0 0 1 0-1.5Zm-7.25-9v3h3v-3Z';
+  const VIEW_MODE_PATHS = { timeline: 'M4.75 7a.75.75 0 0 0 0 1.5h4.5a.75.75 0 0 0 0-1.5h-4.5ZM5 4.75A.75.75 0 0 1 5.75 4h5.5a.75.75 0 0 1 0 1.5h-5.5A.75.75 0 0 1 5 4.75ZM6.75 10a.75.75 0 0 0 0 1.5h4.5a.75.75 0 0 0 0-1.5h-4.5ZM0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0 1 14.25 16H1.75A1.75 1.75 0 0 1 0 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25V1.75a.25.25 0 0 0-.25-.25Z', calendar: 'M4.75 0a.75.75 0 0 1 .75.75V2h5V.75a.75.75 0 0 1 1.5 0V2h1.25c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 13.25 16H2.75A1.75 1.75 0 0 1 1 14.25V3.75C1 2.784 1.784 2 2.75 2H4V.75A.75.75 0 0 1 4.75 0ZM2.5 7.5v6.75c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25V7.5Zm10.75-4H2.75a.25.25 0 0 0-.25.25V6h11V3.75a.25.25 0 0 0-.25-.25Z', list: TASKS_PATH };
   let lastRoute = null;
   let tick = null;
   let actionAnimationTimer = null;
@@ -24,39 +36,158 @@
   let participantRetryTimer = null;
   const PARTICIPANT_RETRY_MS = 60_000;
   let pendingRefreshTimer = null;
+  let navigationTimer = null;
+  let extensionContextActive = true;
   let root = null;
   let shadow = null;
+  let timelineView = null;
+  let activityTimelineView = null;
+  let activityInitialFocusPending = false;
+  let activityInitialFocusMounted = false;
+  let activityViewMode = 'timeline';
+  const ACTIVITY_VIEW_KEY = 'clockoli:activity-view';
+  if (timesMode) {
+    try {
+      const savedView = globalThis.localStorage?.getItem(ACTIVITY_VIEW_KEY);
+      if (['timeline', 'calendar', 'list'].includes(savedView)) activityViewMode = savedView;
+    } catch { /* unavailable storage keeps the default view */ }
+  }
+  let timelineViewMode = 'timeline';
+  let timelineGraphicViewMode = 'timeline';
+  let activityViewSelection = 0;
+  let activityViewSave = null;
+  async function restoreActivityViewMode() {
+    const selection = activityViewSelection;
+    try {
+      const { mode } = await send({ type: 'GET_ACTIVITY_VIEW_MODE' });
+      if (selection !== activityViewSelection) return;
+      if (mode === null && timesMode && activityViewMode !== 'timeline') {
+        await saveActivityViewMode(activityViewMode);
+        return;
+      }
+      if (!['timeline', 'calendar', 'list'].includes(mode)) return;
+      activityViewMode = mode;
+      timelineViewMode = mode;
+      if (mode !== 'list') timelineGraphicViewMode = mode;
+      if (timesMode) {
+        try { globalThis.localStorage?.setItem(ACTIVITY_VIEW_KEY, mode); } catch { /* storage may be unavailable */ }
+      }
+      applyCompactViewMode();
+      if (timelineInstance && mode !== 'list') timelineInstance.setViewMode(mode);
+      renderUi();
+    } catch { /* keep the available local or default selection if the worker is offline */ }
+  }
+  function saveActivityViewMode(mode) {
+    const selection = ++activityViewSelection;
+    const save = () => send({ type: 'SET_ACTIVITY_VIEW_MODE', mode });
+    activityViewSave = activityViewSave ? activityViewSave.catch(() => {}).then(save) : save();
+    void activityViewSave.catch(error => { if (selection === activityViewSelection) setError(error); });
+    return activityViewSave;
+  }
+  let timelineInstance = null;
+  let timelineWindow = null;
+  let timelineEntriesById = new Map();
+  let timelineQueueIndicator = null;
+
+  let timelineOptimisticEdits = new Map();
+  const timelineOptimisticEditGenerations = new Map();
+  const timelineOptimisticEditStates = new WeakMap();
+  const timelineAcceptedEditOrders = new Map();
+  const timelineQueuedOperationIds = new Map();
+  const timelineQueueAcceptances = new Set();
+  let timelineQueueAcceptanceSequence = 0;
+  let timelineAcceptedActive = null;
+  const timelineOptimisticCompletions = new Map();
+  let timelineStartInFlight = false;
+  let timelineStopInFlight = false;
+  let timelineDeleteInFlight = false;
+  let timelineScrollToRightPending = false;
+  const inlineQueuedOperationIds = new Set();
+  const inlineSavedNotices = new Map();
+  function markInlineSaved(key) {
+    const stamp = Date.now();
+    inlineSavedNotices.set(key, stamp);
+    setTimeout(() => {
+      if (inlineSavedNotices.get(key) === stamp) {
+        inlineSavedNotices.delete(key);
+        if (extensionContextActive) renderUi();
+      }
+    }, 3000);
+  }
+  const queueDiagnostics = [];
+
   let menuOpen = false, menuScrollTop = 0;
-  let navigationOpen = false;
-  let pageState = { configured: false, active: null, pendingCount: 0, pendingWrites: [] };
+  let descriptionDraft = null;
+  const timelineDescriptionDrafts = new Map();
+  let pageState = { configured: null, active: null, pendingCount: 0, pendingWrites: [], projects: [] };
+  let syncIssuesSignature = null, syncIssuesOpen = false, selectedSyncIssueKey = null, syncIssueError = '';
+  const stoppedOverlapDetails = new Map();
+  let stoppedOverlapQueueSignature = null, overlapEditorCloseWatch = null;
   let recent = [];
+  let quickStartRecent = [];
   let recentLoaded = false;
   let recentFresh = false;
   let recentFreshAfterPendingId = null;
   let loadingRecent = false;
+  let suppressRecentRender = false;
   let recentLoad = null;
   let recentLoadId = 0;
   let timesLoadId = 0;
+  let activityStateLoadId = 0;
+  let activityCalendarLoadId = 0;
+  let activityCalendarStatusText = '';
+  let calendarWeekLoadingId = null, selectedTimesCalendarLoadingId = null;
+  let completeVisualWeekStart = null;
+  let selectedWeekStart = null;
+  let suppressCalendarNavigate = false;
   let activeInlineKey = null;
-  let timesPeriod = 'last-three-days';
-  let timesStartDate = '';
-  let timesEndDate = '';
   let timesFilter = '';
+  let panelListFilter = '';
+  const ACTIVITY_SEARCH_PAGE_SIZE = 20;
+  let activitySearchPage = 0;
+  let timesHasTrackedTime = null;
+  let activitySearchEntries = null;
+  let activitySearchLoading = false;
+  let activitySearchError = '';
+  let activitySearchPartial = false;
+  let activitySearchTimer = null;
+  let activitySearchGeneration = 0;
+  let renderActivitySearch = null;
   let bulkDraft = '';
   let bulkMutation = false;
+  let bulkOpen = false;
+  let bulkFeedback = null;
+  const ACTIVITY_HISTORY_RANGE = { startDate: '0001-01-01', endDate: '9999-12-31' };
   const inlineDrafts = new Map();
   const inlineEditors = new Map();
   const inlineBoundaryLinks = new Map();
-  let inlineMutation = null;
+  const inlineGroupSaves = new Map();
   let errorText = '';
+  let activityErrorAction = null;
   let errorCode = '';
   let todayReportDate = '';
-  let summaryFrames = [];
-  let summaryLabel = null;
-  let summaryTotalValue = null;
-  let summaryIndex = 0;
-  let summaryElapsedMs = 0;
+  let summaryUpdatedAt = 0;
+  let summaryActive = null;
+  let connectionError = null;
+  let trackingRateLimit;
+  if (timesMode) document.addEventListener('clockoli:tracking-rate-limit', event => {
+    trackingRateLimit = event.detail?.code === 'rate_limit' ? event.detail : null;
+    if (errorText && errorCode === 'all_destinations_failed') renderUi();
+  });
+  let compactSurface = null;
+  let timeEntryFormLoad = null;
+  let timeEntryFormHost = null;
+  let timeEntryFormDialog = null;
+  let timeEntrySearchRecord = null;
+
+  const LONG_ENTRY_HOURS = 12;
+  const HOUR_MS = 3_600_000;
+  const PANEL_TICK_MS = 1_000;
+  const resolveTaskColor = globalThis.ClockoliTaskTimeline?.createColorResolver?.();
+  const motionPreference = globalThis.matchMedia?.('(prefers-reduced-motion: no-preference)');
   let popupTask = null;
+  let actionSourceTask = null;
+  const ACTION_CONTEXT_KEY = 'clockoli-toolbar-task-context';
 
   function normalizeTaskUrl(value) {
     const candidate = String(value || '');
@@ -79,24 +210,169 @@
   }
 
   function taskUrlOf(value) { return normalizeTaskUrl(typeof value === 'string' ? value : value?.taskUrl ?? value?.issue?.url ?? value?.url); }
+  function isGitHubTask(value) {
+    const taskUrl = taskUrlOf(value);
+    try { return Boolean(taskUrl && new URL(taskUrl).hostname === 'github.com'); }
+    catch { return false; }
+  }
+  function storedTaskIdentityOf(value) {
+    const candidate = typeof value === 'string' ? value : value?.taskUrl ?? value?.issue?.url ?? value?.url;
+    const url = normalizeTaskUrl(candidate);
+    if (url) return url;
+    if (typeof candidate !== 'string' || candidate.length > 2048) return null;
+    const parts = candidate.split('/');
+    return parts.length === 3 && /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(parts[0])
+      && !parts[0].includes('--') && parts[1].length <= 100 && parts[1] !== '.' && parts[1] !== '..'
+      && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(parts[1])
+      && /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(parts[2]) ? candidate : null;
+  }
+  function trackableTaskIdentityOf(value) { return storedTaskIdentityOf(value); }
   function taskTitleOf(value) { return String(value?.taskTitle ?? value?.issueTitle ?? value?.title ?? '').trim().slice(0, 300); }
+  function activitySearchFields(entry) { return [storedTaskIdentityOf(entry), taskTitleOf(entry)]; }
   function taskResult(value, className = '') {
-    const taskUrl = taskUrlOf(value), taskTitle = taskTitleOf(value);
+    const taskUrl = taskUrlOf(value), identity = storedTaskIdentityOf(value), taskTitle = taskTitleOf(value);
     const result = el('div', undefined, `task-result${taskTitle ? '' : ' task-result-untitled'}${className ? ` ${className}` : ''}`);
-    const url = el(taskTitle ? 'div' : 'a', taskUrl, 'task-url'); url.title = taskUrl;
-    if (!taskTitle) { url.href = taskUrl; url.target = '_blank'; url.rel = 'noreferrer'; }
+    const url = el(taskTitle || !taskUrl ? 'div' : 'a', identity, 'task-url'); url.title = identity;
+    if (!taskTitle && taskUrl) { url.href = taskUrl; url.target = '_blank'; url.rel = 'noreferrer'; }
     result.append(url);
     if (taskTitle) {
-      const title = el('a', taskTitle, 'task-title'); title.href = taskUrl; title.target = '_blank'; title.rel = 'noreferrer'; title.title = taskTitle; result.append(title);
+      const title = el(taskUrl ? 'a' : 'span', taskTitle, 'task-title');
+      if (taskUrl) { title.href = taskUrl; title.target = '_blank'; title.rel = 'noreferrer'; }
+      title.title = taskTitle; result.append(title);
     }
     return result;
+  }
+
+  function siteFavicon(value, className = '') {
+    if (!taskUrlOf(value)) {
+      const icon = el('span', undefined, `site-favicon site-clockoli-icon${className ? ` ${className}` : ''}`);
+      icon.setAttribute('aria-hidden', 'true');
+      icon.style.backgroundColor = 'currentColor';
+      icon.style.maskSize = 'contain';
+      icon.style.maskPosition = 'center';
+      icon.style.maskRepeat = 'no-repeat';
+      const mark = extensionResourceUrl('src/assets/clockoli-inverse-circle.svg');
+      if (mark) icon.style.maskImage = `url("${mark}")`;
+      else icon.hidden = true;
+      return icon;
+    }
+    const image = el('img');
+    image.className = `site-favicon${className ? ` ${className}` : ''}`;
+    image.alt = '';
+    image.width = 20;
+    image.height = 20;
+    image.referrerPolicy = 'no-referrer';
+    try {
+      const faviconUrl = siteFaviconUrl(value);
+      if (faviconUrl === null) {
+        const monogram = el('span', new URL(taskUrlOf(value)).hostname.replace(/^www\./, '').charAt(0).toUpperCase(), `${image.className} site-monogram`);
+        monogram.setAttribute('aria-hidden', 'true');
+        return monogram;
+      }
+      if (faviconUrl) {
+        if (isGitHubTask(value)) image.classList.add('site-github-favicon');
+        image.src = faviconUrl;
+      }
+      else image.hidden = true;
+    }
+    catch { image.hidden = true; }
+    image.addEventListener('error', () => { image.hidden = true; }, { once: true });
+    return image;
+  }
+
+  function siteFaviconUrl(value) {
+    const pageUrl = taskUrlOf(value);
+    if (!pageUrl) return '';
+    if (!extensionContextActive) return '';
+    try {
+      if (!globalThis.chrome?.runtime?.getManifest?.()?.permissions?.includes('favicon')) return null;
+    } catch (error) {
+      if (!isExtensionContextInvalidated(error)) throw error;
+      deactivateExtensionContext();
+      return '';
+    }
+    const base = extensionResourceUrl('/_favicon/');
+    if (!base) return '';
+    try {
+      const favicon = new URL(base);
+      favicon.searchParams.set('pageUrl', pageUrl);
+      favicon.searchParams.set('size', '32');
+      return favicon.href;
+    } catch { return ''; }
   }
   function taskFromUrl(value, title = '') {
     const taskUrl = normalizeTaskUrl(value);
     return taskUrl ? { taskUrl, taskTitle: String(title || '').trim().slice(0, 300) } : null;
   }
-  function taskFromLocation() { return timesMode ? null : popupMode ? popupTask : taskFromUrl(location.href, titleFromPage()); }
-  function sameTask(left, right) { const a = taskUrlOf(left), b = taskUrlOf(right); return Boolean(a && b && a === b); }
+  // GitHub tab titles read "Title by author · Pull Request #12 · owner/repo"; keep "Title #12" as GitHub shows it.
+  function githubTabTitle(title) {
+    const text = String(title || '');
+    const match = text.match(/^(.*?)(?: by \S+)? · (?:Pull Request|Issue) #(\d+) · \S+\/\S+$/);
+    return match ? `${match[1]} #${match[2]}` : text.replace(/ · GitHub$/, '');
+  }
+  function projectPaneIssueUrl(value) {
+    try {
+      const url = new URL(value);
+      if (typeof value !== 'string' || value.length > 2048 || url.protocol !== 'https:'
+          || url.hostname !== 'github.com' || url.username || url.password
+          || !/^\/orgs\/[^/]+\/projects\/[1-9]\d*\/views\/[1-9]\d*\/?$/.test(url.pathname)
+          || url.searchParams.getAll('pane').length !== 1 || url.searchParams.get('pane') !== 'issue'
+          || url.searchParams.getAll('issue').length !== 1) return null;
+      const parts = url.searchParams.get('issue').split('|');
+      if (parts.length !== 3 || !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(parts[0])
+          || parts[0].includes('--') || !/^[A-Za-z0-9_.-]{1,100}$/.test(parts[1])
+          || parts[1] === '.' || parts[1] === '..' || !/^[1-9]\d*$/.test(parts[2])
+          || !Number.isSafeInteger(Number(parts[2]))) return null;
+      return `https://github.com/${parts[0]}/${parts[1]}/issues/${Number(parts[2])}`;
+    } catch { return null; }
+  }
+  function taskFromLocation() { return timesMode ? null : popupMode ? popupTask : taskFromUrl(projectPaneIssueUrl(location.href) || location.href, titleFromPage()); }
+  function sameTask(left, right) { const a = storedTaskIdentityOf(left), b = storedTaskIdentityOf(right); return Boolean(a && b && a === b); }
+  function activeDescriptionValue(active = pageState.active) {
+    if (!active) return '';
+    const id = active.id || active.startedAt;
+    return descriptionDraft && descriptionDraft.id === id && descriptionDraft.taskUrl === taskUrlOf(active)
+      ? descriptionDraft.value
+      : timelineOptimisticEdits.get(id)?.description ?? active.description ?? '';
+  }
+
+  function savedActiveDescriptionValue(active = pageState.active) {
+    if (!active) return '';
+    return timelineOptimisticEdits.get(active.id || active.startedAt)?.description ?? active.description ?? '';
+  }
+  function normalizedDescription(value) {
+    return String(value || '').replace(/\r\n?/g, '\n').replace(/\t/g, ' ')
+      .replace(/ {2,}/g, ' ').trim().slice(0, 2000);
+  }
+  function fitDescriptionTextarea(field, { minRows = 1, maxRows = 8, maxHeight = 200, more = null } = {}) {
+    const count = String(field.value || '').split('\n').length;
+    // Rows work before a detached editor has any measurable scrollHeight.
+    field.rows = Math.min(maxRows, Math.max(minRows, count));
+    const measure = () => {
+      field.style.height = 'auto';
+      const height = Number(field.scrollHeight) || 0;
+      const clipped = count > maxRows || height > maxHeight + 1;
+      if (height) field.style.height = `${Math.min(maxHeight, Math.max(30, height))}px`;
+      field.style.overflowY = clipped ? 'auto' : 'hidden';
+      if (more) more.hidden = !clipped;
+    };
+    measure();
+    // Refresh after mounting: wrapping depends on the actual available width.
+    globalThis.requestAnimationFrame?.(() => { if (field.isConnected !== false) measure(); });
+  }
+  function retireActiveDescriptionDraft(active, value) {
+    const id = active?.id || active?.startedAt;
+    if (descriptionDraft?.id === id && descriptionDraft.taskUrl === taskUrlOf(active)
+        && normalizedDescription(descriptionDraft.value) === value) descriptionDraft = null;
+  }
+  function projectNameForUrl(url, projects = [], otherProjectName = 'Other') {
+    const candidate = String(url || '').toLowerCase();
+    for (const project of projects || []) {
+      if ((project.substrings || []).some(substring => candidate.includes(String(substring).toLowerCase()))) return project.name;
+    }
+    return String(otherProjectName || 'Other');
+  }
+  function projectRowId(name) { return `project:${String(name).toLowerCase()}`; }
 
   function trackedDurationSeconds(value) {
     const match = String(value || '').match(/^(?:(\d+)h )?(?:(\d+)m )?(\d+)s$/);
@@ -143,7 +419,7 @@
       if (!Number.isSafeInteger(previousSeconds) || previousSeconds < 0) break;
       const beforePrevious = previous.previousElementSibling;
       const previousTimestamp = previousBody.querySelector?.('.clockoli-timeline-range-start')
-        || previousBody.querySelector?.('relative-time, time-ago');
+        || previousBody.querySelector?.('.clockoli-commit-timestamp') || previousBody.querySelector?.('relative-time, time-ago');
       if (previousTimestamp) firstTimestamp = previousTimestamp;
       total += previousSeconds;
       previous.remove();
@@ -175,14 +451,18 @@
       if (!body) continue;
       const item = body.closest?.('.TimelineItem, .Timeline-Item')
         || body.closest?.('.js-timeline-item, [data-testid="timeline-item"]') || body;
-      const timestamp = body.querySelector?.('relative-time, time-ago');
+      const originalTimestamp = body.querySelector?.('relative-time, time-ago');
+      const timestamp = originalTimestamp ? el('a', undefined, 'clockoli-commit-timestamp') : null;
+      if (timestamp) { timestamp.href = commitUrl.href; timestamp.append(originalTimestamp); }
       const summary = el('span', undefined, 'clockoli-timeline-summary');
       Object.assign(summary.style, {
         display: 'inline-flex', alignItems: 'center', gap: '4px', minHeight: '24px',
         color: 'var(--fgColor-muted,#59636e)',
       });
+      const markUrl = extensionResourceUrl('src/assets/clockoli-32.png');
+      if (!markUrl) return;
       const mark = el('img', undefined, 'clockoli-timeline-mark');
-      mark.src = chrome.runtime.getURL('src/assets/clockoli-32.png'); mark.alt = ''; mark.setAttribute('aria-hidden', 'true');
+      mark.src = markUrl; mark.alt = ''; mark.setAttribute('aria-hidden', 'true');
       Object.assign(mark.style, { width: '16px', height: '16px', flexShrink: '0' });
       const legacyBadge = item.querySelector?.('.TimelineItem-badge');
       const reactBadgeWrapper = item.querySelector?.('[class*="TimelineBadgeWrapper"]');
@@ -294,8 +574,9 @@
       const duration = formatCompactTrackedDuration(value.seconds);
       const label = existing || el('span', undefined, 'clockoli-participant-time');
       if (label.textContent !== duration) label.textContent = duration;
-      label.title = `${value.login} tracked ${duration}${value.activeStartedAt ? ', including the active timer' : ''}`;
-      label.setAttribute('aria-label', label.title);
+      const tooltip = `${value.login} tracked ${duration}${value.activeStartedAt ? ', including the active timer' : ''}`;
+      label.setAttribute('data-clockoli-tooltip', tooltip);
+      label.setAttribute('aria-label', tooltip);
       Object.assign(label.style, {
         display: 'inline-block', marginLeft: '4px', padding: '0 4px', borderRadius: '6px',
         color: 'var(--fgColor-accent,#0969da)', background: 'var(--bgColor-accent-muted,#ddf4ff)',
@@ -318,6 +599,31 @@
     return message === 'Extension context invalidated.'
       || message.includes('message port closed before a response was received')
       || message.includes('message channel closed before a response was received');
+  }
+
+  function isExtensionContextInvalidated(error) {
+    return String(error?.message || '') === 'Extension context invalidated.';
+  }
+
+  function extensionResourceUrl(path) {
+    if (!extensionContextActive) return null;
+    try { return globalThis.chrome?.runtime?.getURL?.(path) || null; }
+    catch (cause) {
+      const error = cause instanceof Error ? cause : new Error(String(cause));
+      if (isExtensionContextInvalidated(error)) deactivateExtensionContext();
+      return null;
+    }
+  }
+
+  function deactivateExtensionContext() {
+    if (!extensionContextActive) return;
+    extensionContextActive = false;
+    clearInterval(tick); tick = null;
+    clearInterval(actionAnimationTimer); actionAnimationTimer = null;
+    clearInterval(navigationTimer); navigationTimer = null;
+    if (typeof clearTimeout === 'function') clearTimeout(pendingRefreshTimer); pendingRefreshTimer = null;
+    clearClockoliParticipantRetry();
+    timelineObserver?.disconnect?.(); timelineObserver = null;
   }
 
   function scheduleClockoliParticipantRetry(taskUrl, error) {
@@ -383,26 +689,45 @@
   async function refreshPopupTask() {
     if (!popupMode) return taskFromLocation();
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    popupTask = taskFromUrl(tab?.url, tab?.title || '');
+    popupTask = taskFromUrl(projectPaneIssueUrl(tab?.url) || tab?.url, githubTabTitle(tab?.title));
     return popupTask;
   }
 
   function send(message) {
-    return new Promise((resolve, reject) => chrome.runtime.sendMessage(message, response => {
-      if (chrome.runtime.lastError) {
-        const error = new Error(chrome.runtime.lastError.message);
-        if (isExtensionContextInterruption(error)) error.code = 'extension_context_interrupted';
-        return reject(error);
+    const runtime = globalThis.chrome?.runtime;
+    if (typeof runtime?.sendMessage !== 'function') {
+      const error = new Error('Extension context interrupted');
+      error.code = 'extension_context_interrupted';
+      return Promise.reject(error);
+    }
+    return new Promise((resolve, reject) => {
+      if (!extensionContextActive) {
+        const error = new Error('Extension context invalidated.'); error.code = 'extension_context_interrupted'; reject(error); return;
       }
-      if (!response?.ok) return reject(Object.assign(new Error(response?.error?.message || 'Extension request failed'), response?.error));
-      resolve(response.data);
-    }));
+      try {
+        chrome.runtime.sendMessage(message, response => {
+          if (chrome.runtime.lastError) {
+            const error = new Error(chrome.runtime.lastError.message);
+            if (isExtensionContextInterruption(error)) error.code = 'extension_context_interrupted';
+            if (isExtensionContextInvalidated(error)) deactivateExtensionContext();
+            return reject(error);
+          }
+          if (!response?.ok) return reject(Object.assign(new Error(response?.error?.message || 'Extension request failed'), response?.error));
+          resolve(response.data);
+        });
+      } catch (cause) {
+        const error = cause instanceof Error ? cause : new Error(String(cause));
+        if (isExtensionContextInterruption(error)) error.code = 'extension_context_interrupted';
+        if (isExtensionContextInvalidated(error)) deactivateExtensionContext();
+        reject(error);
+      }
+    });
   }
 
   function updateTaskAnimation() {
     if (popupMode || timesMode) return;
     if (!actionAnimationReady) return;
-    const running = document.hidden !== true && sameTask(taskFromLocation(), pageState.active);
+    const running = motionPreference?.matches !== false && document.hidden !== true && sameTask(taskFromLocation(), pageState.active);
     if (running === actionAnimationRunning) return;
     actionAnimationRunning = running;
     clearInterval(actionAnimationTimer); actionAnimationTimer = null;
@@ -436,7 +761,25 @@
     const shape = document.createElementNS('http://www.w3.org/2000/svg', 'path'); shape.setAttribute('d', path); svg.append(shape); return svg;
   }
 
-  function clockoliMark(size = 22) {
+  function iconButton(label, iconName, path, className, handler) {
+    const node = button('', className, handler);
+    node.title = label; node.setAttribute('aria-label', label); node.append(icon(iconName, path));
+    return node;
+  }
+
+  function savedNotice(className) {
+    const notice = el('span', 'Saved', className);
+    notice.prepend(icon('check', CHECK_PATH));
+    return notice;
+  }
+
+  function entryActionButton(label, kind, handler) {
+    const action = button(label, kind === 'edit' ? 'link-button entry-edit' : 'danger-outline entry-delete', handler);
+    action.append(kind === 'edit' ? icon('pencil', PENCIL_PATH) : icon('trash', TRASH_PATH));
+    return action;
+  }
+
+  function clockoliMark(size = 20) {
     const ns = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(ns, 'svg');
     svg.setAttribute('viewBox', '65 78 296 310'); svg.setAttribute('width', String(size)); svg.setAttribute('height', String(size));
@@ -460,9 +803,20 @@
     return svg;
   }
 
+  function clockoliWordmark() {
+    const image = el('img');
+    image.className = 'clockoli-wordmark';
+    image.src = extensionResourceUrl('src/assets/clockoli-with-text.svg') || '';
+    image.alt = 'Clockoli';
+    return image;
+  }
+
   function formatElapsed(startedAt) {
-    const seconds = Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
-    return [Math.floor(seconds / 3600), Math.floor(seconds % 3600 / 60), seconds % 60].map(value => String(value).padStart(2, '0')).join(':');
+    const minutes = Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 60_000));
+    return [Math.floor(minutes / 60), minutes % 60].map(value => String(value).padStart(2, '0')).join(':');
+  }
+  function formatElapsedCard(startedAt) {
+    return formatDuration(Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 60_000)) * 60);
   }
 
   function formatDuration(seconds) {
@@ -476,72 +830,613 @@
   }
 
   function timesRange() {
-    const today = new Date(), endToday = localDateValue(today), start = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 12);
-    const date = value => localDateValue(value), move = days => { const value = new Date(start); value.setDate(value.getDate() + days); return value; };
-    if (timesPeriod === 'last-three-days') return { startDate: date(move(-2)), endDate: endToday };
-    if (timesPeriod === 'today') return { startDate: endToday, endDate: endToday };
-    if (timesPeriod === 'yesterday') { const value = date(move(-1)); return { startDate: value, endDate: value }; }
-    const mondayOffset = (today.getDay() + 6) % 7;
-    if (timesPeriod === 'this-week') return { startDate: date(move(-mondayOffset)), endDate: endToday };
-    if (timesPeriod === 'last-week') return { startDate: date(move(-mondayOffset - 7)), endDate: date(move(-mondayOffset - 1)) };
-    if (timesPeriod === 'this-month') return { startDate: `${endToday.slice(0, 7)}-01`, endDate: endToday };
-    if (timesPeriod === 'last-month') {
-      const last = new Date(today.getFullYear(), today.getMonth(), 0, 12), first = new Date(last.getFullYear(), last.getMonth(), 1, 12);
-      return { startDate: date(first), endDate: date(last) };
-    }
-    if (timesPeriod === 'custom' && validEntryDate(timesStartDate) && validEntryDate(timesEndDate) && timesStartDate <= timesEndDate) return { startDate: timesStartDate, endDate: timesEndDate };
-    throw new Error('Choose a valid custom date range.');
+    const start = new Date(weekWindow().start), end = new Date(start);
+    end.setDate(end.getDate() + 6);
+    return { startDate: localDateValue(start), endDate: localDateValue(end) };
   }
 
-  function summarySeconds(frame) {
-    let seconds = Math.max(0, Number(frame?.seconds) || 0);
-    const activeDate = pageState.active?.entryDate;
-    if (activeDate && activeDate >= frame.startDate && activeDate <= frame.endDate) seconds += Math.max(0, Math.floor((Date.now() - new Date(pageState.active.startedAt).getTime()) / 1000));
-    return seconds;
+  function weekWindow(value = selectedWeekStart ?? Date.now()) {
+    const day = new Date(value);
+    day.setHours(0, 0, 0, 0);
+    day.setDate(day.getDate() - (day.getDay() + 6) % 7);
+    const end = new Date(day);
+    end.setDate(end.getDate() + 7);
+    return { start: day.getTime(), end: end.getTime() };
+  }
+
+  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+  // ISO week 1 is the week holding January 4, so both helpers count from that Monday.
+  function isoWeekValue(value) {
+    const monday = weekWindow(value).start;
+    const thursday = new Date(monday);
+    thursday.setDate(thursday.getDate() + 3);
+    const year = thursday.getFullYear();
+    const firstMonday = weekWindow(new Date(year, 0, 4)).start;
+    const week = Math.round((monday - firstMonday) / WEEK_MS) + 1;
+    return `${year}-W${String(week).padStart(2, '0')}`;
+  }
+
+  function weekStartFromIsoValue(value) {
+    const [year, week] = value.split('-W').map(Number);
+    const monday = new Date(weekWindow(new Date(year, 0, 4)).start);
+    monday.setDate(monday.getDate() + (week - 1) * 7);
+    return monday;
+  }
+
+  function resetWeekForViewSwitch() {
+    selectedWeekStart = null;
+    activityTimelineView = null;
+    activityInitialFocusPending = false;
+    activityInitialFocusMounted = false;
+    timelineView = null;
+    ++activityCalendarLoadId;
+    calendarWeekLoadingId = null;
+    selectedTimesCalendarLoadingId = null;
+    updateCalendarWeekLoading();
+    if (timelineInstance?.setCalendarRange) {
+      suppressCalendarNavigate = true;
+      try { timelineInstance.setCalendarRange(weekWindow()); }
+      finally { suppressCalendarNavigate = false; }
+    }
+    const navigation = (shadow)?.querySelector('.week-navigation');
+    const { startDate, endDate } = timesRange();
+    const label = navigation?.querySelector('.week-navigation-label');
+    if (label) label.textContent = `${startDate} – ${endDate}`;
+    const next = navigation?.querySelector('[aria-label="Next week"]');
+    if (next) next.disabled = true;
+  }
+
+  function weekNavigation() {
+    const navigation = el('div', undefined, 'week-navigation');
+    navigation.setAttribute('role', 'group');
+    navigation.setAttribute('aria-label', 'Browse weeks');
+    const label = el('button', undefined, 'week-navigation-label');
+    label.type = 'button';
+    label.title = 'Pick a week';
+    const picker = el('input', undefined, 'week-navigation-picker');
+    picker.type = 'week';
+    picker.tabIndex = -1;
+    picker.setAttribute('aria-hidden', 'true');
+    label.addEventListener('click', () => {
+      picker.max = isoWeekValue(Date.now());
+      picker.value = isoWeekValue(weekWindow().start);
+      picker.showPicker();
+    });
+    let nextControl;
+    const updateNavigation = () => {
+      const { startDate, endDate } = timesRange();
+      label.textContent = (timesMode && activityViewMode === 'list') || ((popupMode) && timelineViewMode === 'list')
+        ? activityWeekRangeLabel({ startDate, endDate }) : `${startDate} – ${endDate}`;
+      nextControl.disabled = weekWindow().start >= weekWindow(Date.now()).start;
+    };
+    picker.addEventListener('change', async () => {
+      if (!picker.value) return;
+      try { await selectWeek(weekStartFromIsoValue(picker.value)); }
+      finally { updateNavigation(); }
+    });
+    for (const [direction, name, iconName, path] of [[-1, 'Previous week', 'chevron-left', CHEVRON_LEFT_PATH], [1, 'Next week', 'chevron-right', CHEVRON_RIGHT_PATH]]) {
+      const control = iconButton(name, iconName, path, 'secondary week-navigation-button', async () => {
+        try { await shiftWeek(direction); }
+        finally { updateNavigation(); }
+      });
+      if (direction < 0) navigation.append(control, label, picker);
+      else { nextControl = control; navigation.append(control); }
+    }
+    updateNavigation();
+    return navigation;
+  }
+
+  function updateWeekNavigationLabel() {
+    const { startDate, endDate } = timesRange();
+    for (const scope of [shadow]) {
+      const navigation = scope?.querySelector('.week-navigation');
+      const label = navigation?.querySelector('.week-navigation-label');
+      if (label) label.textContent = (timesMode && activityViewMode === 'list') || ((popupMode) && timelineViewMode === 'list')
+        ? activityWeekRangeLabel({ startDate, endDate }) : `${startDate} – ${endDate}`;
+      const next = navigation?.querySelector('[aria-label="Next week"]');
+      if (next) next.disabled = weekWindow().start >= weekWindow(Date.now()).start;
+    }
+  }
+
+  function updateCalendarWeekLoading() {
+    const active = calendarWeekLoadingId !== null || selectedTimesCalendarLoadingId !== null;
+    for (const scope of [shadow]) {
+      const overlay = scope?.querySelector('.calendar-week-loading');
+      if (overlay) overlay.hidden = !active || (timesMode ? activityViewMode !== 'calendar' : timelineViewMode !== 'calendar');
+    }
+  }
+
+  function placeCalendarWeekNavigation(root, mode) {
+    const host = root.querySelector('.task-timeline-host');
+    if (!host) return;
+    const navigation = [...root.querySelectorAll('.week-navigation')].find(node => node.parentElement !== host)
+      || host.querySelector('.week-navigation');
+    if (!navigation) return;
+    const oldNavigation = host.querySelector('.week-navigation');
+    if (oldNavigation && oldNavigation !== navigation) oldNavigation.remove();
+    const activityChart = timesMode || popupMode ? root.querySelector('.timeline-shell') : null;
+    const oldChartNavigation = activityChart?.querySelector('.week-navigation');
+    if (oldChartNavigation && oldChartNavigation !== navigation) oldChartNavigation.remove();
+    activityChart?.classList.toggle('calendar-week-navigation', mode === 'calendar');
+    if (activityChart && mode !== 'list') {
+      navigation.removeAttribute('slot');
+      activityChart.append(navigation);
+    } else if ((popupMode) && mode === 'list') {
+      navigation.removeAttribute('slot');
+      const toolbar = root.querySelector('.popup-list-toolbar');
+      if (toolbar) toolbar.insertBefore(navigation, toolbar.querySelector('.times-refresh'));
+    } else if (mode === 'calendar') {
+      navigation.slot = 'week-navigation';
+      host.append(navigation);
+    } else if (navigation.parentElement === host) {
+      navigation.removeAttribute('slot');
+      root.insertBefore(navigation, root.querySelector(timesMode ? '.times-list-total' : '.timeline-shell'));
+    }
+  }
+
+  function shiftWeek(direction) {
+    const current = new Date(weekWindow().start);
+    current.setDate(current.getDate() + 7 * direction);
+    return selectWeek(current);
+  }
+
+  function selectWeek(current) {
+    if (current.getTime() > weekWindow(Date.now()).start) return;
+    const previousWeek = selectedWeekStart;
+    const previousActivityView = activityTimelineView, previousTimelineView = timelineView;
+    const previousInitialFocusPending = activityInitialFocusPending;
+    const previousInitialFocusMounted = activityInitialFocusMounted;
+    selectedWeekStart = current.getTime();
+    activityTimelineView = null;
+    activityInitialFocusPending = false;
+    activityInitialFocusMounted = false;
+    timelineView = null;
+    const range = weekWindow();
+    if (timelineInstance?.setCalendarRange) {
+      suppressCalendarNavigate = true;
+      try { timelineInstance.setCalendarRange(range); }
+      finally { suppressCalendarNavigate = false; }
+    }
+    if (timesMode) return loadSelectedTimes(previousLoaded => {
+      if (selectedWeekStart !== current.getTime()) return;
+      selectedWeekStart = previousWeek;
+      activityTimelineView = previousActivityView;
+      activityInitialFocusPending = previousInitialFocusPending;
+      activityInitialFocusMounted = previousInitialFocusMounted;
+      timelineView = previousTimelineView;
+      recentLoaded = previousLoaded;
+      suppressCalendarNavigate = true;
+      try { timelineInstance?.setCalendarRange?.(weekWindow()); }
+      finally { suppressCalendarNavigate = false; }
+    });
+    return loadActivityCalendarWeek(range).then(loaded => {
+      if (loaded === false && selectedWeekStart === current.getTime()) {
+        selectedWeekStart = previousWeek;
+        timelineView = null;
+        suppressCalendarNavigate = true;
+        try { timelineInstance?.setCalendarRange?.(weekWindow()); }
+        finally { suppressCalendarNavigate = false; }
+        refreshMountedTimeline();
+      }
+    });
+  }
+
+  function activityPeriodTimelineView(now) {
+    const { start, end } = weekWindow();
+    return { start, end, focusedAt: Math.min(now, end - 1) };
+  }
+
+  function activityTotalRange() {
+    return weekWindow();
+  }
+
+  function listWeekTotalText() {
+    if (!recentLoaded) return 'Total: …';
+    const { start, end } = weekWindow();
+    const now = Math.min(timelineNow(), end - 1);
+    const { items } = popupTimelineItems(start, now);
+    const total = items.reduce((sum, item) => {
+      const stop = item.isRunning ? now : item.endedAt;
+      return sum + Math.max(0, Math.min(stop, end, Date.now()) - Math.max(item.startedAt, start));
+    }, 0);
+    const minutes = Math.floor(total / 60_000);
+    return `Total: ${minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h${minutes % 60 ? ` ${minutes % 60}m` : ''}`}`;
+  }
+
+  function activityWeekRangeLabel(range) {
+    const month = date => new Date(`${date}T12:00:00Z`).toLocaleDateString('en-GB', { month: 'short', timeZone: 'UTC' });
+    return `${month(range.startDate)} ${Number(range.startDate.slice(-2))}–${range.startDate.slice(0, 7) === range.endDate.slice(0, 7) ? '' : `${month(range.endDate)} `}${Number(range.endDate.slice(-2))}`;
+  }
+
+  function updateActivityWeekSummary() {
+    const sections = [document.getElementById?.('activity-summary')?.querySelector('.activity-weekly-summary'),
+      compactSurface?.summary].filter(section => section?.isConnected);
+    if (!sections.length) return;
+    const range = timesRange();
+    const week = weekWindow(), now = Math.min(timelineNow(), week.end - 1);
+    const summary = recentLoaded && !loadingRecent && (timesMode || (recentFresh && completeVisualWeekStart === week.start))
+      ? globalThis.ClockoliWeeklySummary?.summarize(popupTimelineItems(week.start, now).items, week.start, week.end, now)
+      : null;
+    for (const section of sections) {
+      const span = section.querySelector('.activity-weekly-range');
+      if (span) {
+        span.textContent = timesMode || popupMode
+          ? activityWeekRangeLabel(range)
+          : `${range.startDate} – ${range.endDate}`;
+      }
+      for (const element of section.querySelectorAll('[data-stat]')) {
+        element.textContent = summary ? String(summary[element.getAttribute('data-stat')]) : '—';
+      }
+    }
+  }
+
+  function updateListWeekTotal() {
+    for (const scope of [shadow]) {
+      const total = scope?.querySelector('.times-list-total,.popup-list-total');
+      if (total) total.textContent = listWeekTotalText();
+    }
+    updateActivityWeekSummary();
+  }
+
+  function focusActivityCalendarPeriod() {
+    if (activityViewMode !== 'calendar' || !timelineInstance?.setCalendarRange) return;
+    const window = weekWindow();
+    const current = timelineInstance.getCalendarRange?.();
+    if (current?.start === window.start && current?.end === window.end) return;
+    suppressCalendarNavigate = true;
+    try { timelineInstance.setCalendarRange(window); }
+    finally { suppressCalendarNavigate = false; }
+  }
+
+  function activityRecordDate(entry) {
+    return entry.entryDate || localDateValue(new Date(entry.startedAt));
+  }
+
+  function overlapsSelectedWeek(entry) {
+    const { start, end } = weekWindow();
+    const started = new Date(entry.startedAt).getTime(), ended = new Date(entry.endedAt).getTime();
+    return Number.isFinite(started) && Number.isFinite(ended) && started < end && ended > start;
+  }
+
+  function activityRecordKey(entry) {
+    return `${entry.destinationId || ''}\n${entry._path}\n${entry.id}`;
+  }
+
+  function mergeActivityRecords(incoming, range, partial = false) {
+    const start = new Date(`${range.startDate}T00:00:00`).getTime();
+    const inRange = entry => {
+      const date = activityRecordDate(entry);
+      return date <= range.endDate && (date >= range.startDate || new Date(entry.endedAt).getTime() > start);
+    };
+    const records = new Map(recent.filter(entry => partial || !inRange(entry)).map(entry => [activityRecordKey(entry), entry]));
+    for (const entry of incoming) records.set(activityRecordKey(entry), entry);
+    return [...records.values()].sort((left, right) => new Date(right.startedAt) - new Date(left.startedAt));
+  }
+
+  async function loadActivityCalendarWeek(range, { showLoading = true } = {}) {
+    if (!range || !Number.isFinite(range.start) || !Number.isFinite(range.end) || range.end <= range.start) return;
+    if (timesMode && (loadingRecent || selectedTimesCalendarLoadingId !== null)) {
+      ++timesLoadId;
+      ++recentLoadId;
+      recentLoad = null;
+      loadingRecent = false;
+      selectedTimesCalendarLoadingId = null;
+    }
+    const nextWeek = weekWindow(range.start).start;
+    (timesMode ? shadow : shadow)?.querySelector('.timeline-edit-error')?.remove();
+    const previousWeek = selectedWeekStart;
+    const previousActivityView = activityTimelineView, previousTimelineView = timelineView;
+    if (selectedWeekStart !== nextWeek) {
+      selectedWeekStart = nextWeek;
+      activityTimelineView = null;
+      timelineView = null;
+    }
+    const loadId = ++activityCalendarLoadId;
+    if (!timesMode) {
+      completeVisualWeekStart = null;
+      refreshMountedTimeline();
+    }
+    const payload = { startDate: localDateValue(new Date(range.start)), endDate: localDateValue(new Date(range.end - 1)) };
+    if (showLoading) calendarWeekLoadingId = loadId;
+    updateCalendarWeekLoading();
+    const setStatus = text => {
+      activityCalendarStatusText = text;
+      const status = shadow?.querySelector('.times-calendar-status');
+      if (status) status.textContent = text;
+    };
+    setStatus('Loading week…');
+    try {
+      const data = await send({ type: timesMode ? 'LOAD_TIMES' : 'LOAD_WEEK', payload });
+      if (loadId !== activityCalendarLoadId) return;
+      if (!data?.configured || !Array.isArray(data.recent)) throw new Error('Calendar week could not be loaded.');
+      recent = mergeActivityRecords(data.recent, payload, Boolean(data.partial));
+      if (!timesMode && !data.partial) completeVisualWeekStart = nextWeek;
+      recentLoaded = true; recentFresh = !data.partial;
+      const refreshed = refreshMountedTimeline();
+      if (!refreshed || (timesMode && activityViewMode === 'list')) renderUi();
+      setStatus(data.partial ? 'Some records could not be loaded.' : '');
+      if (data.partial) setError(new Error('Some Calendar records could not be loaded. Retry by navigating away and back.'));
+      return !data.partial;
+    } catch (error) {
+      if (loadId === activityCalendarLoadId) {
+        selectedWeekStart = previousWeek;
+        activityTimelineView = previousActivityView;
+        timelineView = previousTimelineView;
+        if (timelineInstance?.setCalendarRange) {
+          suppressCalendarNavigate = true;
+          try { timelineInstance.setCalendarRange(weekWindow()); }
+          finally { suppressCalendarNavigate = false; }
+        }
+        refreshMountedTimeline();
+        if (error?.name === 'AbortError' || error?.code === 'aborted') setStatus('');
+        else { setStatus('Could not load this week.'); setError(error); }
+        return false;
+      }
+    } finally {
+      if (calendarWeekLoadingId === loadId) {
+        calendarWeekLoadingId = null;
+        updateCalendarWeekLoading();
+      }
+    }
+  }
+
+  function applyTrackedTotals(data) {
+    pageState = { ...pageState, todayTrackedMs: data?.todayTrackedMs ?? null, weekTrackedMs: data?.weekTrackedMs ?? null,
+      remoteWriteConfirmed: data?.remoteWriteConfirmed === true, summaryError: data?.summaryError ?? null };
+    summaryUpdatedAt = Date.now(); summaryActive = pageState.active;
+    todayReportDate = data?.reportDate || localDateValue();
+  }
+
+  function trackedTotalText(key) {
+    const value = pageState[key];
+    if (value == null || pageState.summaryError || todayReportDate !== localDateValue()) return '…';
+    const today = localDateValue(), monday = new Date(`${today}T12:00:00`);
+    monday.setDate(monday.getDate() - (monday.getDay() + 6) % 7);
+    const startDate = key === 'todayTrackedMs' ? today : localDateValue(monday);
+    const activeDate = summaryActive?.entryDate;
+    const ticking = activeDate && activeDate >= startDate && activeDate <= today
+      && summaryActive?.startedAt === pageState.active?.startedAt && sameTask(summaryActive, pageState.active);
+    return formatDuration((value + (ticking ? Math.max(0, Date.now() - summaryUpdatedAt) : 0)) / 1000);
+  }
+
+  function confirmLongEntry(active = pageState.active) {
+    const hours = active ? (Date.now() - new Date(active.startedAt).getTime()) / HOUR_MS : 0;
+    return hours <= LONG_ENTRY_HOURS || confirm(`This entry is ${Math.floor(hours)} hours long. Save anyway?`);
+  }
+
+
+  function reconcileQueuedInlineOperations(pendingIds) {
+    let completed = false;
+    for (const id of inlineQueuedOperationIds) if (!pendingIds.has(id)) { inlineQueuedOperationIds.delete(id); completed = true; }
+    if (completed) void refreshRecent(true).catch(setError);
+  }
+
+  function trackTimelineQueuedOperation(operationId, entryId, generation = null) {
+    if (!operationId) return;
+    const tracked = timelineQueuedOperationIds.get(operationId);
+    if (generation && tracked && typeof tracked !== 'string' && tracked.entryId === entryId) {
+      tracked.generations.add(generation);
+      return;
+    }
+    timelineQueuedOperationIds.set(operationId, generation
+      ? { entryId, generations: new Set([generation]) }
+      : entryId);
+  }
+
+  function reconcileTimelineQueuedOperations(pendingIds) {
+    for (const [id, tracked] of timelineQueuedOperationIds) {
+      if (pendingIds.has(id)) continue;
+      timelineQueuedOperationIds.delete(id);
+      const entryId = typeof tracked === 'string' ? tracked : tracked.entryId;
+      const generations = typeof tracked === 'string' ? null : tracked.generations;
+      for (const generation of generations || []) {
+        const generationState = timelineOptimisticEditStates.get(generation);
+        if (generationState) generationState.settled = true;
+      }
+      const currentGeneration = timelineOptimisticEditGenerations.get(entryId);
+      if (!generations || generations.has(currentGeneration)) {
+        timelineOptimisticEdits.delete(entryId);
+        timelineOptimisticEditGenerations.delete(entryId);
+      }
+    }
+  }
+
+
+  function reconcileTimelineAcceptedActive(incomingState) {
+    const accepted = timelineAcceptedActive;
+    const incoming = incomingState?.active ?? null;
+    const incomingConfirmsAccepted = accepted && incoming
+      && taskUrlOf(incoming) === taskUrlOf(accepted)
+      && new Date(incoming.startedAt).getTime() >= new Date(accepted.startedAt).getTime();
+    if (incomingConfirmsAccepted) timelineAcceptedActive = null;
+    return accepted && !incomingConfirmsAccepted
+      ? { ...incomingState, active: accepted }
+      : incomingState;
   }
 
   function applyMenuData(data, fresh = true) {
-    recent = Array.isArray(data) ? data : data?.recent ?? [];
-    todayReportDate = Array.isArray(data) ? localDateValue() : data?.reportDate || '';
-    const fallbackTodaySeconds = Array.isArray(data)
-      ? recent.filter(entry => (entry.entryDate || entry.startedAt?.slice(0, 10)) === todayReportDate).reduce((sum, entry) => sum + (Number(entry.durationSeconds) || 0), 0)
-      : Math.max(0, Number(data?.todaySeconds) || 0);
-    summaryFrames = Array.isArray(data?.summaries) && data.summaries.length ? data.summaries : [
-      { key: 'today', label: 'Today', seconds: fallbackTodaySeconds, startDate: todayReportDate, endDate: todayReportDate, displayMs: 2000 },
-    ];
-    if (!Array.isArray(data)) pageState = {
-      ...pageState, configured: data?.configured !== false, active: data?.active ?? null,
-      pendingCount: Math.max(0, Number(data?.pendingCount) || 0), pendingWrites: data?.pendingWrites ?? [],
-    };
+    const incoming = Array.isArray(data) ? data : data?.recent ?? [];
+    if (!timesMode && Array.isArray(data?.recent)) quickStartRecent = data.recent;
+    recent = recentLoaded && (timesMode || selectedWeekStart !== null)
+      ? mergeActivityRecords(incoming, timesRange(), Boolean(data?.partial) || !timesMode) : incoming;
+    if (!Array.isArray(data)) {
+      pageState = reconcileTimelineAcceptedActive({
+        ...pageState, configured: data?.configured !== false,
+        active: timesMode && data?.active === undefined && data?.configured !== false ? pageState.active : data?.active ?? null,
+        pendingCount: Math.max(0, Number(data?.pendingCount) || 0), pendingWrites: data?.pendingWrites ?? [],
+        partial: Boolean(data?.partial), readStatus: data?.readStatus ?? [], readConflicts: data?.conflicts ?? [],
+      });
+      // Range reads contain records, not the local daily/weekly summary.
+      // Keep the last authoritative totals (and their report date) intact.
+      if (data && Object.hasOwn(data, 'todayTrackedMs') && Object.hasOwn(data, 'weekTrackedMs')) applyTrackedTotals(data);
+      const pendingIds = new Set(pageState.pendingWrites.map(item => item.id));
+      reconcileQueuedInlineOperations(pendingIds);
+      reconcileTimelineQueuedOperations(pendingIds);
+    }
+    for (const [entryId] of timelineOptimisticCompletions) {
+      if (recent.some(entry => entry.id === entryId && entry._sha && !entry._pending)) timelineOptimisticCompletions.delete(entryId);
+    }
+    refreshTimelineQueueIndicator();
     recentLoaded = true;
     recentFresh = fresh;
   }
 
+  function mergeLocalPendingActivity(entries) {
+    if (!timesMode || !Array.isArray(entries)) return;
+    // GET_PAGE_STATE reads IndexedDB, unlike LOAD_TIMES which also reads GitHub.
+    // A Stop accepted by another component/tab must appear in Activity without
+    // waiting for the remote weekly history to finish loading.
+    const pending = entries.filter(entry => entry?._pending && entry?.id && entry?._path && entry?.endedAt);
+    if (!pending.length) return;
+    const identity = entry => `${entry.destinationId || ''}\u0000${entry.id}`;
+    const keys = new Set(pending.map(identity));
+    recent = [...recent.filter(entry => !keys.has(identity(entry))), ...pending]
+      .sort((left, right) => new Date(right.startedAt) - new Date(left.startedAt));
+    recentLoaded = true;
+  }
+
   function applyPageState(data) {
+    if (pageState.configured == null) { errorText = ''; errorCode = ''; connectionError = null; }
     const previousParticipantState = `${taskUrlOf(pageState.active) || ''}:${pageState.active?.startedAt || ''}:${pageState.pendingCount || 0}`;
-    pageState = data;
-    if (!recentLoaded && Array.isArray(data?.recent) && data.recent.length) applyMenuData(data.recent, false);
+    recordQueueDiagnostics(pageState.pendingWrites, data?.pendingWrites ?? []);
+    pageState = reconcileTimelineAcceptedActive(data);
+    if (!timesMode && Array.isArray(data?.recent)) quickStartRecent = data.recent;
+    mergeLocalPendingActivity(data?.recent);
+    root?.setAttribute('data-clockoli-width', pageState.interfaceWidth === 'full' ? 'full' : 'contained');
+    applyTrackedTotals(data);
+    const pendingIds = new Set(pageState.pendingWrites?.map(item => item.id) ?? []);
+    reconcileQueuedInlineOperations(pendingIds);
+    reconcileTimelineQueuedOperations(pendingIds);
+    if (!timesMode && Array.isArray(data?.recent)) applyMenuData(data.recent, recentFresh);
     if (recentFreshAfterPendingId && pageState.pendingCount === 0 && Array.isArray(data?.recent)
         && data.recent.some(entry => entry.id === recentFreshAfterPendingId && !entry._pending && entry._sha)) {
       recentFresh = true;
       recentFreshAfterPendingId = null;
     }
     schedulePendingRefresh();
+    refreshTimelineQueueIndicator();
     const nextParticipantState = `${taskUrlOf(pageState.active) || ''}:${pageState.active?.startedAt || ''}:${pageState.pendingCount || 0}`;
     if (!popupMode && previousParticipantState !== nextParticipantState) void refreshClockoliParticipants();
   }
 
-  function hasRunnablePending(queue = pageState.pendingWrites) { return Boolean(queue?.length && queue[0].status !== 'conflict'); }
+  function safeQueueDetail(value) {
+    return String(value || '').slice(0, 300);
+  }
+
+  function queueOperationLabel(item) {
+    const operation = item.operation ?? item.stage;
+    return ({ editEntry: 'Edit time entry', editEntries: 'Edit linked time entries', editActiveStart: 'Adjust timer start',
+      completeTimer: 'Save stopped timer', completeTimerAndStart: 'Save and switch task', startTimer: 'Start timer',
+    })[operation] || operation || 'Queued operation';
+  }
+
+  function queueOperationSignature(item) {
+    return [item.operation, item.stage, item.status, item.retryCount, item.conflictReason, item.lastError].join('\u0001');
+  }
+
+  function queueElapsedText(queuedAt) {
+    const elapsedMs = Date.now() - new Date(queuedAt).getTime();
+    if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return '';
+    return elapsedMs < 1_000 ? ` in ${Math.round(elapsedMs)}ms` : ` in ${(elapsedMs / 1_000).toFixed(1)}s`;
+  }
+
+  function recordQueueDiagnostics(previous, next) {
+    const before = new Map((previous ?? []).map(item => [item.id, item]));
+    const after = new Map((next ?? []).map(item => [item.id, item]));
+    const append = message => queueDiagnostics.push({ at: new Date().toISOString(), message: safeQueueDetail(message) });
+    for (const item of next ?? []) {
+      const prior = before.get(item.id), label = queueOperationLabel(item);
+      if (!prior) append(`${label}: queued${item.queuedAt ? ` at ${item.queuedAt}` : ''}.`);
+      const previousDiagnostics = prior?.diagnostics?.length || 0;
+      for (const event of (item.diagnostics ?? []).slice(previousDiagnostics)) {
+        append(`${label}: ${safeQueueDetail(event.message)}`);
+      }
+      if (prior && queueOperationSignature(prior) !== queueOperationSignature(item)) {
+        const attempt = Number(item.retryCount) ? ` Attempt ${item.retryCount}.` : '';
+        const detail = item.lastError ? ` ${safeQueueDetail(item.lastError)}` : '';
+        append(`${label}: ${item.status || 'pending'} at ${item.stage || item.operation || 'queued'}.${attempt}${detail}`);
+      }
+    }
+    for (const item of previous ?? []) if (!after.has(item.id)) append(`${queueOperationLabel(item)}: synced${queueElapsedText(item.queuedAt)}.`);
+    if (queueDiagnostics.length > 40) queueDiagnostics.splice(0, queueDiagnostics.length - 40);
+  }
+
+  function recordTimelineQueueDiagnostic(message) {
+    queueDiagnostics.push({ at: new Date().toISOString(), message: safeQueueDetail(message) });
+    if (queueDiagnostics.length > 40) queueDiagnostics.splice(0, queueDiagnostics.length - 40);
+  }
+
+  function recordTimelineGestureDiagnostic(event) {
+    const detail = event && typeof event === 'object' ? event : {};
+    const kind = String(detail.kind || 'gesture').slice(0, 32);
+    const phase = String(detail.phase || 'event').slice(0, 32);
+    const id = String(detail.id || 'unknown').slice(0, 120);
+    const stamp = value => Number.isFinite(value) ? new Date(value).toISOString() : 'none';
+    const bounds = detail.bounds || {};
+    const proposed = detail.edit || {};
+    const message = [
+      `Timeline ${phase}: ${kind} ${id}.`,
+      `previous=${stamp(bounds.previousEnd)} next=${stamp(bounds.nextStart)} gap=${Number(detail.snapMs) || 0}ms.`,
+      `raw=${stamp(detail.rawTimestamp)} proposed=${stamp(detail.proposedTimestamp)}.`,
+      `result=${stamp(proposed.startedAt)}→${stamp(proposed.endedAt)}${detail.committed === false ? ' (no-op).' : '.'}`,
+    ].join(' ');
+    queueDiagnostics.push({ at: new Date().toISOString(), message: safeQueueDetail(message) });
+    if (queueDiagnostics.length > 40) queueDiagnostics.splice(0, queueDiagnostics.length - 40);
+  }
+
+  function hasRunnablePending(queue = pageState.pendingWrites) {
+    const first = queue?.[0];
+    if (!first) return false;
+    if (first.status !== 'conflict') return true;
+    const operation = first.operation ?? first.stage;
+    const retryableConflict = first.conflictReason !== 'add_time_overlap_changed'
+      && !String(first.conflictReason || '').startsWith('queued_write_');
+    return retryableConflict && ((first.stage === 'startNext' && first.nextActive)
+      || (['editEntry', 'editEntries', 'deleteEntry'].includes(operation) && first.conflictReason !== 'queued_entry_missing'));
+  }
+
+  function visiblePanelStateKey(state = pageState) {
+    const active = state?.active;
+    const pending = (state?.pendingWrites ?? []).map(item => [
+      item.id, item.status, item.stage, item.operation, item.conflictReason,
+    ]);
+    return JSON.stringify({
+      configured: state?.configured ?? null,
+      active: active ? [active.id, active.taskUrl, active.taskTitle, active.startedAt, active.description] : null,
+      pendingCount: state?.pendingCount ?? 0,
+      pending,
+      projects: state?.projects ?? [],
+      showQueueDiagnostics: state?.showQueueDiagnostics === true,
+      remoteWriteConfirmed: state?.remoteWriteConfirmed, summaryError: state?.summaryError,
+    });
+  }
+
+  function visibleRecentKey() {
+    return recent.map(entry => [
+      entry.id, entry._path, entry._sha, entry._index, entry.startedAt, entry.endedAt, entry._pending,
+    ]).join('\n');
+  }
 
   function schedulePendingRefresh() {
     globalThis.clearTimeout?.(pendingRefreshTimer); pendingRefreshTimer = null;
     if (!hasRunnablePending()) return;
     pendingRefreshTimer = setTimeout(async () => {
       try {
+        const before = visiblePanelStateKey();
+        const beforeRecent = visibleRecentKey();
+        const pendingIds = new Set(pageState.pendingWrites?.map(item => item.id) ?? []);
         const data = await send({ type: 'GET_PAGE_STATE' });
         applyPageState(data);
-        if (Array.isArray(data?.recent)) applyMenuData(data.recent, recentFresh);
-        renderUi();
+        // The page-state cache is bounded and cannot replace a complete Activity week.
+        if (timesMode) {
+          const remainingIds = new Set(pageState.pendingWrites?.map(item => item.id) ?? []);
+          if ([...pendingIds].some(id => !remainingIds.has(id))) {
+            await refreshRecent(true);
+          }
+        } else if (Array.isArray(data?.recent)) applyMenuData(data.recent, recentFresh);
+        if (before !== visiblePanelStateKey() || beforeRecent !== visibleRecentKey()) renderUi();
+        else updatePanelClocks();
       } catch { schedulePendingRefresh(); }
     }, 500);
     pendingRefreshTimer?.unref?.();
@@ -588,7 +1483,7 @@
     return result;
   }
 
-  function timePicker(label, original, draft = null, { compact = false, timezone = '', onChange = () => {}, onFocus = () => {} } = {}) {
+  function timePicker(label, original, draft = null, { compact = false, timezone = '', onChange = () => {}, onFocus = () => {}, onSet = () => {} } = {}) {
     let template = validTimestamp(draft?.timestamp) ? draft.timestamp : original;
     const initial = timestampParts(template, timezone), group = el('fieldset', undefined, `time-picker${compact ? ' compact-time-picker' : ''}`), controls = [];
     group.append(el('legend', label));
@@ -607,6 +1502,7 @@
     const changed = () => { refreshValidity(); onChange(currentDraft()); };
     const applyTimestamp = (timestamp, notify = false) => {
       const parts = timestampParts(timestamp, timezone); template = timestamp; dateField.value = parts.date; hourField.value = parts.hour; minuteField.value = parts.minute; refreshValidity();
+      onSet(timestamp);
       if (notify) changed();
     };
     dateField.addEventListener('input', changed); hourField.addEventListener('input', changed); minuteField.addEventListener('input', changed);
@@ -632,14 +1528,14 @@
     if (popupMode) return taskTitleOf(popupTask);
     if (timesMode) return '';
     const node = document.querySelector('[data-testid="issue-title"], .js-issue-title, bdi.js-issue-title');
-    const title = (node?.textContent || document.title || '').replace(/ · GitHub$/, '').trim();
+    const title = (node?.textContent || githubTabTitle(document.title)).trim();
     return title.slice(0, 300);
   }
 
   function recentRequest() {
     if (timesMode) return { type: 'LOAD_TIMES', payload: timesRange() };
     const task = taskFromLocation();
-    return { type: 'LOAD_RECENT', menuData: true, ...(task ? { taskUrl: task.taskUrl, taskTitle: task.taskTitle } : {}) };
+    return { type: 'LOAD_RECENT', menuData: true, ...(popupMode && task ? { taskUrl: task.taskUrl, taskTitle: task.taskTitle } : {}) };
   }
 
   function directChild(node, ancestor) {
@@ -658,19 +1554,36 @@
     return null;
   }
 
+  function isolateShadowHost(node, { fullWidth = false, wide = false } = {}) {
+    const set = (property, value) => node.style?.setProperty?.(property, value, 'important');
+    set('all', 'initial');
+    set('box-sizing', 'border-box');
+    set('position', fullWidth ? 'fixed' : 'relative');
+    set('display', fullWidth || wide ? 'block' : 'inline-flex');
+    if (wide) { set('width', '100%'); set('color-scheme', 'inherit'); }
+    if (fullWidth) {
+      set('z-index', '2147483647'); set('top', '0'); set('right', '0'); set('left', '0');
+      set('width', '100vw'); set('pointer-events', 'none');
+    } else set('align-items', 'center');
+  }
+
   function mountInHeader() {
     if (popupMode || timesMode) {
       root = root || document.getElementById(timesMode ? TIMES_ROOT_ID : POPUP_ROOT_ID);
       if (!root) return false;
+      isolateShadowHost(root, { wide: true });
       root.classList.add(timesMode ? 'times-surface' : 'popup-surface');
       shadow = shadow || root.attachShadow({ mode: 'closed' });
+      globalThis.ClockoliInstantTooltips?.attach(shadow);
       return true;
     }
     const target = headerTarget();
     if (!target) return false;
     if (!root) {
       root = el('div'); root.id = ROOT_ID;
+      isolateShadowHost(root);
       shadow = root.attachShadow({ mode: 'closed' });
+      globalThis.ClockoliInstantTooltips?.attach(shadow);
     }
     if (root.parentElement !== target.actions || root.nextElementSibling !== target.anchor) target.actions.insertBefore(root, target.anchor);
     return true;
@@ -686,16 +1599,23 @@
     return node;
   }
 
-  function setError(error = '') { errorText = error?.message || String(error || ''); errorCode = error?.code || ''; renderUi(); }
-
-  function closeMenu() { menuOpen = false; menuScrollTop = 0; navigationOpen = false; cancelActiveInlineDraft(); errorText = ''; errorCode = ''; renderUi(); }
-
-  function originalRecord(entry) { return { id: entry.id, taskUrl: taskUrlOf(entry), taskTitle: taskTitleOf(entry), issueUrl: taskUrlOf(entry), issueTitle: taskTitleOf(entry), startedAt: entry.startedAt, endedAt: entry.endedAt, description: entry.description || '' }; }
-
-  function sameRecord(left, right) {
-    const a = originalRecord(left), b = originalRecord(right);
-    return a.id === b.id && a.issueUrl === b.issueUrl && a.issueTitle === b.issueTitle && a.startedAt === b.startedAt && a.endedAt === b.endedAt && a.description === b.description;
+  function saveCheckButton(label, handler) {
+    const save = button('', 'save-check', async (_event, node) => {
+      node.disabled = true;
+      try { await handler(); }
+      catch (error) { setError(error); }
+      finally { node.disabled = false; }
+    });
+    save.title = label; save.setAttribute('aria-label', label); save.append(icon('check', CHECK_PATH));
+    save.addEventListener('mousedown', event => event.preventDefault());
+    return save;
   }
+
+  function setError(error = '', action = null) { if (isExtensionContextInvalidated(error)) { deactivateExtensionContext(); return; } if (error?.name === 'AbortError' || error?.code === 'aborted') return; errorText = error?.message || String(error || ''); activityErrorAction = action; errorCode = error?.code || ''; connectionError = errorText ? { ...error, message: errorText, code: errorCode } : null; renderUi(); }
+
+  function closeMenu() { menuOpen = false; menuScrollTop = 0; cancelActiveInlineDraft(); if (pageState.configured != null) { errorText = ''; errorCode = ''; } renderUi(); }
+
+  function originalRecord(entry) { return { id: entry.id, taskUrl: storedTaskIdentityOf(entry), taskTitle: taskTitleOf(entry), issueUrl: storedTaskIdentityOf(entry), issueTitle: taskTitleOf(entry), startedAt: entry.startedAt, endedAt: entry.endedAt, description: entry.description || '' }; }
 
   function validEntryDate(value) {
     const match = typeof value === 'string' ? value.match(/^(?!0000)(\d{4})-(\d{2})-(\d{2})$/) : null;
@@ -716,89 +1636,46 @@
     return new Date(value).getTime() === expected;
   }
 
-  function validIssue(issue) {
-    if (!issue || typeof issue !== 'object' || Object.keys(issue).sort().join(',') !== 'number,owner,repo,type,url') return false;
-    const ownerOk = typeof issue.owner === 'string' && /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(issue.owner) && !issue.owner.includes('--');
-    const repoOk = typeof issue.repo === 'string' && /^[A-Za-z0-9_.-]{1,100}$/.test(issue.repo) && issue.repo !== '.' && issue.repo !== '..';
-    const numberOk = Number.isSafeInteger(issue.number) && issue.number > 0;
-    if (!ownerOk || !repoOk || !numberOk || !['issue', 'pull_request'].includes(issue.type)) return false;
-    const route = issue.type === 'pull_request' ? 'pull' : 'issues';
-    return issue.url === `https://github.com/${issue.owner}/${issue.repo}/${route}/${issue.number}`;
-  }
-
-  function validRewrittenEntry(item, position, path, sha) {
-    const required = [
-      '_index', '_path', '_sha', 'actor', 'createdAt', 'description', 'durationSeconds', 'endedAt', 'entryDate',
-      'id', 'issueTitle', 'metadata', 'metrics', 'producer', 'schemaVersion', 'startedAt', 'taskTitle', 'taskUrl',
-      'timezone', 'updatedAt', 'user',
-    ];
-    const allowed = new Set([...required, '_record', 'entryId', 'execution', 'issue']);
-    const identity = value => value && typeof value === 'object' && !Array.isArray(value)
-      && ['kind', 'id', 'name'].every(key => typeof value[key] === 'string' && value[key].trim());
-    const producer = value => value && typeof value === 'object' && !Array.isArray(value)
-      && ['kind', 'name', 'version'].every(key => typeof value[key] === 'string' && value[key].trim());
-    const object = value => value && typeof value === 'object' && !Array.isArray(value);
-    const validId = value => typeof value === 'string' && /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(value);
-    let timezoneOk = false;
-    try { new Intl.DateTimeFormat('en-US', { timeZone: item?.timezone }).format(new Date(0)); timezoneOk = true; } catch {}
-    if (!item || typeof item !== 'object' || Object.keys(item).some(key => !allowed.has(key)) || required.some(key => !(key in item)) || item.schemaVersion !== 1
-        || !validId(item.id) || (item.entryId !== undefined && item.entryId !== item.id)
-        || item._index !== position || item._path !== path || typeof item._sha !== 'string' || !item._sha || (sha && item._sha !== sha)
-        || typeof item.user !== 'string' || !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(item.user)
-        || !identity(item.actor) || !producer(item.producer) || !object(item.metadata) || !object(item.metrics) || !timezoneOk
-        || !taskUrlOf(item) || (item.issue && (!validIssue(item.issue) || item.issue.url !== item.taskUrl))
-        || !validEntryDate(item.entryDate) || !validTimestamp(item.startedAt) || !validTimestamp(item.endedAt)
-        || !validTimestamp(item.createdAt) || !validTimestamp(item.updatedAt) || new Date(item.updatedAt) < new Date(item.createdAt)
-        || typeof item.taskTitle !== 'string' || item.taskTitle.length > 300 || item.issueTitle !== item.taskTitle
-        || item.taskTitle !== item.taskTitle.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim()
-        || typeof item.description !== 'string' || item.description.length > 2000
-        || (item._record !== undefined && (!object(item._record) || item._record.schema_version !== 1 || item._record.id !== item.id))) return false;
-    const pathMatch = path.match(/^times\/(\d{4}-(?:0[1-9]|1[0-2]))\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)\.jsonl$/);
-    if (!pathMatch || pathMatch[1] !== item.entryDate.slice(0, 7) || pathMatch[2] !== item.user
-        || timestampParts(item.startedAt, item.timezone).date !== item.entryDate) return false;
-    const duration = Math.floor((new Date(item.endedAt).getTime() - new Date(item.startedAt).getTime()) / 1000);
-    return Number.isInteger(item.durationSeconds) && duration >= 0 && item.durationSeconds === duration;
-  }
-
-  function reconcileDeletedFile(deleted, rewritten) {
-    if (!Array.isArray(rewritten)) return null;
-    const byIndex = new Map();
-    let rewrittenSha = null;
-    for (const [position, item] of rewritten.entries()) {
-      if (!validRewrittenEntry(item, position, deleted._path, rewrittenSha)) return null;
-      rewrittenSha ||= item._sha;
-      byIndex.set(position, item);
-    }
-    const next = [];
-    for (const item of recent) {
-      if (item._path !== deleted._path || item._pending) { next.push(item); continue; }
-      if (item._index === deleted._index) {
-        if (!sameRecord(item, deleted)) return null;
-        continue;
-      }
-      const index = item._index > deleted._index ? item._index - 1 : item._index;
-      const replacement = byIndex.get(index);
-      if (!replacement || replacement._path !== deleted._path || !sameRecord(replacement, item)) return null;
-      next.push(replacement);
-    }
-    return next;
-  }
-
   function refreshRecent(force = false) {
     if (recentLoad && !force) return recentLoad;
+    if (timesMode && force && timesFilter.trim()) {
+      clearTimeout(activitySearchTimer); activitySearchTimer = null;
+      activitySearchGeneration++;
+      activitySearchEntries = null; activitySearchLoading = false;
+      activitySearchError = ''; activitySearchPartial = false;
+    }
     const loadId = ++recentLoadId, request = recentRequest();
-    recentFresh = false; loadingRecent = true; renderUi();
+    recentFresh = false; loadingRecent = true; if (!suppressRecentRender) renderUi();
     let load;
-    load = send(request).then(data => {
-      if (loadId === recentLoadId) applyMenuData(data, true);
+    load = send(request).then(async data => {
+      if (timesMode && loadId === recentLoadId && data?.configured) {
+        let hasTrackedTime = Boolean(data.recent?.length || data.remoteWriteConfirmed || data.pendingCount);
+        if (!hasTrackedTime) {
+          try {
+            const history = await send({ type: 'LOAD_TIMES', payload: ACTIVITY_HISTORY_RANGE });
+            hasTrackedTime = history?.configured && Array.isArray(history.recent)
+              ? Boolean(history.recent.length || history.remoteWriteConfirmed || history.pendingCount) : null;
+          } catch { hasTrackedTime = null; }
+        }
+        if (loadId === recentLoadId) timesHasTrackedTime = hasTrackedTime;
+      }
+      if (loadId === recentLoadId) {
+        applyMenuData(data, true);
+        if (timesMode && activityViewMode === 'calendar') focusActivityCalendarPeriod();
+      }
       return data;
     }).finally(() => {
       if (loadId === recentLoadId && recentLoad === load) {
-        recentLoad = null; loadingRecent = false; renderUi();
+        recentLoad = null; loadingRecent = false; if (!suppressRecentRender) renderUi();
       }
     });
     recentLoad = load;
     return load;
+  }
+
+  async function refreshMountedTimelineState() {
+    applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: true }));
+    if (!refreshMountedTimeline()) renderUi();
   }
 
   async function refreshState(refresh = false, loadEntries = false) {
@@ -827,34 +1704,8 @@
     return `${relativeDayLabel(start.date)} ${wallTime(start)} - ${endDay}${wallTime(end)} ${formatDuration(duration)}`;
   }
 
-  async function deleteRecentEntry(entry, node) {
-    if (!confirm(`Delete this ${formatDuration(entry.durationSeconds)} entry?
-
-The previous version remains in Git history.`)) return;
-    const controls = Array.from(node.parentElement?.children ?? [node]);
-    for (const control of controls) control.disabled = true;
-    try {
-      const result = await send({ type: 'DELETE_ENTRY', payload: { path: entry._path, originalSha: entry._sha, index: entry._index, original: originalRecord(entry) } });
-      activeInlineKey = null;
-      const entryDate = entry.entryDate || entry.startedAt.slice(0, 10);
-      summaryFrames = summaryFrames.map(frame => entryDate >= frame.startDate && entryDate <= frame.endDate
-        ? { ...frame, seconds: Math.max(0, frame.seconds - entry.durationSeconds) } : frame);
-      const reconciled = reconcileDeletedFile(entry, result?.entries);
-      if (reconciled) {
-        recent = reconciled;
-        renderUi();
-      } else {
-        recentLoaded = false;
-        await refreshState(false, true);
-      }
-    } catch (error) {
-      for (const control of controls) control.disabled = false;
-      setError(error);
-    }
-  }
-
   function entryKey(entry) {
-    return `${entry._path}\n${entry._sha || 'pending'}\n${entry._index}\n${entry.id}`;
+    return `${entry.destinationId || ''}\n${entry._path}\n${entry._sha || 'pending'}\n${entry._index}\n${entry.id}`;
   }
 
   function clearInlineGroup(key) {
@@ -873,12 +1724,7 @@ The previous version remains in Git history.`)) return;
     return changed;
   }
 
-  function activateTimeInput(key, boundary, part) {
-    if (activeInlineKey && activeInlineKey !== key) {
-      cancelActiveInlineDraft(key); renderUi();
-      globalThis.requestAnimationFrame?.(() => inlineEditors.get(key)?.[boundary === 'start' ? 'startPicker' : 'stopPicker']?.focus(part));
-      return;
-    }
+  function activateTimeInput(key) {
     activeInlineKey = key;
   }
 
@@ -887,6 +1733,7 @@ The previous version remains in Git history.`)) return;
     for (let left = 0; left < entries.length; left += 1) {
       const leftStart = new Date(entries[left].startedAt).getTime(), leftEnd = new Date(entries[left].endedAt).getTime();
       for (let right = left + 1; right < entries.length; right += 1) {
+        if (entries[left].destinationId !== entries[right].destinationId) continue;
         const rightStart = new Date(entries[right].startedAt).getTime(), rightEnd = new Date(entries[right].endedAt).getTime();
         if (leftStart < rightEnd && rightStart < leftEnd) {
           overlaps.add(entryKey(entries[left])); overlaps.add(entryKey(entries[right]));
@@ -908,8 +1755,13 @@ The previous version remains in Git history.`)) return;
     } catch { return entry; }
   }
 
+  function recordsWithDrafts() {
+    const drafts = [...inlineDrafts.values()].map(draft => draft.entry);
+    return [...recent.filter(entry => !drafts.some(draft => draft.id === entry.id && draft._path === entry._path && draft.destinationId === entry.destinationId)), ...drafts];
+  }
+
   function refreshOverlapWarnings() {
-    const overlaps = overlappingEntries(recent.map(entryWithInlineDraft));
+    const overlaps = overlappingEntries(recordsWithDrafts().map(entryWithInlineDraft));
     for (const [key, editor] of inlineEditors) editor.setOverlap?.(overlaps.has(key));
   }
 
@@ -941,6 +1793,7 @@ The previous version remains in Git history.`)) return;
 
   function linkCrossedTimeBoundaries(entry, boundary, group) {
     const sequence = [...inlineEditors.entries()]
+      .filter(([, editor]) => editor.entry.destinationId === entry.destinationId)
       .sort((left, right) => new Date(left[1].entry.startedAt) - new Date(right[1].entry.startedAt))
       .flatMap(([key, editor]) => [
         { id: boundaryId(key, 'start'), key, boundary: 'start', picker: editor.startPicker, original: editor.entry.startedAt, timezone: editor.entry.timezone, editor },
@@ -999,17 +1852,34 @@ The previous version remains in Git history.`)) return;
     return `${start.hour}:${start.minute} - ${stopDay}${stop.hour}:${stop.minute}`;
   }
 
+  function applyQueuedInlineEntries(entries) {
+    const changes = new Map(entries.map(request => [`${request.destinationId}\u0000${request.path}\u0000${request.original.id}`, request.edits]));
+    recent = recent.map(entry => {
+      const edits = changes.get(`${entry.destinationId}\u0000${entry._path}\u0000${entry.id}`);
+      if (!edits) return entry;
+      const startedAt = edits.startedAt ?? entry.startedAt, endedAt = edits.endedAt ?? entry.endedAt;
+      return {
+        ...entry, ...edits, startedAt, endedAt,
+        entryDate: timestampParts(startedAt, entry.timezone).date,
+        durationSeconds: Math.max(0, Math.floor((new Date(endedAt) - new Date(startedAt)) / 1000)),
+      };
+    });
+  }
+
   function inlineTimeEditor(entry) {
     const key = entryKey(entry), draft = inlineDrafts.get(key);
     const range = el('div', undefined, 'inline-time-range entry-meta');
     const day = el('div', relativeDayLabel((draft?.start?.date || timestampParts(entry.startedAt, entry.timezone).date)), 'entry-day');
     const duration = el('span', formatDuration(entry.durationSeconds), 'inline-duration'); duration.title = duration.textContent;
-    let startPicker, stopPicker, save, cancel;
+    const unsaved = el('span', 'Unsaved', 'inline-unsaved'); unsaved.hidden = !draft;
+    let startPicker, stopPicker, save, cancel, lastValidStart;
     const updateDraft = group => {
       if (!startPicker || !stopPicker) return;
       const previous = inlineDrafts.get(key) || {};
-      const value = { ...previous, start: startPicker.draft(), stop: stopPicker.draft(), group: group || previous.group || key };
+      const value = { ...previous, entry, start: { ...startPicker.draft(), lastValidInstant: lastValidStart },
+        stop: stopPicker.draft(), group: group || previous.group || key };
       inlineDrafts.set(key, value); activeInlineKey ||= key;
+      unsaved.hidden = false;
       if (save && cancel) { save.hidden = false; cancel.hidden = false; save.parentElement?.classList.add('dirty'); }
       day.textContent = relativeDayLabel(value.start.date);
       try {
@@ -1022,39 +1892,86 @@ The previous version remains in Git history.`)) return;
       const group = inlineDrafts.get(key)?.group || key;
       updateDraft(group); linkCrossedTimeBoundaries(entry, boundary, group); refreshOverlapWarnings();
     };
+    const moveStart = () => {
+      try {
+        const nextStart = new Date(startPicker.value()).getTime();
+        const previousStart = lastValidStart ?? new Date(entry.startedAt).getTime();
+        try {
+          const previousEnd = new Date(stopPicker.value()).getTime();
+          stopPicker.setValue(timestampAtOriginalOffset(entry.endedAt, previousEnd + nextStart - previousStart, entry.timezone));
+        } catch { /* An incomplete Stop remains a draft, not a boundary to move. */ }
+        lastValidStart = nextStart;
+      } catch { /* Keep the draft intact until the date and time are valid. */ }
+      remember('start');
+      linkCrossedTimeBoundaries(entry, 'stop', inlineDrafts.get(key)?.group || key);
+      refreshOverlapWarnings();
+    };
     startPicker = timePicker('Start', entry.startedAt, draft?.start, {
-      compact: true, timezone: entry.timezone, onChange: () => remember('start'), onFocus: part => activateTimeInput(key, 'start', part),
+      compact: true, timezone: entry.timezone, onChange: moveStart, onFocus: () => activateTimeInput(key),
+      onSet: timestamp => { lastValidStart = new Date(timestamp).getTime(); },
     });
     stopPicker = timePicker('Stop', entry.endedAt, draft?.stop, {
-      compact: true, timezone: entry.timezone, onChange: () => remember('stop'), onFocus: part => activateTimeInput(key, 'stop', part),
+      compact: true, timezone: entry.timezone, onChange: () => remember('stop'), onFocus: () => activateTimeInput(key),
     });
-    const saveGroup = async () => {
-      const group = inlineDrafts.get(key)?.group || key;
+    if (Number.isFinite(draft?.start?.lastValidInstant)) lastValidStart = draft.start.lastValidInstant;
+    else try { lastValidStart = new Date(startPicker.value()).getTime(); } catch { /* Incomplete drafts stay editable. */ }
+    const saveGroupOnce = async group => {
       try {
-        const entries = [...inlineDrafts.entries()].filter(([, value]) => value.group === group).map(([draftKey, value]) => {
+        const submittedDrafts = new Map([...inlineDrafts.entries()].filter(([, value]) => value.group === group)
+          .map(([draftKey, value]) => [draftKey, JSON.parse(JSON.stringify(value))]));
+        const entries = [...submittedDrafts.entries()].map(([draftKey, value]) => {
           const editor = inlineEditors.get(draftKey), target = editor?.entry;
           if (!editor || !target) throw new Error('A linked time entry is no longer visible. Reload before saving.');
-          const task = value.metadataActive ? taskFromUrl(value.taskUrl, value.taskTitle) : taskFromUrl(taskUrlOf(target), taskTitleOf(target));
-          if (!task) throw new Error('Enter a valid HTTP(S) task URL.');
-          const description = String(value.metadataActive ? value.description : target.description || '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, 2000);
-          const edits = { taskUrl: task.taskUrl, taskTitle: task.taskTitle, startedAt: editor.startPicker.value(), endedAt: editor.stopPicker.value(), description };
-          const changed = edits.taskUrl !== taskUrlOf(target) || edits.taskTitle !== taskTitleOf(target) || edits.startedAt !== target.startedAt || edits.endedAt !== target.endedAt || edits.description !== (target.description || '');
-          return changed ? { path: target._path, originalSha: target._sha, index: target._index, original: originalRecord(target), edits } : null;
+          const originalIdentity = storedTaskIdentityOf(target);
+          const task = value.metadataActive && value.taskUrl !== originalIdentity
+            ? taskFromUrl(value.taskUrl, value.taskTitle)
+            : { taskUrl: originalIdentity, taskTitle: value.metadataActive ? value.taskTitle : taskTitleOf(target) };
+          if (!task?.taskUrl) throw new Error('Enter a valid HTTP(S) task URL.');
+          const description = normalizedDescription(value.metadataActive ? value.description : target.description);
+          const edits = { ...(task.taskUrl === originalIdentity && !taskUrlOf(target) ? {} : { taskUrl: task.taskUrl }),
+            taskTitle: task.taskTitle, startedAt: editor.startPicker.value(), endedAt: editor.stopPicker.value(), description };
+          const changed = task.taskUrl !== originalIdentity || edits.taskTitle !== taskTitleOf(target) || edits.startedAt !== target.startedAt || edits.endedAt !== target.endedAt || edits.description !== (target.description || '');
+          return changed ? { destinationId: target.destinationId, path: target._path, originalSha: target._sha, index: target._index, original: originalRecord(target), edits } : null;
         }).filter(Boolean);
-        const savedKeys = new Set([...inlineDrafts].filter(([, value]) => value.group === group).map(([draftKey]) => draftKey));
+        const savedKeys = new Set(submittedDrafts.keys());
         if (!entries.length) {
           clearBoundaryLinks(savedKeys); for (const draftKey of savedKeys) inlineDrafts.delete(draftKey); activeInlineKey = null; renderUi(); return;
         }
-        inlineMutation = group; renderUi();
-        await send({ type: 'EDIT_ENTRIES', payload: { entries } });
-        clearBoundaryLinks(savedKeys); for (const draftKey of savedKeys) inlineDrafts.delete(draftKey);
-        activeInlineKey = null; inlineMutation = null; recentLoaded = false; await refreshState(false, true);
-      } catch (error) { inlineMutation = null; setError(error); }
+        const destinationIds = [...new Set(entries.map(item => item.destinationId))];
+        if (destinationIds.length !== 1) throw new Error('Linked edits must stay within one time repository.');
+        const queued = await send({ type: 'QUEUE_ENTRIES_EDIT', payload: { destinationId: destinationIds[0], entries: entries.map(({ destinationId: _destinationId, ...entry }) => entry) } });
+        if (queued?.operationId) inlineQueuedOperationIds.add(queued.operationId);
+        applyQueuedInlineEntries(entries);
+        const acceptedKeys = new Set();
+        for (const draftKey of savedKeys) {
+          const current = inlineDrafts.get(draftKey), submitted = submittedDrafts.get(draftKey);
+          if (current && JSON.stringify(current) === JSON.stringify(submitted)) { inlineDrafts.delete(draftKey); acceptedKeys.add(draftKey); }
+        }
+        clearBoundaryLinks(acceptedKeys);
+        for (const draftKey of acceptedKeys) markInlineSaved(draftKey);
+        activeInlineKey = inlineDrafts.has(key) ? key : null; renderUi();
+        void refreshState(false, false).catch(setError);
+      } catch (error) { setError(error); }
+    };
+    const saveGroup = () => {
+      const group = inlineDrafts.get(key)?.group || key;
+      const pending = inlineGroupSaves.get(group);
+      if (pending) return pending;
+      let operation;
+      operation = saveGroupOnce(group).finally(() => {
+        if (inlineGroupSaves.get(group) === operation) {
+          inlineGroupSaves.delete(group);
+          renderUi();
+        }
+      });
+      inlineGroupSaves.set(group, operation);
+      return operation;
     };
     const cancelGroup = async () => { clearInlineGroup(key); activeInlineKey = null; renderUi(); };
     save = button('Save time', 'link-button inline-save', saveGroup);
     cancel = button('Cancel', 'link-button inline-cancel', cancelGroup);
     save.hidden = !draft; cancel.hidden = !draft;
+    save.disabled = inlineGroupSaves.has(draft?.group || key);
     const onEnter = event => {
       if (event.key !== 'Enter' || !event.isTrusted) return;
       event.preventDefault(); void saveGroup();
@@ -1063,193 +1980,2176 @@ The previous version remains in Git history.`)) return;
     const separator = el('span', '-', 'inline-time-separator'), timeLine = el('div', undefined, 'inline-time-line');
     timeLine.append(startPicker.node, separator, stopPicker.node); range.append(timeLine);
     inlineEditors.set(key, { entry, startPicker, stopPicker, updateDraft, saveGroup, cancelGroup });
-    return { node: range, day, duration, save, cancel, saveGroup, cancelGroup, draft, setDisabled: disabled => { startPicker.setDisabled(disabled); stopPicker.setDisabled(disabled); } };
+    return { node: range, day, duration, unsaved, save, cancel, saveGroup, cancelGroup, draft, setDisabled: disabled => { startPicker.setDisabled(disabled); stopPicker.setDisabled(disabled); } };
   }
 
-  function beginMetadataEdit(entry) {
+  function beginMetadataEdit(entry, { focusTime = false } = {}) {
     const key = entryKey(entry);
-    if (activeInlineKey && activeInlineKey !== key) cancelActiveInlineDraft(key); else activeInlineKey = key;
+    inlineSavedNotices.delete(key);
+    activeInlineKey = key;
     const existing = inlineDrafts.get(key);
     inlineDrafts.set(key, {
       ...(existing || {
+        entry,
         start: { ...timestampParts(entry.startedAt, entry.timezone), timestamp: entry.startedAt },
         stop: { ...timestampParts(entry.endedAt, entry.timezone), timestamp: entry.endedAt },
         group: key,
       }),
-      metadataActive: true, taskUrl: taskUrlOf(entry), taskTitle: taskTitleOf(entry), description: entry.description || '',
+      metadataActive: true, taskUrl: storedTaskIdentityOf(entry), taskTitle: taskTitleOf(entry), description: entry.description || '',
     });
-    renderUi(); globalThis.requestAnimationFrame?.(() => inlineEditors.get(key)?.descriptionField?.focus());
+    renderUi(); globalThis.requestAnimationFrame?.(() => {
+      const editor = inlineEditors.get(key);
+      (focusTime ? editor?.startPicker?.controls?.[0] : editor?.descriptionField)?.focus();
+    });
+  }
+
+  function beginRecordEdit(entry) { beginMetadataEdit(entry, { focusTime: true }); }
+
+  async function openTimeEntryForm(entry, trigger) {
+    let form = globalThis.ClockoliTimeEntryForm;
+    if (!form?.openEdit && !extensionPageMode) {
+      timeEntryFormLoad ||= (async () => {
+        const { mountAddTime } = await import(chrome.runtime.getURL('src/ui/add-time.js'));
+        const host = document.createElement('div');
+        host.style.position = 'fixed'; host.style.zIndex = '2147483647';
+        const container = host.attachShadow({ mode: 'closed' });
+        const stylesheet = document.createElement('link');
+        stylesheet.rel = 'stylesheet'; stylesheet.href = chrome.runtime.getURL('src/ui/add-time.css');
+        const anchor = document.createElement('button'); anchor.hidden = true;
+        container.append(stylesheet, anchor);
+        document.body.append(host);
+        timeEntryFormHost = host;
+        const dialog = mountAddTime(anchor, { container, searchIsCompleteCatalog: false, send: async request => {
+          if (request.type !== 'SEARCH_TASKS') return { configured: true, recent: [] };
+          const record = timeEntrySearchRecord;
+          if (!record?._path || !record?.id || !record?.destinationId || record._active) {
+            throw new Error('Completed entry is unavailable for task search.');
+          }
+          return send({ type: 'SEARCH_ENTRY_TASKS', destinationId: record.destinationId,
+            path: record._path, recordId: record.id, query: request.query });
+        } });
+        timeEntryFormDialog = dialog;
+        return dialog;
+      })().catch(error => { timeEntryFormLoad = null; timeEntryFormHost?.remove(); timeEntryFormHost = null; timeEntryFormDialog = null; throw error; });
+      form = await timeEntryFormLoad;
+    }
+    if (!form?.openEdit) {
+      if (entry._active) throw new Error('Edit timer start is unavailable. Reload the page and try again.');
+      beginRecordEdit(entry); return;
+    }
+    if (entry._active) {
+      timeEntrySearchRecord = null;
+      if (pageState.active?.id !== entry.id) throw new Error('The running timer changed. Reload before editing it.');
+      form.openEdit({ ...entry, taskUrl: storedTaskIdentityOf(entry), taskTitle: taskTitleOf(entry) }, async value => {
+        if (value.startedAt !== entry.startedAt) await queueActiveStartEdit(entry, value.startedAt);
+      }, trigger);
+      return;
+    }
+    const current = recent.find(item => item.id === entry.id && item._path === entry._path && item.destinationId === entry.destinationId) || entry;
+    timeEntrySearchRecord = current;
+    form.openEdit({ taskUrl: storedTaskIdentityOf(current), taskTitle: taskTitleOf(current),
+      destinationId: current.destinationId, startedAt: current.startedAt,
+      endedAt: current.endedAt, description: current.description || '' }, async value => {
+        const imported = value.taskUrl && !/^https?:\/\//i.test(value.taskUrl);
+        if (imported && value.destinationId !== current.destinationId) {
+          throw new Error('The selected imported task belongs to a different time repository.');
+        }
+        const identity = value.taskUrl === storedTaskIdentityOf(current) ? value.taskUrl
+          : imported ? storedTaskIdentityOf(value.taskUrl) : taskFromUrl(value.taskUrl, value.taskTitle)?.taskUrl;
+        if (!identity || imported && !value.destinationId) throw new Error('Select an existing imported task or enter an HTTP(S) task URL.');
+        const edits = { ...(identity === storedTaskIdentityOf(current) && !taskUrlOf(current) ? {} : { taskUrl: identity }),
+          taskTitle: value.taskTitle, startedAt: value.startedAt,
+          endedAt: value.endedAt, description: value.description };
+        if (identity === storedTaskIdentityOf(current) && value.taskTitle === taskTitleOf(current)
+            && value.startedAt === current.startedAt && value.endedAt === current.endedAt
+            && value.description === (current.description || '')) return;
+        await queueCalendarEntry(current, edits);
+        renderUi();
+      }, trigger);
+  }
+
+  function overlapClock(value) {
+    if (!validTimestamp(value)) return '';
+    return new Date(value).toLocaleTimeString('en-GB',
+      { hour: '2-digit', minute: '2-digit', hour12: false });
+  }
+
+  function overlapLocalDate(value) {
+    return new Date(value).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+
+  function overlapLocalRange(start, end) {
+    const beginDate = overlapLocalDate(start), endDate = overlapLocalDate(end);
+    return `${beginDate} ${overlapClock(start)}–${beginDate === endDate ? '' : `${endDate} `}${overlapClock(end)}`;
+  }
+
+  function loadStoppedOverlap(item) {
+    const key = `${item.destinationId}:${item.id}`;
+    if (stoppedOverlapDetails.has(key)) return;
+    const queueSignature = stoppedOverlapQueueSignature;
+    const request = { loading: true };
+    let settledCurrent = false;
+    stoppedOverlapDetails.set(key, request);
+    void send({ type: 'GET_STOPPED_OVERLAP', destinationId: item.destinationId, id: item.id }).then(data => {
+      if (queueSignature === stoppedOverlapQueueSignature && stoppedOverlapDetails.get(key) === request) {
+        stoppedOverlapDetails.set(key, { data }); settledCurrent = true;
+      }
+    }).catch(error => {
+      if (queueSignature === stoppedOverlapQueueSignature && stoppedOverlapDetails.get(key) === request) {
+        stoppedOverlapDetails.set(key, { error: error.message || 'Could not load the entries.' }); settledCurrent = true;
+      }
+    }).finally(() => {
+      if (syncIssuesOpen && settledCurrent) {
+        syncIssuesSignature = null; renderSyncIssues();
+      }
+    });
+  }
+
+  function projectedStoppedOverlap(item, completion) {
+    const blocked = completion.subjects?.find(subject =>
+      validTimestamp(subject.proposed?.startedAt) && validTimestamp(subject.proposed?.endedAt))?.proposed;
+    if (!blocked) return null;
+    const matches = (pageState.pendingWrites ?? []).filter(write => write.destinationId === item.destinationId
+      && write.operation === 'editEntry').flatMap(write => write.subjects ?? []).filter(subject =>
+        validTimestamp(subject.original?.startedAt) && validTimestamp(subject.original?.endedAt)
+        && Date.parse(subject.original.startedAt) < Date.parse(blocked.endedAt)
+        && Date.parse(subject.original.endedAt) > Date.parse(blocked.startedAt));
+    if (matches.length !== 1) return null;
+    const pending = recent.find(entry => entry.id === item.id && entry.destinationId === item.destinationId
+      && entry.startedAt === blocked.startedAt && entry.endedAt === blocked.endedAt);
+    return { previous: matches[0].original, queuedPrevious: matches[0].proposed,
+      blocked: { ...blocked, ...(pending ? { taskUrl: pending.taskUrl, taskTitle: pending.taskTitle } : {}) },
+      editable: false, verified: false };
+  }
+
+  function overlapMessageError(error) {
+    return /^Message (?:RESOLVE|DELETE)_STOPPED_OVERLAP is not allowed from this sender$/.test(error?.message || '')
+      ? new Error('Reload Clockoli and reopen Activity to use the updated background. Your pending time remains in this browser.')
+      : error;
+  }
+
+  function editStoppedOverlap(item, side, record, trigger) {
+    const form = globalThis.ClockoliTimeEntryForm;
+    if (!form?.openEdit) {
+      syncIssueError = 'The time editor is unavailable. Reload Activity and try again.';
+      syncIssuesSignature = null; renderSyncIssues();
+      return;
+    }
+    form.openEdit({ ...record, _overlapBoundary: side === 'previous' ? 'end' : 'start',
+      description: record.description || '' }, async value => {
+      if (value.taskUrl !== record.taskUrl || value.taskTitle !== record.taskTitle
+          || value.description !== (record.description || '')) {
+        throw new Error('Only the time range can be changed here. Edit the task or description in Activity after resolving the overlap.');
+      }
+      let result;
+      try {
+        result = await send({ type: 'RESOLVE_STOPPED_OVERLAP', destinationId: item.destinationId,
+          id: item.id, side, startedAt: value.startedAt, endedAt: value.endedAt });
+      } catch (error) { throw overlapMessageError(error); }
+      stoppedOverlapDetails.delete(`${item.destinationId}:${item.id}`);
+      syncIssueError = '';
+      if (!result?.resolved) throw new Error('Your edited times are stored locally, but GitHub has not accepted all changes. Review Activity; do not clear extension data.');
+      recentLoaded = false;
+      void refreshRecent(true).catch(setError);
+    }, trigger);
+  }
+
+  async function deleteStoppedOverlap(item, side, trigger) {
+    const prompt = side === 'previous'
+      ? 'Delete the earlier saved entry? Its unsynced edit will also be removed. The pending timer will be kept.'
+      : 'Delete the pending timer and its tracked time? The earlier entry and its unsynced edit will be kept.';
+    if (!confirm(prompt)) return;
+    trigger.disabled = true;
+    try {
+      const result = await send({ type: 'DELETE_STOPPED_OVERLAP', destinationId: item.destinationId, id: item.id, side });
+      stoppedOverlapDetails.delete(`${item.destinationId}:${item.id}`);
+      recentLoaded = false;
+      await refreshRecent(true);
+      if (!result?.deleted || (side === 'previous' && !result.resolved)) {
+        throw new Error('The deletion is not fully synced. Keep this browser data and review Activity.');
+      }
+      syncIssueError = '';
+    } catch (error) {
+      syncIssueError = overlapMessageError(error).message || 'Deletion could not be verified. Your pending changes remain in this browser.';
+      syncIssuesSignature = null;
+      renderSyncIssues();
+    } finally { trigger.disabled = false; }
+  }
+
+  function renderStoppedOverlap(box, item, data) {
+    const { previous, blocked, queuedPrevious } = data ?? {};
+    if (!previous || !blocked || !validTimestamp(previous.startedAt) || !validTimestamp(previous.endedAt)
+        || !validTimestamp(blocked.startedAt) || !validTimestamp(blocked.endedAt)) return false;
+    const begin = Math.max(Date.parse(previous.startedAt), Date.parse(blocked.startedAt));
+    const end = Math.min(Date.parse(previous.endedAt), Date.parse(blocked.endedAt));
+    if (end <= begin) return false;
+    const pair = el('div', undefined, 'sync-overlap-pair');
+    pair.append(el('h3', `Overlap · ${overlapLocalDate(new Date(begin).toISOString())} ${overlapClock(new Date(begin).toISOString())}`));
+    const card = (side, record, label, proposed) => {
+      const node = el('div', undefined, 'entry-record sync-overlap-card');
+      const timeRow = el('div', undefined, 'entry-time-row');
+      timeRow.append(el('span', overlapLocalRange(record.startedAt, record.endedAt),
+        'entry-time-range entry-time-display sync-overlap-range'));
+      const identity = el('div', undefined, 'entry-record-task-identity');
+      identity.append(siteFavicon(record, 'entry-record-favicon'), taskResult(record, 'entry-record-task-result'));
+      node.append(el('span', label, 'sync-overlap-label'), timeRow, identity);
+      if (proposed?.endedAt && proposed.endedAt !== record.endedAt) {
+        node.append(el('span', `Your unsynced edit ends at ${overlapLocalDate(proposed.endedAt)} ${overlapClock(proposed.endedAt)}.`, 'sync-overlap-proposed'));
+      }
+      const actions = el('div', undefined, 'entry-actions');
+      const edit = entryActionButton('Edit time', 'edit', (_event, trigger) => editStoppedOverlap(item, side,
+        side === 'previous' && proposed ? { ...record, endedAt: proposed.endedAt } : record, trigger));
+      edit.classList.add('sync-overlap-edit');
+      const editLabel = side === 'previous' ? 'Edit earlier entry' : 'Edit pending entry';
+      edit.setAttribute('aria-label', editLabel);
+      edit.title = editLabel;
+      // A local snapshot can open the editor; saving still goes through the
+      // privileged resolver's fresh remote and queue checks.
+      edit.disabled = data.editable === false && data.verified !== false;
+      const deleteLabel = side === 'previous' ? 'Delete earlier entry' : 'Delete pending entry';
+      const remove = entryActionButton(deleteLabel, 'delete', (_event, trigger) => deleteStoppedOverlap(item, side, trigger));
+      remove.setAttribute('aria-label', deleteLabel);
+      remove.title = deleteLabel;
+      actions.append(edit, remove);
+      timeRow.append(actions);
+      return node;
+    };
+    pair.append(card('previous', previous, data.verified === false ? 'Earlier entry · not yet checked on GitHub' : 'Saved on GitHub', queuedPrevious),
+      card('local', blocked, 'Pending · saved in this browser'));
+    if (data.editable !== true) pair.append(el('p', data.verified === false
+      ? 'You can adjust either time. Saving requires a fresh GitHub check; if it fails, your pending time stays in this browser.'
+      : 'Editing is unavailable for these pending changes. Keep this browser data and review the queue.', 'sync-overlap-unavailable'));
+    if (data.verified === false) pair.append(button('Recheck GitHub entry', 'secondary', () => {
+      stoppedOverlapDetails.delete(`${item.destinationId}:${item.id}`);
+      syncIssuesSignature = null;
+      renderSyncIssues();
+    }));
+    box.append(pair);
+    return true;
   }
 
   function recentRecord(entry, overlaps) {
     const key = entryKey(entry), overlapping = overlaps.has(key), draft = inlineDrafts.get(key);
     const record = el('div', undefined, 'entry-record');
+    if (draft?.metadataActive) record.classList.add('entry-editing');
     const warning = el('div', 'Overlaps another entry', 'overlap-warning');
     const setOverlap = active => {
       record.classList[active ? 'add' : 'remove']('entry-overlap');
       if (active && !warning.parentElement) record.prepend(warning); else if (!active) warning.remove();
     };
     setOverlap(overlapping);
-    record.append(taskResult(entry, 'entry-record-task-result'));
-    const timeRow = el('div', undefined, 'entry-time-row'); let day;
-    if (entry._pending) {
-      day = el('div', relativeDayLabel(timestampParts(entry.startedAt, entry.timezone).date), 'entry-day');
-      const time = el('span', recentTimeText(entry), 'entry-time-range');
-      const durationText = formatDuration(entry.durationSeconds), duration = el('span', durationText, 'inline-duration'); duration.title = durationText;
-      const actions = el('div', undefined, 'entry-actions entry-actions-visible');
-      const pending = button('Pending', 'link-button entry-pending', async () => {}); pending.disabled = true; actions.append(pending); timeRow.append(time, duration, actions);
-    } else {
-      const inline = inlineTimeEditor(entry), actions = el('div', undefined, 'entry-actions'); day = inline.day;
+    const identity = el('div', undefined, 'entry-record-task-identity');
+    const taskIdentity = taskResult(entry, 'entry-record-task-result');
+    taskIdentity.classList.add('activity-task-result');
+    identity.append(siteFavicon(entry, 'entry-record-favicon'), taskIdentity);
+    record.append(identity);
+    const title = record.querySelector('.task-title');
+    if (title && resolveTaskColor) title.style.color = resolveTaskColor({ url: taskUrlOf(entry), id: entry.id });
+    const timeRow = el('div', undefined, 'entry-time-row');
+    const inline = inlineTimeEditor(entry), actions = el('div', undefined, 'entry-actions'), day = inline.day;
       const editor = inlineEditors.get(key); if (editor) editor.setOverlap = setOverlap;
-      const remove = button('Delete', 'danger-outline entry-delete', async (event, node) => deleteRecentEntry(entry, node));
-      const disabled = Boolean(inlineMutation || loadingRecent || !recentFresh);
-      for (const control of [inline.save, inline.cancel, remove]) control.disabled = disabled;
-      inline.setDisabled(disabled); actions.append(inline.cancel, inline.save, remove);
-      if (!inline.save.hidden) actions.classList.add('dirty'); timeRow.append(inline.node, inline.duration, actions);
+      const revealTimeEditor = trigger => openTimeEntryForm(entry, trigger).catch(setError);
+      const edit = entryActionButton('Edit time', 'edit', async (_event, node) => revealTimeEditor(node));
+      const remove = entryActionButton('Delete', 'delete', async () => { try { await queueTimelineEntryDelete(entry); } catch (error) { setError(error); } });
+      const disabled = Boolean((loadingRecent || !recentFresh) && !entry._pending);
+      inline.save.disabled = disabled || inlineGroupSaves.has(draft?.group || key);
+      for (const control of [edit, inline.cancel, remove]) control.disabled = disabled;
+      inline.setDisabled(disabled);
+      if ((timesMode || popupMode) && trackableTaskIdentityOf(entry)) {
+        const running = sameTask(entry, pageState.active);
+        const label = `${running ? 'Stop' : 'Start'} tracking ${taskTitleOf(entry) || storedTaskIdentityOf(entry)}`;
+        const track = button(label, `entry-track-control ${running ? 'entry-stop' : 'entry-track'}`, async (_event, node) => {
+          if (node.disabled || running !== sameTask(entry, pageState.active)) return;
+          node.disabled = true;
+          try {
+            if (running) await stopTimelineEntry(pageState.active);
+            else await restartTimelineEntry(entry);
+          } catch (error) { setError(error); }
+        });
+        track.title = label; track.setAttribute('aria-label', label); track.append(running ? icon('stop', STOP_PATH) : icon('play', PLAY_PATH));
+        track.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
+        actions.append(track);
+      }
+      actions.append(edit, inline.cancel, inline.save, remove);
+      if (!inline.save.hidden) actions.classList.add('dirty');
+      const time = el('span', recentTimeText(entry), 'entry-time-range entry-time-display');
+      timeRow.append(time, inline.node, inline.duration, actions);
+      timeRow.append(inline.unsaved);
       if (draft?.metadataActive) {
         const metadata = el('div', undefined, 'inline-metadata-editor');
-        const urlField = el('input'); urlField.className = 'inline-task-url'; urlField.type = 'url'; urlField.required = true; urlField.value = draft.taskUrl;
+        const urlField = el('input'); urlField.className = 'inline-task-url'; urlField.type = taskUrlOf(entry) ? 'url' : 'text'; urlField.required = true; urlField.value = draft.taskUrl;
         const titleField = el('input'); titleField.className = 'inline-task-title'; titleField.maxLength = 300; titleField.placeholder = 'Optional title'; titleField.value = draft.taskTitle;
-        const descriptionField = el('input'); descriptionField.className = 'inline-description'; descriptionField.maxLength = 2000; descriptionField.placeholder = 'Optional description'; descriptionField.value = draft.description;
-        const field = (labelText, input) => { const label = el('label', labelText); label.append(input); return label; };
-        metadata.append(field('Task URL', urlField), field('Task title (optional)', titleField), field('Description', descriptionField));
+        const descriptionField = el('textarea'); descriptionField.className = 'inline-description'; descriptionField.rows = 2; descriptionField.maxLength = 2000; descriptionField.placeholder = 'Optional description'; descriptionField.value = draft.description;
+        const descriptionMore = el('span', '↓ More lines — scroll', 'description-overflow-hint'); descriptionMore.hidden = true;
+        fitDescriptionTextarea(descriptionField, { minRows: 2, more: descriptionMore });
+        descriptionField.addEventListener('input', () => fitDescriptionTextarea(descriptionField, { minRows: 2, more: descriptionMore }));
         const updateMetadata = () => { const value = inlineDrafts.get(key); if (value) inlineDrafts.set(key, { ...value, taskUrl: urlField.value, taskTitle: titleField.value, description: descriptionField.value }); };
+        const field = (labelText, input, saveLabel) => {
+          const label = el('label', labelText), control = el('span', undefined, 'save-field');
+          const save = saveCheckButton(saveLabel, async () => { updateMetadata(); await inline.saveGroup(); });
+          save.disabled = disabled || inlineGroupSaves.has(draft.group || key);
+          control.append(input, save);
+          if (input === descriptionField) control.append(descriptionMore);
+          label.append(control); return label;
+        };
+        metadata.append(
+          field(taskUrlOf(entry) ? 'Task URL' : 'Imported task identity (replace with an HTTP(S) URL)', urlField, 'Save task URL'),
+          field('Task title (optional)', titleField, 'Save task title'),
+          field('Description', descriptionField, 'Save description'),
+        );
         for (const input of [urlField, titleField, descriptionField]) {
           input.disabled = disabled; input.addEventListener('input', updateMetadata);
-          input.addEventListener('keydown', event => { if (event.key === 'Enter' && event.isTrusted) { event.preventDefault(); updateMetadata(); void inline.saveGroup(); } });
+          input.addEventListener('keydown', event => {
+            if (event.key !== 'Enter' || !event.isTrusted || event.isComposing || event.keyCode === 229
+                || (input === descriptionField && event.shiftKey)) return;
+            event.preventDefault(); updateMetadata(); void inline.saveGroup();
+          });
         }
         record.append(metadata); Object.assign(editor, { urlField, titleField, descriptionField });
       } else {
-        const description = button(entry.description || 'Add description', 'entry-description entry-description-editable', async () => beginMetadataEdit(entry));
-        description.title = 'Edit URL, title, and description'; description.setAttribute('aria-label', entry.description ? `Edit description: ${entry.description}` : 'Add description and edit task details');
+        const description = button(entry.description || '+ Add description', 'entry-description entry-description-editable entry-description-link', async (_event, node) => revealTimeEditor(node));
+        description.title = 'Edit time'; description.setAttribute('aria-label', 'Edit time');
         record.append(description);
       }
-    }
-    record.prepend(day, timeRow);
+    if (inlineSavedNotices.has(key)) record.append(savedNotice('description-saved entry-description-saved'));
+    if (timesMode || popupMode) record.prepend(timeRow); else record.prepend(day, timeRow);
     return record;
   }
 
   function recentGroup(entries, overlaps) {
     const group = el('article', undefined, 'entry');
+    const date = entries[0].entryDate || timestampParts(entries[0].startedAt, entries[0].timezone).date;
+    const relative = relativeDayLabel(date);
+    const marker = new Date(`${date}T12:00:00Z`);
+    const label = ['Today', 'Yesterday'].includes(relative) ? relative
+      : `${marker.toLocaleDateString('en-GB', { weekday: 'long', timeZone: 'UTC' })}, ${marker.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', timeZone: 'UTC' })}`;
+    const header = el('div', undefined, 'entry-date-header');
+    header.append(el('h2', label), el('span', formatDuration(entries.reduce((sum, entry) => sum + entry.durationSeconds, 0)), 'entry-day-total'));
+    group.append(header);
     for (const entry of entries) group.append(recentRecord(entry, overlaps));
     return group;
   }
 
-  function renderRecent(container, sourceEntries = recent) {
-    inlineEditors.clear();
-    const header = el('div', undefined, 'section-head'); header.append(el('strong', timesMode ? 'Tracked time' : 'Recent entries'));
+  function recentRefreshButton() {
     const refresh = button('', 'icon-button', async (event, node) => {
       node.disabled = true;
-      try { errorText = ''; renderUi(); await send({ type: 'SYNC' }); recentLoaded = false; await refreshState(true, true); }
+      try { errorText = ''; renderUi(); recentLoaded = false; await refreshState(true, true); }
       catch (error) { node.disabled = false; setError(error); }
     });
-    const syncing = hasRunnablePending();
-    refresh.disabled = syncing; refresh.classList.toggle('syncing', syncing);
-    refresh.title = 'Sync and refresh'; refresh.setAttribute('aria-label', 'Sync and refresh'); refresh.append(icon('sync', SYNC_PATH)); header.append(refresh); container.append(header);
-    if (loadingRecent && !recentLoaded) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
-    if (!recentLoaded) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
-    if (!sourceEntries.length) { container.append(el('div', timesMode ? 'No time entries match this period and filter.' : 'No entries in the configured display window.', 'muted')); return; }
-    const entries = [...sourceEntries].sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
-    const overlaps = overlappingEntries(entries.map(entryWithInlineDraft));
-    let group = [];
-    for (const entry of entries) {
-      if (group.length && !sameTask(group[0], entry)) { container.append(recentGroup(group, overlaps)); group = []; }
-      group.push(entry);
-    }
-    if (group.length) container.append(recentGroup(group, overlaps));
+    refresh.disabled = loadingRecent; // GitHub sync runs silently and must not disable Refresh.
+    refresh.title = 'Refresh'; refresh.setAttribute('aria-label', 'Refresh'); refresh.append(icon('sync', SYNC_PATH));
+    return refresh;
   }
 
-  function renderPendingConflicts(container) {
-    const conflicts = (pageState.pendingWrites ?? []).filter(item => item.status === 'conflict');
+  function renderRecent(container, sourceEntries = recent, emptyState = null, allowCached = false, hideHeader = false) {
+    inlineEditors.clear();
+    if (!timesMode && !hideHeader) {
+      const header = el('div', undefined, 'section-head');
+      header.append(el('strong', popupMode ? 'Tracked time' : 'Recent entries'), recentRefreshButton());
+      container.append(header);
+    }
+    if (!recentLoaded && !allowCached) { container.append(el('div', 'Loading recent entries…', 'muted')); return; }
+    if (emptyState) container.append(emptyState);
+    if (!sourceEntries.length) { if (!emptyState) container.append(el('div', 'No entries in the configured display window.', 'muted')); return; }
+    const entries = [...sourceEntries].sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+    const overlaps = overlappingEntries(entries.map(entryWithInlineDraft));
+    const groups = new Map();
+    for (const entry of entries) {
+      const date = entry.entryDate || timestampParts(entry.startedAt, entry.timezone).date;
+      if (!groups.has(date)) groups.set(date, []);
+      groups.get(date).push(entry);
+    }
+    for (const [, group] of [...groups].sort(([left], [right]) => right.localeCompare(left))) container.append(recentGroup(group, overlaps));
+  }
+
+  function queuedDateLabel(value) {
+    if (!validEntryDate(value)) return '';
+    return new Date(`${value}T12:00:00Z`).toLocaleDateString('en-GB',
+      { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+  }
+
+  function queuedTimeRange(record) {
+    if (!validTimestamp(record?.startedAt)) return '';
+    if (!validTimestamp(record?.endedAt)) {
+      const started = new Date(record.startedAt).toLocaleTimeString('en-GB',
+        { hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3, hour12: false });
+      return `started ${started} local`;
+    }
+    const time = value => new Date(value).toLocaleTimeString('en-GB',
+      { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
+    return `${time(record.startedAt)}–${time(record.endedAt)} UTC`;
+  }
+
+  function queuedRecordLabel(record) {
+    return [record?.taskTitle || record?.taskUrl || 'Untitled task', queuedDateLabel(record?.entryDate),
+      queuedTimeRange(record)].filter(Boolean).join(' · ');
+  }
+
+  function relatedQueuedCompletion(item, writes = pageState.pendingWrites ?? []) {
+    if (item.operation !== 'startTimer') return null;
+    return writes.find(other => other !== item && other.operation === 'completeTimer'
+      && other.id === item.id && other.destinationId === item.destinationId) ?? null;
+  }
+
+  function blockedStartFor(item, writes = pageState.pendingWrites ?? []) {
+    if (item.operation !== 'completeTimer') return null;
+    return writes.find(other => other.operation === 'startTimer' && other.status === 'conflict'
+      && other.id === item.id && other.destinationId === item.destinationId) ?? null;
+  }
+
+  function renderSyncIssues() {
+    const host = document.getElementById?.('activity-sync-status');
+    if (!host) return;
+    const writes = pageState.pendingWrites ?? [];
+    const editor = document.querySelector('.add-time-dialog[open]');
+    if (editor && host.childElementCount) {
+      if (overlapEditorCloseWatch !== editor) {
+        overlapEditorCloseWatch = editor;
+        editor.addEventListener('close', () => {
+          overlapEditorCloseWatch = null;
+          syncIssuesSignature = null;
+          renderSyncIssues();
+        }, { once: true });
+      }
+      return;
+    }
+    const queueSignature = JSON.stringify(writes);
+    if (queueSignature !== stoppedOverlapQueueSignature) {
+      stoppedOverlapDetails.clear();
+      stoppedOverlapQueueSignature = queueSignature;
+    }
+    const conflicts = writes.filter(item => item.status === 'conflict');
+    const signature = JSON.stringify([selectedSyncIssueKey, writes]);
+    if (signature === syncIssuesSignature && host.childElementCount) return;
+    const wasOpen = Boolean(host.querySelector('dialog')?.open || syncIssuesOpen);
+    const previousScroll = host.querySelector('.sync-issue-list')?.scrollTop ?? 0;
+    syncIssuesSignature = signature;
+    if (!conflicts.length) {
+      host.replaceChildren();
+      syncIssuesOpen = false;
+      selectedSyncIssueKey = null;
+      syncIssueError = '';
+      if (wasOpen) document.querySelector('#activity-view-switcher [aria-pressed="true"]')?.focus();
+      return;
+    }
+    const waiting = writes.length - conflicts.length;
+    const oneStoppedOverlap = timesMode && conflicts.length === 1
+      && conflicts[0].stage === 'startNext' && conflicts[0].conflictReason === 'add_time_overlap_changed'
+      && Boolean(relatedQueuedCompletion(conflicts[0], writes));
+    const banner = el('section', undefined, 'sync-status-banner has-conflicts');
+    banner.setAttribute('role', 'alert');
+    const copy = el('div', undefined, 'sync-status-copy');
+    copy.append(el('strong', `${conflicts.length} ${conflicts.length === 1 ? 'conflict needs' : 'conflicts need'} review`),
+    el('span', `${waiting ? `${waiting} waiting to sync. ` : ''}Keep this browser data until the changes are saved to GitHub.`));
+    const review = button('Review sync issues', 'sync-review-button', () => {
+      syncIssuesOpen = true;
+      stoppedOverlapDetails.clear();
+      syncIssuesSignature = null;
+      renderSyncIssues();
+    });
+    banner.append(copy, review);
+
+    const dialog = el('dialog', undefined, 'sync-issues-dialog');
+    dialog.setAttribute('aria-labelledby', 'sync-issues-title');
+    dialog.addEventListener('close', () => { syncIssuesOpen = false; review.focus(); });
+    const heading = el('header', undefined, 'sync-issues-header');
+    const headingCopy = el('div');
+    const title = el('h2', 'Sync issues'); title.id = 'sync-issues-title';
+    headingCopy.append(title, el('p', oneStoppedOverlap
+      ? 'One overlap needs attention. Your changes remain in this browser.'
+      : `${conflicts.length} ${conflicts.length === 1 ? 'conflict' : 'conflicts'} · ${waiting} waiting. These changes are still in this browser; select one to see why it has not reached GitHub.`));
+    const close = button('Close', 'sync-issues-close', () => dialog.close());
+    heading.append(headingCopy, close);
+    const content = el('div', undefined, 'sync-issues-content');
+    const list = el('div', undefined, 'sync-issue-list');
+    list.setAttribute('role', 'group'); list.setAttribute('aria-label', 'Local changes');
+    const occurrences = new Map();
+    const keys = writes.map(item => {
+      const identity = JSON.stringify([item.destinationId, item.id, item.operation ?? item.stage, item.queuedAt]);
+      const occurrence = occurrences.get(identity) ?? 0;
+      occurrences.set(identity, occurrence + 1);
+      return `${identity}:${occurrence}`;
+    });
+    const previousIndex = keys.indexOf(selectedSyncIssueKey);
+    const selectedIndex = previousIndex < 0 ? writes.indexOf(conflicts[0]) : previousIndex;
+    selectedSyncIssueKey = keys[selectedIndex];
+    const selected = writes[selectedIndex];
+    const focusedOverlap = oneStoppedOverlap && selected.status === 'conflict';
+    if (focusedOverlap) content.classList.add('is-single-overlap');
+    for (const [index, item] of writes.entries()) {
+      const record = item.subjects?.[0]?.original || item.subjects?.[0]?.proposed
+        || relatedQueuedCompletion(item, writes)?.subjects?.[0]?.proposed;
+      const name = record?.taskTitle || record?.taskUrl
+        || (item.operation === 'startTimer' ? 'Timer start' : item.operation === 'completeTimer' ? 'Timer stop' : 'Queued change');
+      const date = queuedDateLabel(record?.entryDate);
+      const status = item.status === 'conflict' ? 'Conflict' : 'Pending sync';
+      const action = item.operation === 'startTimer' ? 'Timer start' : item.operation === 'completeTimer' ? 'Timer stop' : '';
+      const row = button(`${name}${date ? ` · ${date}` : ''}${action ? ` · ${action}` : ''} · ${status}`, 'sync-issue-item', () => {
+        selectedSyncIssueKey = keys[index];
+        syncIssueError = '';
+        syncIssuesSignature = null;
+        renderSyncIssues();
+        host.querySelector('.sync-issue-item[aria-pressed="true"]')?.focus();
+      });
+      row.setAttribute('aria-pressed', String(index === selectedIndex));
+      row.classList.toggle('is-conflict', item.status === 'conflict');
+      list.append(row);
+    }
+    const detail = el('section', undefined, 'sync-issue-detail');
+    detail.setAttribute('aria-label', 'Selected local change');
+    if (syncIssueError) { const error = el('p', syncIssueError, 'sync-issue-error'); error.setAttribute('role', 'alert'); detail.append(error); }
+    if (selected.status === 'conflict') renderPendingConflicts(detail, [selected]);
+    else {
+      detail.append(el('h3', 'Waiting to sync'),
+        el('p', blockedStartFor(selected, writes)
+          ? 'This timer was stopped locally. Its completion is waiting for the earlier start conflict to be resolved before it can sync to GitHub. Keep this browser data.'
+          : 'This change is stored locally and has not yet been confirmed on GitHub. No action is needed while it waits.'));
+      for (const subject of selected.subjects ?? []) {
+        if (subject.original) detail.append(el('p', `Original: ${queuedRecordLabel(subject.original)}`));
+        if (subject.proposed) detail.append(el('p', `Queued change: ${queuedRecordLabel(subject.proposed)}`));
+      }
+    }
+    if (focusedOverlap && writes.length > 2) {
+      const expansion = el('details', undefined, 'sync-other-pending');
+      expansion.append(el('summary', `All queued changes (${writes.length})`), list);
+      detail.append(expansion);
+    }
+    if (!focusedOverlap) content.append(list);
+    content.append(detail);
+    dialog.append(heading, content, el('p', oneStoppedOverlap
+      ? 'Changes remain in this browser until synced. Do not clear extension data.'
+      : 'Do not clear extension data while changes are waiting. Discarding an unsaved timer can lose tracked time; it is not a way to fix an overlap.', 'sync-issues-footnote'));
+    host.replaceChildren(banner, dialog);
+    list.scrollTop = previousScroll;
+    if (wasOpen) dialog.showModal();
+  }
+
+  function renderPendingConflicts(container, conflicts = (pageState.pendingWrites ?? []).filter(item => item.status === 'conflict')) {
     for (const item of conflicts) {
+      const resolve = async (action, refresh) => {
+        try {
+          await send({ type: 'RESOLVE_PENDING', id: item.id, ...(action ? { action } : {}) });
+          syncIssueError = '';
+          recentLoaded = false;
+          await refreshState(refresh, true);
+        } catch (error) {
+          setError(error);
+          if (timesMode) {
+            syncIssueError = 'This change was not resolved. It remains stored locally; check the Activity error and try again.';
+            syncIssuesSignature = null;
+            renderSyncIssues();
+          }
+        }
+      };
       const unsaved = item.conflictReason === 'active_missing_no_completion' || item.conflictReason === 'active_changed_no_completion';
       const savedWithNewerTimer = item.stage === 'clearActive' && item.conflictReason === 'completion_saved_newer_timer';
+      const changedAddTime = item.stage === 'startNext' && item.conflictReason === 'add_time_overlap_changed';
+      const completion = changedAddTime ? relatedQueuedCompletion(item) : null;
+      const overlapKey = `${item.destinationId}:${item.id}`;
+      if (changedAddTime && completion && timesMode && syncIssuesOpen && !stoppedOverlapDetails.has(overlapKey)) loadStoppedOverlap(item);
+      const overlapState = stoppedOverlapDetails.get(overlapKey);
+      const localPair = changedAddTime && completion ? projectedStoppedOverlap(item, completion) : null;
+      const laterChanges = changedAddTime && (pageState.pendingWrites ?? []).slice((pageState.pendingWrites ?? []).indexOf(item) + 1)
+        .some(other => other.destinationId === item.destinationId);
+      const queuedStart = item.subjects?.[0]?.proposed || completion?.subjects?.[0]?.proposed;
+      const canRetryStart = Boolean(item.subjects?.[0]?.proposed);
+      const canAlignStart = canRetryStart && item.operation === 'startTimer' && !laterChanges;
+      // Queues persisted before operation was projected to the page expose only
+      // their stage. Keep their recovery actionable after an extension upgrade.
+      const queuedEdit = ['editEntry', 'editEntries'].includes(item.operation ?? item.stage);
+      const queuedAddition = ['addTime', 'bulkAddTimes'].includes(item.operation ?? item.stage);
+      const queuedMultipleTimes = (item.operation ?? item.stage) === 'bulkAddTimes';
+      const rejectedWrite = item.conflictReason?.startsWith('queued_write_');
+      const rejectedStart = rejectedWrite && item.stage === 'startNext';
       const box = el('div', undefined, 'conflict');
-      const title = unsaved ? 'Completion was not saved' : savedWithNewerTimer ? 'Newer GitHub timer preserved' : 'Entry path conflict';
+      const title = unsaved ? 'Completion was not saved' : savedWithNewerTimer ? 'Newer GitHub timer preserved'
+        : changedAddTime ? 'Timer start overlaps saved time'
+        : rejectedStart ? 'Queued start needs attention' : rejectedWrite ? 'Queued write needs attention'
+          : queuedAddition ? 'Added time needs review'
+            : queuedEdit ? 'Saved edit needs review' : 'Entry path conflict';
       const detail = item.conflictReason === 'active_missing_no_completion'
         ? 'The active timer is gone and no matching completion exists. Discarding removes this unsaved completion.'
         : item.conflictReason === 'active_changed_no_completion'
           ? 'The active timer changed before this completion was saved. Discarding removes this unsaved completion.'
           : savedWithNewerTimer ? 'The completed entry was saved; the newer active timer was preserved.'
-            : 'Repair or remove the conflicting entry in GitHub, then retry.';
-      const label = unsaved ? 'Discard unsaved completion' : savedWithNewerTimer ? 'Keep newer timer' : 'Retry entry sync';
+            : changedAddTime ? 'Clockoli could not save this timer start because it overlaps a completed entry on GitHub. The local change has not been deleted.'
+            : rejectedStart ? 'GitHub rejected this timer start. Check the configured repository and access, then retry.'
+              : rejectedWrite ? 'GitHub rejected this queued write. Check the configured repository and access, then retry.'
+                : queuedMultipleTimes ? 'The time batch could not be saved in its original intervals. Retry will look for free intervals on each selected day; if none fit, the whole batch stays safely queued.'
+                  : queuedAddition ? 'GitHub could not safely save the locally added time. Retry after reviewing Activity, or discard this addition after verifying it was not already saved.'
+                  : queuedEdit ? 'Activity changed after this edit was queued. Retry safely reloads the affected entry and reapplies your saved change.'
+                    : 'Repair or remove the conflicting entry in GitHub, then retry.';
+      const label = unsaved ? 'Discard unsaved completion' : savedWithNewerTimer ? 'Keep newer timer'
+        : changedAddTime ? 'Recheck and retry start'
+        : rejectedWrite ? 'Retry queued write' : queuedMultipleTimes ? 'Find free time and retry' : queuedAddition ? 'Retry added time'
+          : queuedEdit ? 'Retry saved edit' : 'Retry entry sync';
       box.append(el('strong', title), el('div', detail, 'muted'));
-      box.append(button(label, 'secondary wide', async () => {
+      if (queuedAddition && item.lastError && !rejectedWrite) {
+        box.append(el('p', `Last sync error: ${safeQueueDetail(item.lastError)}`, 'muted'));
+      }
+      if (changedAddTime && completion && timesMode && overlapState?.loading && !localPair) {
+        box.replaceChildren(el('p', 'Loading the two entries…'));
+        container.append(box);
+        continue;
+      }
+      if (changedAddTime && completion && timesMode && renderStoppedOverlap(box, item, overlapState?.data || localPair)) {
+        box.firstChild?.remove(); box.firstChild?.remove();
+        container.append(box);
+        continue;
+      }
+      if (changedAddTime && completion && overlapState?.error) {
+        box.append(el('p', 'Could not verify the saved entry. Your changes remain in this browser.'),
+          button('Refresh entries', 'secondary', () => { stoppedOverlapDetails.delete(overlapKey); syncIssuesSignature = null; renderSyncIssues(); }));
+      }
+      if (changedAddTime) {
+        if (queuedStart) box.append(el('div', `Timer: ${queuedRecordLabel({ ...queuedStart, endedAt: null })}`, 'queued-context'));
+        if (completion) box.append(el('p', 'This timer was stopped locally. Its completion is waiting for the start to sync. Do not discard the start or stop if you need to keep this tracked time.'));
+        if (!canRetryStart) box.append(el('p', 'The queued start itself has no details needed for a safe automatic retry. A later stop can show its task and time, but cannot repair the start. Keep this browser data and inspect Activity before changing anything.'));
+        else if (laterChanges) box.append(el('p', 'A later local change is waiting. Automatic start adjustment is unavailable while this start is not the last queued change. Recheck keeps the original start; discarding it loses unsaved tracked time.'));
+        else box.append(el('p', 'Recheck tries the same start again; it does not move the time. Start after previous entry moves it to the exact end of one overlapping entry, so the overlapping seconds will not count. If GitHub has changed, the start stays queued.'));
+      }
+      for (const subject of item.subjects ?? []) {
+        if (subject.original) box.append(el('div', `Original: ${queuedRecordLabel(subject.original)}`, 'queued-context'));
+        if (subject.proposed && (subject.original || queuedAddition || changedAddTime)) {
+          box.append(el('div', `Queued ${changedAddTime ? 'start' : subject.original ? 'change' : 'addition'}: ${queuedRecordLabel(subject.proposed)}`, 'queued-context'));
+        }
+        if (subject.descriptionChanged) box.append(el('div', 'Description changed (text remains in this browser).', 'queued-context'));
+        const date = subject.original?.entryDate || subject.proposed?.entryDate;
+        if (item.conflictReason === 'queued_entry_missing' && validEntryDate(date)) {
+          const expectedMonth = date.slice(0, 7);
+          const mismatch = subject.queuedMonth && subject.queuedMonth !== expectedMonth;
+          box.append(el('div', mismatch
+            ? `The original is dated ${expectedMonth}, but the queued edit points to ${subject.queuedMonth}. The original was not found there; retry checks its ID in the correct month.`
+            : `The original entry ID was not found in ${subject.queuedMonth || expectedMonth}. Retry checks its canonical month before saving.`, 'muted'));
+        }
+        if (validEntryDate(date)) box.append(button(`View week of ${queuedDateLabel(date)}`, 'secondary', async () => {
+          if (timesMode && syncIssuesOpen) document.querySelector('#activity-sync-status dialog')?.close();
+          await selectWeek(new Date(weekWindow(new Date(`${date}T12:00:00`)).start));
+        }));
+      }
+      if (changedAddTime && !(item.subjects ?? []).length && validEntryDate(queuedStart?.entryDate)) {
+        const date = queuedStart.entryDate;
+        box.append(button(`View week of ${queuedDateLabel(date)}`, 'secondary', async () => {
+          if (timesMode && syncIssuesOpen) document.querySelector('#activity-sync-status dialog')?.close();
+          await selectWeek(new Date(weekWindow(new Date(`${date}T12:00:00`)).start));
+        }));
+      }
+      if (item.conflictWith) box.append(el('div', `Overlaps: ${queuedRecordLabel(item.conflictWith)}`, 'queued-context'));
+      else if (changedAddTime) box.append(el('p', 'The exact earlier entry is not included in this issue. Check Activity to compare its times.'));
+      if (!changedAddTime || canRetryStart) box.append(button(label, 'secondary wide', async () => {
         if (unsaved && !confirm('Discard this unsaved completion? This cannot be recovered from the time-data repository.')) return;
-        await send({ type: 'RESOLVE_PENDING', id: item.id, ...(unsaved ? { action: 'discard_unsaved_completion' } : {}) });
-        recentLoaded = false;
-        await refreshState(true, true);
+        await resolve(unsaved ? 'discard_unsaved_completion' : null, true);
+      }));
+      if (changedAddTime && canAlignStart) box.append(button('Start after previous entry', 'secondary wide', async () => {
+        await resolve('align_queued_start', true);
+      }));
+      if (queuedAddition) box.append(button('Discard unsynced addition', 'link-button', async () => {
+        if (!confirm('Discard this locally added time? Clockoli will verify that GitHub does not already contain it.')) return;
+        await resolve('discard_queued_addition', false);
+      }));
+      if (queuedEdit) box.append(button('Discard queued edit', 'link-button', async () => {
+        if (!confirm('Discard this queued edit? The current Activity data will not be changed.')) return;
+        await resolve('discard_queued_edit', true);
+      }));
+      if (changedAddTime && !completion) box.append(button('Discard queued start', 'link-button', async () => {
+        if (!confirm('Discard this queued start and its unsaved tracked time? GitHub must confirm the timer is not already running before the local start can be removed.')) return;
+        await resolve('discard_queued_start', true);
       }));
       container.append(box);
     }
   }
 
-  async function loadSelectedTimes() {
+  async function loadSelectedTimes(onFailure = null) {
     const loadId = ++timesLoadId;
-    cancelActiveInlineDraft(); recentLoaded = false; errorText = ''; renderUi();
-    try { await refreshRecent(true); }
-    catch (error) { if (loadId === timesLoadId && error?.name !== 'AbortError') setError(error); }
+    selectedTimesCalendarLoadingId = loadId;
+    updateCalendarWeekLoading();
+    const previousLoaded = recentLoaded;
+    recentLoaded = false; errorText = ''; renderUi();
+    try {
+      // Hydrate durable local edits before the remote week read. Page state is
+      // bounded, so it must not replace records already loaded for this week.
+      const cached = await send({ type: 'GET_PAGE_STATE', refresh: false });
+      if (loadId !== timesLoadId) return;
+      if (cached?.configured && Array.isArray(cached.recent)) {
+        applyPageState(cached);
+        recent = mergeActivityRecords(cached.recent, timesRange(), true);
+        recentLoaded = true; recentFresh = false;
+        renderUi();
+      }
+      await refreshRecent(true);
+      if (loadId === timesLoadId) await refreshActivityState();
+    }
+    catch (error) {
+      if (loadId !== timesLoadId) return;
+      onFailure?.(previousLoaded);
+      if (error?.name !== 'AbortError' && error?.code !== 'aborted') setError(error);
+      else renderUi();
+    } finally {
+      if (selectedTimesCalendarLoadingId === loadId) {
+        selectedTimesCalendarLoadingId = null;
+        updateCalendarWeekLoading();
+      }
+    }
   }
 
-  function renderTimesPage() {
-    const page = el('main', undefined, 'times-page');
-    const body = el('div', undefined, 'times-body');
-    if (!pageState.configured && recentLoaded) {
-      body.append(el('p', 'Connect a GitHub repository before viewing time.', 'muted'), button('Connect GitHub', 'primary', async () => send({ type: 'OPEN_OPTIONS' })));
-      page.append(body); return page;
+  function scheduleActivitySearch() {
+    if (activitySearchEntries || activitySearchLoading || activitySearchTimer || !timesFilter.trim()) return;
+    activitySearchTimer = setTimeout(async () => {
+      activitySearchTimer = null;
+      if (!timesFilter.trim()) return;
+      const generation = ++activitySearchGeneration;
+      activitySearchLoading = true; activitySearchError = '';
+      renderActivitySearch?.();
+      try {
+        const data = await send({ type: 'SEARCH_ACTIVITY' });
+        if (generation !== activitySearchGeneration) return;
+        if (!data?.configured || !Array.isArray(data.recent)) throw new Error('Activity history could not be loaded.');
+        activitySearchEntries = data.recent;
+        activitySearchPartial = Boolean(data.partial || data.conflicts?.length);
+      } catch (error) {
+        if (generation !== activitySearchGeneration) return;
+        activitySearchError = error.message || 'Activity search failed.';
+      } finally {
+        if (generation === activitySearchGeneration) {
+          activitySearchLoading = false;
+          renderActivitySearch?.();
+        }
+      }
+    }, 250);
+  }
+
+  async function refreshActivityState(refresh = false) {
+    const loadId = ++activityStateLoadId;
+    const state = await send({ type: 'GET_PAGE_STATE', refresh });
+    if (loadId !== activityStateLoadId) return;
+    const previous = pageState.active;
+    applyPageState(state);
+    if (timesMode) renderSyncIssues();
+    const timelineUpdated = refreshMountedTimeline();
+    if (!timelineUpdated) renderUi();
+    if (previous && (previous.id !== pageState.active?.id || previous.startedAt !== pageState.active?.startedAt)) {
+      await refreshRecent(true);
     }
-    const toolbar = el('section', undefined, 'times-toolbar');
-    const filterLabel = el('label', 'Filter by URL or optional title'), filter = el('input'); filter.type = 'search'; filter.placeholder = 'Filter by URL or optional title'; filter.value = timesFilter; filterLabel.className = 'times-filter'; filterLabel.append(filter); toolbar.append(filterLabel);
-    const periodLabel = el('label', 'Period'), period = el('select'); period.setAttribute('aria-label', 'Time period');
-    for (const [value, label] of [['last-three-days', 'Last 3 days'], ['today', 'Today'], ['yesterday', 'Yesterday'], ['this-week', 'This week'], ['last-week', 'Last week'], ['this-month', 'This month'], ['last-month', 'Last month'], ['custom', 'Custom period']]) {
-      const option = el('option', label); option.value = value; option.selected = timesPeriod === value; period.append(option);
+  }
+
+  function createWeeklySummary() {
+    const weeklySummary = el('section', undefined, 'activity-weekly-summary');
+    weeklySummary.setAttribute('aria-label', 'Weekly summary');
+    const heading = el('div', undefined, 'activity-weekly-heading');
+    heading.append(el('span', 'Statistic', 'activity-weekly-label'), el('span', undefined, 'activity-weekly-range'));
+    weeklySummary.append(heading);
+    const cards = el('div', undefined, 'activity-weekly-cards');
+    for (const [key, label, shape] of [
+      ['todayTrackedMs', 'Today', STOPWATCH_PATH],
+      ['total', 'Total tracked', STOPWATCH_PATH],
+      ['tasks', 'Tasks worked on', TASKLIST_PATH],
+    ]) {
+      const card = el('div', undefined, 'activity-weekly-card');
+      const badge = el('span', undefined, 'activity-weekly-icon');
+      badge.append(icon(key, shape));
+      const copy = el('div', undefined, 'activity-weekly-copy');
+      const value = el('strong', key === 'todayTrackedMs' ? trackedTotalText(key) : '—', 'activity-weekly-value');
+      value.setAttribute(key === 'todayTrackedMs' ? 'data-tracked-total' : 'data-stat', key);
+      copy.append(value, el('span', label, 'activity-weekly-name'));
+      card.append(badge, copy); cards.append(card);
     }
-    period.addEventListener('change', () => {
-      timesPeriod = period.value;
-      if (timesPeriod === 'custom') { const current = localDateValue(); timesStartDate ||= current; timesEndDate ||= current; renderUi(); }
-      else void loadSelectedTimes();
-    }); periodLabel.append(period); toolbar.append(periodLabel);
-    if (timesPeriod === 'custom') {
-      const startLabel = el('label', 'From'), start = el('input'); start.type = 'date'; start.value = timesStartDate; start.addEventListener('input', () => { timesStartDate = start.value; }); startLabel.append(start);
-      const endLabel = el('label', 'Through'), end = el('input'); end.type = 'date'; end.value = timesEndDate; end.addEventListener('input', () => { timesEndDate = end.value; }); endLabel.append(end);
-      const custom = el('div', undefined, 'times-custom'); custom.append(startLabel, endLabel, button('Apply', 'secondary times-apply', async () => loadSelectedTimes())); toolbar.append(custom);
-    }
-    body.append(toolbar);
-    const result = el('section', undefined, 'times-results');
+    weeklySummary.append(cards);
+    return weeklySummary;
+  }
+
+  function createActivityListRenderer(result, filter, onEmpty = null) {
+    const taskSearch = globalThis.ClockoliTaskSearch.mount(filter, { onInput: () => {
+      timesFilter = filter.value;
+      activitySearchPage = 0;
+      if (timesFilter.trim()) scheduleActivitySearch();
+      else { clearTimeout(activitySearchTimer); activitySearchTimer = null; activitySearchGeneration++; activitySearchLoading = false; }
+      renderFiltered();
+    }, textOf: activitySearchFields });
     const renderFiltered = () => {
       result.replaceChildren(); const query = timesFilter.trim().toLowerCase();
-      const matches = query ? recent.filter(entry => taskUrlOf(entry).toLowerCase().includes(query) || taskTitleOf(entry).toLowerCase().includes(query)) : [...recent];
-      if (query && inlineDrafts.size) {
-        const visible = new Set(matches.map(entryKey));
-        for (const entry of recent) if (inlineDrafts.has(entryKey(entry)) && !visible.has(entryKey(entry))) matches.push(entry);
+      const drafts = [...inlineDrafts.values()].map(draft => draft.entry);
+      const draftKeys = new Set(drafts.map(activityRecordKey));
+      const range = timesRange();
+      // Keep locally accepted completions visible while GitHub sync is pending.
+      const entries = mergeTimelineCompletedEntries(query
+        ? [...(activitySearchEntries || []).filter(entry => !draftKeys.has(activityRecordKey(entry))),
+          ...recent.filter(entry => entry._pending && !draftKeys.has(activityRecordKey(entry))), ...drafts]
+        : recordsWithDrafts(), timelineOptimisticCompletions.values())
+        .filter(entry => query || (activityRecordDate(entry) >= range.startDate && activityRecordDate(entry) <= range.endDate)
+          || overlapsSelectedWeek(entry) || draftKeys.has(activityRecordKey(entry)));
+      const matches = taskSearch.matches(entries);
+      if (query) {
+        result.append(el('p', 'Search results across all weeks', 'muted'));
+        if (activitySearchPartial) result.append(el('p', 'Some time repositories or conflicting records could not be searched. Results may be incomplete.', 'notice partial-read-warning'));
       }
-      renderRecent(result, matches);
+      let empty = null;
+      if (query && !activitySearchEntries) {
+        empty = el('div', undefined, 'activity-empty');
+        empty.setAttribute('role', 'status');
+        empty.append(el('p', activitySearchError || 'Searching all activity…', activitySearchError ? 'error' : 'muted'));
+        if (activitySearchError) empty.append(button('Retry search', 'secondary', () => {
+          activitySearchError = ''; scheduleActivitySearch(); renderFiltered();
+        }));
+      } else if (!matches.length) {
+        empty = el('div', undefined, 'activity-empty');
+        const firstUse = !entries.length && timesHasTrackedTime === false;
+        empty.append(el('p', query ? 'No entries match across all weeks.' : entries.length ? 'No entries match.' : firstUse ? 'Nothing tracked yet. Open a task page and click Clockoli to start.' : 'No time in this range.', 'muted'));
+        if (query || entries.length) empty.append(button('Clear filter', 'secondary', () => { timesFilter = ''; filter.value = ''; renderFiltered(); filter.focus(); }));
+        else if (!firstUse && onEmpty) empty.append(button('Add time', 'secondary', onEmpty));
+      }
+      const pageCount = Math.ceil(matches.length / ACTIVITY_SEARCH_PAGE_SIZE);
+      if (query && activitySearchEntries) activitySearchPage = Math.min(activitySearchPage, Math.max(0, pageCount - 1));
+      const sortedMatches = query && activitySearchEntries
+        ? [...matches].sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()) : matches;
+      const visibleMatches = query && activitySearchEntries
+        ? sortedMatches.slice(activitySearchPage * ACTIVITY_SEARCH_PAGE_SIZE, (activitySearchPage + 1) * ACTIVITY_SEARCH_PAGE_SIZE) : sortedMatches;
+      if (query && inlineDrafts.size) {
+        const visible = new Set(visibleMatches.map(entryKey));
+        for (const entry of drafts) if (!visible.has(entryKey(entry))) visibleMatches.push(entry);
+      }
+      renderRecent(result, visibleMatches, empty, false, popupMode);
+      if (query && activitySearchEntries && pageCount > 1) {
+        const pagination = el('nav', undefined, 'times-search-pagination');
+        pagination.setAttribute('aria-label', 'Search results pages');
+        const previous = button('Previous page', 'secondary', () => { activitySearchPage--; renderFiltered(); });
+        const next = button('Next page', 'secondary', () => { activitySearchPage++; renderFiltered(); });
+        previous.disabled = activitySearchPage === 0;
+        next.disabled = activitySearchPage === pageCount - 1;
+        const start = activitySearchPage * ACTIVITY_SEARCH_PAGE_SIZE + 1;
+        pagination.append(previous, el('span', `${start}–${Math.min(start + ACTIVITY_SEARCH_PAGE_SIZE - 1, matches.length)} of ${matches.length} · Page ${activitySearchPage + 1} of ${pageCount}`), next);
+        result.append(pagination);
+      }
     };
-    filter.addEventListener('input', () => { timesFilter = filter.value; renderFiltered(); }); renderFiltered(); body.append(result);
+    renderActivitySearch = renderFiltered;
+    if (timesFilter.trim() && !activitySearchError) scheduleActivitySearch();
+    renderFiltered();
+    return renderFiltered;
+  }
+
+  function renderTimesPage(preservedTimeline = null) {
+    const page = el('main', undefined, 'times-page');
+    const body = el('div', undefined, 'times-body');
+    renderSyncIssues();
+    if (!pageState.configured && recentLoaded) {
+      body.append(el('p', 'Choose where Clockoli should save your time before viewing time.', 'muted'), button('Set up Clockoli', 'primary', async () => send({ type: 'OPEN_OPTIONS' })));
+      page.append(body); return page;
+    }
+    if (pageState.partial) {
+      const failed = (pageState.readStatus ?? []).filter(item => item.status === 'error').length;
+      const conflicts = pageState.readConflicts?.length || 0;
+      const warning = el('p', [
+        failed ? `${failed} time ${failed === 1 ? 'repository' : 'repositories'} could not be loaded.` : '',
+        conflicts ? `${conflicts} conflicting ${conflicts === 1 ? 'record was' : 'records were'} omitted.` : '',
+        'Showing available activity.',
+      ].filter(Boolean).join(' '), 'notice partial-read-warning');
+      body.append(warning);
+    }
+    const toolbar = el('section', undefined, 'times-toolbar');
+    const filterLabel = el('label'), filter = el('input'); filter.type = 'search'; filter.placeholder = 'Search entries'; filter.setAttribute('aria-label', 'Search activity'); filter.value = timesFilter; filterLabel.className = 'times-filter';
+    filterLabel.append(icon('search', SEARCH_PATH), filter);
+    toolbar.append(filterLabel);
+    const result = el('section', undefined, 'times-results activity-list');
+    const renderFiltered = createActivityListRenderer(result, filter, () => { bulkOpen = true; bulk.open = true; input.focus(); });
+    const weeklySummary = createWeeklySummary();
+    const summaryHost = document.getElementById?.('activity-summary');
+    const views = el('div', undefined, 'times-view-modes');
+    views.setAttribute('role', 'group'); views.setAttribute('aria-label', 'Activity view');
+    for (const mode of ['timeline', 'calendar', 'list']) {
+      const control = button(mode[0].toUpperCase() + mode.slice(1), 'times-view-button', () => {
+        const switched = activityViewMode !== mode;
+        activityViewMode = mode;
+        try { globalThis.localStorage?.setItem(ACTIVITY_VIEW_KEY, mode); } catch { /* keep this tab's selection */ }
+        saveActivityViewMode(mode);
+        if (switched) {
+          resetWeekForViewSwitch();
+          if (mode === 'timeline') activityInitialFocusPending = true;
+          body.querySelector('.timeline-shell')?.classList.toggle('calendar-week-navigation', mode === 'calendar');
+          if (mode !== 'list') timelineInstance?.setViewMode?.(mode);
+          return loadSelectedTimes();
+        }
+        if (mode === 'list') renderFiltered();
+        for (const choice of views.children) choice.setAttribute('aria-pressed', String(choice === control));
+        timeline.hidden = mode === 'list'; result.hidden = mode !== 'list';
+        listTotal.hidden = mode !== 'list';
+        calendarStatus.hidden = mode !== 'calendar';
+        filterLabel.hidden = mode !== 'list'; refresh.hidden = mode !== 'list'; toolbar.classList.toggle('times-visual', mode !== 'list');
+        if (mode !== 'list') timelineInstance?.setViewMode?.(mode);
+        if (mode === 'timeline' && !activityTimelineView) refreshMountedTimeline();
+        if (mode === 'calendar') focusActivityCalendarPeriod();
+        if (mode === 'calendar') return loadActivityCalendarWeek(timelineInstance?.getCalendarRange?.());
+      });
+      control.setAttribute('aria-label', mode[0].toUpperCase() + mode.slice(1));
+      control.setAttribute('title', mode[0].toUpperCase() + mode.slice(1));
+      control.prepend(icon(mode, VIEW_MODE_PATHS[mode]));
+      control.setAttribute('aria-pressed', String(mode === activityViewMode)); views.append(control);
+    }
+    if (summaryHost) summaryHost.replaceChildren(weeklySummary);
+    else body.append(weeklySummary);
+    const viewHost = document.getElementById?.('activity-view-switcher');
+    if (viewHost) viewHost.replaceChildren(views);
+    else body.append(views);
+    const listTotal = el('div', listWeekTotalText(), 'times-list-total');
+    listTotal.hidden = activityViewMode !== 'list';
+    const refresh = recentRefreshButton(); refresh.classList.add('times-refresh');
+    refresh.hidden = activityViewMode !== 'list';
+    toolbar.append(weekNavigation(), refresh);
+    body.append(toolbar, listTotal);
+    const calendarStatus = el('div', activityCalendarStatusText, 'times-calendar-status muted');
+    calendarStatus.setAttribute('role', 'status'); calendarStatus.setAttribute('aria-live', 'polite');
+    calendarStatus.hidden = activityViewMode !== 'calendar';
+    const timeline = renderPopupTimeline(preservedTimeline);
+    timeline.hidden = activityViewMode === 'list'; result.hidden = activityViewMode !== 'list';
+    filterLabel.hidden = activityViewMode !== 'list'; toolbar.classList.toggle('times-visual', activityViewMode !== 'list');
+    body.append(timeline, result, calendarStatus);
+    placeCalendarWeekNavigation(body, activityViewMode);
     const bulk = el('details', undefined, 'bulk-time');
-    const summary = el('summary', 'Add time in bulk'); bulk.append(summary);
+    bulk.open = bulkOpen; bulk.addEventListener('toggle', () => { bulkOpen = bulk.open; });
+    const summary = el('summary', 'Bulk time adding'); bulk.append(summary);
     const help = el('p', 'One entry per line: date, URL, optional description, then hours. Imports are all-or-nothing and are appended after existing time on each day.', 'muted');
-    const input = el('textarea'); input.rows = 8; input.className = 'bulk-time-input'; input.setAttribute('aria-label', 'Bulk time entries'); input.value = bulkDraft; input.disabled = bulkMutation;
-    input.placeholder = `2026/08/21 https://example.com/task Search relevance 6:00
+    const examples = el('div', undefined, 'bulk-time-examples');
+    examples.append(el('strong', 'Examples'), el('pre', `2026/08/21 https://example.com/task Search relevance 6:00
 2026-08-22 https://github.com/acme/app/issues/42 Fix ranking 6.5
 23.08.2026 https://example.com/call Customer call 1:30
-24/08/2026 https://example.com/release Release preparation 0.25`;
-    input.addEventListener('input', () => { bulkDraft = input.value; });
+24/08/2026 https://example.com/release Release preparation 0.25`));
+    const input = el('textarea'); input.rows = 8; input.className = 'bulk-time-input'; input.setAttribute('aria-label', 'Bulk time entries'); input.value = bulkDraft; input.disabled = bulkMutation;
+    input.placeholder = 'Enter one entry per line';
+    input.addEventListener('input', () => { bulkDraft = input.value; bulkFeedback = null; shadow?.querySelector('.bulk-time-feedback')?.remove(); });
     const add = button('Add time', 'primary', async () => {
       if (bulkMutation) return;
-      bulkDraft = input.value; bulkMutation = true; errorText = ''; renderUi();
+      bulkDraft = input.value; bulkOpen = true; bulkMutation = true; bulkFeedback = null; errorText = ''; renderUi();
+      let added = null;
       try {
         const result = await send({ type: 'BULK_ADD_TIMES', text: bulkDraft });
-        bulkDraft = ''; bulkMutation = false; recentLoaded = false; await refreshRecent(true); setError(`${result.added} ${result.added === 1 ? 'entry was' : 'entries were'} added.`);
-      } catch (error) { bulkMutation = false; setError(error); }
+        added = result.added;
+        bulkDraft = ''; bulkMutation = false;
+        // Accepted records are already durable in IndexedDB. Show them now,
+        // without waiting for a GitHub history read or the 15-second flush.
+        if (Array.isArray(result.entries)) {
+          const accepted = result.entries.map(entry => ({ ...entry, destinationId: result.destinationId }));
+          recent = mergeActivityRecords(accepted, timesRange(), true);
+          recentLoaded = true;
+          recentFresh = true;
+        }
+        void refreshActivityState().catch(setError);
+        bulkFeedback = { kind: 'success', message: `${added} ${added === 1 ? 'entry was' : 'entries were'} added.` };
+      } catch (error) {
+        bulkMutation = false;
+        if (isExtensionContextInvalidated(error)) { deactivateExtensionContext(); return; }
+        const message = error?.message || 'Could not add time.';
+        bulkFeedback = { kind: 'error', message };
+      }
+      renderUi();
     }); add.disabled = bulkMutation;
-    bulk.append(help, input, add); body.append(bulk);
-    if (errorText) body.prepend(el('div', errorText, errorCode ? 'error' : 'notice'));
+    bulk.append(help, examples, input, add); body.append(bulk);
+    if (bulkFeedback) {
+      const feedback = el('div', undefined, `bulk-time-feedback bulk-time-feedback-${bulkFeedback.kind}`);
+      feedback.setAttribute('role', bulkFeedback.kind === 'error' ? 'alert' : 'status');
+      const dismiss = iconButton('Dismiss bulk time message', 'x', X_PATH, 'bulk-time-feedback-dismiss', () => { bulkFeedback = null; feedback.remove(); });
+      feedback.append(el('span', bulkFeedback.message), dismiss);
+      body.append(feedback);
+    }
+    const readRateLimit = errorText && activityErrorAction !== 'edit'
+      ? errorCode === 'rate_limit' ? connectionError
+        : errorCode === 'all_destinations_failed'
+          ? trackingRateLimit === undefined
+            ? pageState.summaryError?.code === 'rate_limit' ? pageState.summaryError : null
+            : trackingRateLimit
+          : null
+      : null;
+    if (errorText) {
+      const notice = el('section', undefined, 'times-load-error');
+      notice.setAttribute('role', 'alert');
+      if (activityErrorAction === 'edit') {
+        notice.append(el('strong', 'Could not change the time entry'), el('p', errorText));
+      } else {
+        const networkFailure = ['network_error', 'network_timeout'].includes(errorCode);
+        const copy = el('div', undefined, 'times-load-error-copy');
+        if (networkFailure) {
+          copy.append(el('strong', 'Cannot reach GitHub'),
+            el('p', errorCode === 'network_timeout'
+              ? 'GitHub did not respond in time. Check your connection and retry.'
+              : 'Check your connection to GitHub and retry.'));
+        } else if (readRateLimit) {
+          copy.append(el('strong', globalThis.ClockoliRecovery.describeConnectionError(readRateLimit).headline),
+            el('p', errorCode === 'rate_limit'
+              ? 'Activity could not load. Retry after the GitHub rate limit resets.'
+              : 'All configured time repositories failed to load. GitHub also reports a rate limit; other failures may need attention.'));
+        } else copy.append(el('strong', 'Could not load Activity'), el('p', errorText));
+        notice.append(copy);
+        const actions = el('div', undefined, 'times-load-error-actions');
+        actions.append(button('Retry', 'secondary', async () => {
+          errorText = ''; errorCode = ''; connectionError = null; renderUi();
+          try { await refreshActivityState(true); await loadSelectedTimes(); }
+          catch (cause) { setError(cause); }
+        }));
+        notice.append(actions);
+        if (networkFailure) {
+          const details = el('details', undefined, 'times-error-details');
+          details.open = true;
+          details.append(el('summary', 'Technical details'), el('pre', errorText));
+          notice.append(details);
+        }
+      }
+      body.prepend(notice);
+    }
+    document.body?.classList?.toggle('activity-rate-limit-visible', Boolean(readRateLimit));
     page.append(body); return page;
   }
 
-  function renderMenu() {
-    let elapsedValue = null;
+  function mergeTimelineCompletedEntries(completed, optimisticCompletions) {
+    const byId = new Map();
+    const anonymous = [];
+    for (const entry of completed) {
+      if (entry?.id) byId.set(entry.id, entry);
+      else anonymous.push(entry);
+    }
+    for (const entry of optimisticCompletions) {
+      if (!entry?.id) { anonymous.push(entry); continue; }
+      const local = byId.get(entry.id);
+      const localUpdated = Date.parse(local?.updatedAt), optimisticUpdated = Date.parse(entry.updatedAt);
+      // Stop can be followed immediately by another edit. Once its newer
+      // IndexedDB projection has arrived, never reapply an older Stop snapshot.
+      if (local?._pending && Number.isFinite(localUpdated) && Number.isFinite(optimisticUpdated)
+          && localUpdated >= optimisticUpdated) continue;
+      byId.set(entry.id, entry);
+    }
+    return [...byId.values(), ...anonymous];
+  }
+
+  function popupTimelineEntries(windowStart, now) {
+    const week = weekWindow();
+    windowStart = Math.max(windowStart, week.start);
+    const completed = recent.filter(entry => entry._path && (entry._sha || entry._pending)
+      && Number.isFinite(new Date(entry.startedAt).getTime()) && Number.isFinite(new Date(entry.endedAt).getTime())
+      && new Date(entry.startedAt).getTime() < Math.min(now, week.end) && new Date(entry.endedAt).getTime() > windowStart)
+      .sort((left, right) => new Date(left.startedAt) - new Date(right.startedAt));
+    const entries = mergeTimelineCompletedEntries(completed, timelineOptimisticCompletions.values());
+    if (weekWindow().start === weekWindow(Date.now()).start
+      && pageState.active && new Date(pageState.active.startedAt).getTime() <= now) {
+      entries.push({ ...pageState.active, endedAt: new Date(now).toISOString(), _active: true });
+    }
+    return entries.map(entry => {
+      const optimistic = timelineOptimisticEdits.get(entry.id);
+      return { ...entry, isPending: Boolean(entry._pending || optimistic), ...(optimistic || {}) };
+    })
+      .filter(entry => Number.isFinite(new Date(entry.startedAt).getTime())
+        && Number.isFinite(new Date(entry.endedAt).getTime())
+        && (entry._active ? new Date(entry.startedAt).getTime() <= now : new Date(entry.startedAt).getTime() < Math.min(now, week.end))
+        && new Date(entry.endedAt).getTime() > windowStart)
+      .sort((left, right) => new Date(left.startedAt) - new Date(right.startedAt));
+  }
+
+  function popupTimelineItems(historyStart, now) {
+    const byId = new Map();
+    const entries = popupTimelineEntries(historyStart, now);
+    const completedDisplayEnd = weekWindow().end <= Date.now() ? weekWindow().end : now;
+    const rows = popupTimelineRows(entries);
+    const items = entries.map((entry) => {
+      const stableId = entry.id || `${entry._path}:${entry._index}`;
+      const id = `${entry._active ? 'active' : 'entry'}:${stableId}`;
+      const projectName = projectNameForUrl(storedTaskIdentityOf(entry), pageState.projects, pageState.otherProjectName);
+      byId.set(id, entry);
+      return {
+        id,
+        rowId: projectRowId(projectName),
+        url: taskUrlOf(entry),
+        taskIdentity: storedTaskIdentityOf(entry),
+        title: taskTitleOf(entry) || storedTaskIdentityOf(entry) || 'Untitled task',
+        faviconUrl: siteFaviconUrl(entry),
+        githubFavicon: isGitHubTask(entry),
+        fallbackIconUrl: !taskUrlOf(entry) ? extensionResourceUrl('src/assets/clockoli-inverse-circle.svg') : '',
+        description: entry._active ? activeDescriptionValue(entry) : (timelineDescriptionDrafts.get(entry.id) ?? entry.description ?? ''),
+        savedDescription: entry.description || '',
+        originalStartedAt: new Date(entry.startedAt).getTime(),
+        originalEndedAt: entry._active ? null : new Date(entry.endedAt).getTime(),
+        startedAt: Math.max(historyStart, weekWindow().start, new Date(entry.startedAt).getTime()),
+        endedAt: entry._active ? null : Math.min(completedDisplayEnd, new Date(entry.endedAt).getTime()),
+        isRunning: Boolean(entry._active),
+        isEditable: !entry._active && (timesMode || completeVisualWeekStart === weekWindow().start),
+        isPending: Boolean(entry.isPending),
+        isStartDisabled: !trackableTaskIdentityOf(entry) || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)
+          || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict')),
+        isStopDisabled: Boolean(entry._active && (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
+          || pageState.pendingWrites?.some(item => item.status === 'conflict'))),
+        isDeleteDisabled: timelineDeleteInFlight || timelineStartInFlight || timelineStopInFlight
+          || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict')),
+      };
+    });
+    return { items, rows, byId };
+  }
+
+  function rememberTimelineDescription(entry, value) {
+    if (entry._active) {
+      descriptionDraft = { id: entry.id || entry.startedAt, taskUrl: taskUrlOf(entry), value };
+      return;
+    }
+    if (normalizedDescription(value) === normalizedDescription(entry.description)) timelineDescriptionDrafts.delete(entry.id);
+    else timelineDescriptionDrafts.set(entry.id, value);
+  }
+
+  function popupTimelineRows(entries) {
+    const names = new Set(entries.map(entry => projectNameForUrl(storedTaskIdentityOf(entry), pageState.projects, pageState.otherProjectName)));
+    const rows = (pageState.projects || []).filter(project => names.has(project.name))
+      .map(project => ({ id: projectRowId(project.name), title: project.name }));
+    const otherProjectName = String(pageState.otherProjectName || 'Other');
+    if (names.has(otherProjectName) && !rows.some(row => row.id === projectRowId(otherProjectName))) {
+      rows.push({ id: projectRowId(otherProjectName), title: otherProjectName });
+    }
+    return rows.length ? rows : [{ id: projectRowId(otherProjectName), title: otherProjectName }];
+  }
+
+  function timelineTrackActionDisabled() {
+    const current = taskFromLocation();
+    return !current || sameTask(current, pageState.active) || timelineStartInFlight || timelineStopInFlight
+      || timelineDeleteInFlight || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
+  }
+
+  function timelineNow() {
+    const activeStart = new Date(pageState.active?.startedAt).getTime();
+    return Number.isFinite(activeStart) ? Math.max(Date.now(), activeStart) : Date.now();
+  }
+
+  function activityHistoryStart(fallback) {
+    if (timesMode && activityViewMode !== 'calendar') return fallback;
+    return recent.reduce((start, entry) => {
+      const timestamp = new Date(entry.startedAt).getTime();
+      return Number.isFinite(timestamp) ? Math.min(start, timestamp) : start;
+    }, fallback);
+  }
+
+  function openTimelineList() {
+    if (timesMode) { activityViewMode = 'list'; saveActivityViewMode('list'); renderUi(); }
+    else { timelineViewMode = 'list'; saveActivityViewMode('list'); applyCompactViewMode(); refreshCompactSurface(); }
+  }
+
+  function timelineWeekError(error) {
+    if (!(error instanceof RangeError) || !/overlap/i.test(error.message)) return null;
+    const warning = el('div', undefined, 'timeline-week-error error');
+    warning.setAttribute('role', 'alert');
+    warning.append(el('strong', 'Overlapping entries prevent this week from being displayed.'),
+      el('div', 'Go to List for this week and resolve the overlapping time entries manually.'));
+    warning.append(button('Go to List', 'secondary', openTimelineList));
+    return warning;
+  }
+
+  function showTimelineEditConflict(error) {
+    if (!/overlap/i.test(error?.message || '')) return false;
+    const section = (timesMode ? shadow : shadow)?.querySelector('.popup-timeline-section');
+    if (!section) return false;
+    section.querySelector('.timeline-edit-error')?.remove();
+    const warning = el('div', undefined, 'timeline-edit-error error');
+    warning.setAttribute('role', 'alert');
+    warning.append(el('strong', 'Time entry was not moved.'),
+      el('div', /running timer/i.test(error.message) ? error.message
+        : `${error.message} Go to List for this week and resolve the overlapping entries manually.`));
+    if (!/running timer/i.test(error.message)) warning.append(button('Go to List', 'secondary', openTimelineList));
+    section.insertBefore(warning, section.querySelector('.timeline-shell'));
+    return true;
+  }
+
+  function showTimelineWeekError(error) {
+    const warning = timelineWeekError(error);
+    if (!warning) return false;
+    timelineInstance?.destroy(); timelineInstance = null; timelineWindow = null;
+    const shell = (timesMode ? shadow : shadow)?.querySelector('.popup-timeline-section .timeline-shell');
+    shell?.replaceChildren(warning);
+    return Boolean(shell);
+  }
+
+  function refreshMountedTimeline() {
+    if (!pageState.configured || !timelineInstance || !timelineWindow) return false;
+    const periodStart = weekWindow().start;
+    timelineWindow = { ...timelineWindow, now: Math.min(timelineNow(), weekWindow().end - 1),
+      historyStart: activityHistoryStart(periodStart) };
+    const { items, rows, byId } = popupTimelineItems(timelineWindow.historyStart, timelineWindow.now);
+    timelineEntriesById = byId;
+    const refocus = !(timesMode ? activityTimelineView : timelineView);
+    if (refocus) {
+      if (timesMode) activityTimelineView = activityPeriodTimelineView(timelineWindow.now);
+      else timelineView = activityPeriodTimelineView(timelineWindow.now);
+    }
+    try {
+      timelineInstance.update({ items, rows, now: timelineWindow.now,
+        domainStart: periodStart, totalRange: activityTotalRange(),
+        ...(refocus && timelineInstance.getViewMode?.() !== 'calendar'
+          ? { view: timesMode ? activityTimelineView : timelineView } : {}) });
+    } catch (error) {
+      if (showTimelineWeekError(error)) return true;
+      throw error;
+    }
+    if (timesMode && activityInitialFocusPending && recentFresh
+        && periodStart === weekWindow(Date.now()).start && timelineInstance.getViewMode?.() === 'timeline') {
+      timelineInstance.scrollToEnd();
+      activityInitialFocusPending = false;
+      activityInitialFocusMounted = true;
+    }
+    updateListWeekTotal();
+    refreshCompactSurface();
+    refreshTimelineQueueIndicator();
+    return true;
+  }
+
+  function beginTimelineStop() {
+    if (timelineStopInFlight) return false;
+    timelineStopInFlight = true;
+    refreshMountedTimeline();
+    return true;
+  }
+
+  function finishTimelineStop() {
+    timelineStopInFlight = false;
+    refreshMountedTimeline();
+    if (timesMode && activityViewMode === 'list') renderUi();
+  }
+
+  function refreshMountedTimelineAtRightEdge(startedAt) {
+    const startedAtMs = new Date(startedAt).getTime();
+    if (!Number.isFinite(startedAtMs)) return false;
+    if (weekWindow().start !== weekWindow(Date.now()).start) return refreshMountedTimeline();
+    timelineScrollToRightPending = true;
+    if (!timelineInstance || !timelineWindow || !timelineView) return false;
+    const now = Math.max(Date.now(), startedAtMs);
+    timelineWindow = { ...timelineWindow, now };
+    const { items, rows, byId } = popupTimelineItems(timelineWindow.historyStart, now);
+    timelineEntriesById = byId;
+    if (timelineGraphicViewMode === 'calendar') {
+      timelineInstance.update({ items, rows, now });
+    } else {
+      const span = Math.max(1, timelineView.end - timelineView.start);
+      timelineView = { start: now - span, end: now, focusedAt: now };
+      timelineInstance.update({ items, rows, now, view: timelineView });
+    }
+    timelineInstance.scrollToEnd();
+    refreshCompactSurface();
+    timelineScrollToRightPending = false;
+    return true;
+  }
+
+  function rememberCompletedLocally(completion, destinationId) {
+    if (!completion?.entry?.id) return;
+    const local = completion.localEntry ?? completion.entry;
+    timelineOptimisticCompletions.set(completion.entry.id, {
+      ...completion.entry, ...local,
+      destinationId: local.destinationId ?? completion.entry.destinationId ?? destinationId,
+      _pending: Boolean(completion.pending), _optimisticCompletion: true,
+    });
+  }
+
+  function acceptTimelineStartImmediately(task, { completePrevious = false, identity = '', previousDescription } = {}) {
+    const startedAt = new Date().toISOString();
+    const previousActive = pageState.active;
+    const acceptanceId = beginTimelineQueueAcceptance();
+    const previousDescriptionDraft = descriptionDraft ? { ...descriptionDraft } : null;
+    const context = { acceptanceId, acceptedActive: null, previousActive, previousDescriptionDraft, startedAt };
+    try {
+      if (completePrevious && previousActive?.id && Number.isFinite(new Date(previousActive.startedAt).getTime())) {
+        timelineOptimisticCompletions.set(previousActive.id, {
+          ...previousActive, description: previousDescription ?? previousActive.description ?? '', endedAt: startedAt,
+          durationSeconds: Math.max(0, Math.floor((new Date(startedAt) - new Date(previousActive.startedAt)) / 1_000)),
+          _pending: true, _optimisticCompletion: true,
+        });
+      }
+      const acceptedActive = {
+        id: `timeline-local:${identity || trackableTaskIdentityOf(task)}:${acceptanceId}`,
+        taskUrl: trackableTaskIdentityOf(task), taskTitle: taskTitleOf(task) || '',
+        startedAt, entryDate: localDateValue(new Date(startedAt)), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, _pending: true,
+      };
+      context.acceptedActive = acceptedActive;
+      timelineAcceptedActive = acceptedActive;
+      pageState = { ...pageState, active: acceptedActive };
+      recentLoadId += 1; recentLoad = null; loadingRecent = false;
+      refreshTimelineQueueIndicator();
+      if (!refreshMountedTimelineAtRightEdge(startedAt)) renderUi();
+      return context;
+    } catch (error) {
+      timelineAcceptedActive = null;
+      if (previousActive?.id) timelineOptimisticCompletions.delete(previousActive.id);
+      pageState = { ...pageState, active: previousActive };
+      descriptionDraft = previousDescriptionDraft;
+      finishTimelineQueueAcceptance(acceptanceId);
+      throw error;
+    }
+  }
+
+  function rollbackTimelineStart(context) {
+    timelineAcceptedActive = null;
+    if (context.previousActive?.id) timelineOptimisticCompletions.delete(context.previousActive.id);
+    pageState = { ...pageState, active: context.previousActive };
+    descriptionDraft = context.previousDescriptionDraft;
+    if (!refreshMountedTimeline()) renderUi();
+  }
+
+  async function trackCurrentTimelineTask({ preserveSavedDescription = false, sourceTask = null } = {}) {
+    if (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight) return;
+    timelineStartInFlight = true;
+    refreshMountedTimeline();
+    let startContext = null;
+    try {
+      const task = sourceTask || (popupMode ? await refreshPopupTask() : taskFromLocation());
+      if (!task) throw new Error('Open an HTTP(S) page to start tracking.');
+      if (sameTask(task, pageState.active)) return;
+      const switching = Boolean(pageState.active);
+      if (switching && !confirmLongEntry()) return;
+      const previousDescription = activeDescriptionValue();
+      const hasDraft = Boolean(descriptionDraft && pageState.active
+        && descriptionDraft.id === (pageState.active.id || pageState.active.startedAt)
+        && descriptionDraft.taskUrl === taskUrlOf(pageState.active));
+      startContext = acceptTimelineStartImmediately(task, { completePrevious: switching, identity: 'current-task', previousDescription });
+      const result = await send(switching
+        ? { type: 'SWITCH_TASK', taskUrl: task.taskUrl, taskTitle: task.taskTitle || '',
+          ...(preserveSavedDescription && !hasDraft ? {} : { description: previousDescription }) }
+        : { type: 'START', taskUrl: task.taskUrl, taskTitle: task.taskTitle || '' });
+      if (switching) rememberCompletedLocally(result?.stopped, result?.destinationId);
+      const active = switching ? result?.active : result;
+      if (active?.id) {
+        timelineAcceptedActive = { ...active, _pending: Boolean(active._pending) };
+        pageState = { ...pageState, active: timelineAcceptedActive };
+        if (!refreshMountedTimeline() || (timesMode && activityViewMode === 'list')) renderUi();
+      }
+      void refreshMountedTimelineState().catch(setError);
+    } catch (error) {
+      if (startContext) rollbackTimelineStart(startContext);
+      setError(error);
+      throw error;
+    } finally {
+      if (startContext) finishTimelineQueueAcceptance(startContext.acceptanceId);
+      refreshTimelineQueueIndicator();
+      timelineStartInFlight = false;
+      refreshMountedTimeline();
+    }
+  }
+
+  function beginTimelineQueueAcceptance() {
+    const id = `local:${++timelineQueueAcceptanceSequence}`;
+    timelineQueueAcceptances.add(id);
+    return id;
+  }
+
+  function finishTimelineQueueAcceptance(id) { timelineQueueAcceptances.delete(id); }
+
+  function timelineQueueSize() { return Math.max(Number(pageState.pendingCount) || 0, timelineQueuedOperationIds.size + timelineQueueAcceptances.size); }
+
+  function refreshTimelineQueueIndicator() {
+    if (!timelineQueueIndicator) return;
+    const status = globalThis.ClockoliRecovery.describeSaveStatus({ ...pageState, pendingCount: timelineQueueSize(),
+      saving: timelineQueueAcceptances.size > 0 || timelineStartInFlight || timelineStopInFlight });
+    // Ordinary local writes never show a saving/waiting status. Only an
+    // actionable synchronization failure belongs in the visible feedback.
+    const hidden = !status.conflict && !status.action;
+    timelineQueueIndicator.hidden = hidden;
+    timelineQueueIndicator.setAttribute('aria-hidden', String(hidden));
+    timelineQueueIndicator.textContent = status.label;
+  }
+
+  function applyTimelineOptimisticEntry(entry, edits) {
+    recent = recent.map(item => {
+      if (item.id !== entry.id || item._path !== entry._path) return item;
+      const startedAt = edits.startedAt ?? item.startedAt, endedAt = edits.endedAt ?? item.endedAt;
+      return {
+        ...item, ...edits, startedAt, endedAt,
+        entryDate: timestampParts(startedAt, item.timezone).date,
+        durationSeconds: Math.max(0, Math.floor((new Date(endedAt) - new Date(startedAt)) / 1000)),
+      };
+    });
+  }
+
+  function rollbackTimelineOptimisticEdit(entry, generation, restoreRecent) {
+    const state = timelineOptimisticEditStates.get(generation);
+    if (!state) return;
+    state.rejected = true;
+    if (timelineOptimisticEditGenerations.get(entry.id) !== generation) return;
+    let restore = state;
+    while (restore.previousGeneration) {
+      const previousState = timelineOptimisticEditStates.get(restore.previousGeneration);
+      if (previousState?.settled) {
+        if (restoreRecent && restore.previousEntry) {
+          recent = recent.map(item => item.id === entry.id && item._path === entry._path && item.destinationId === entry.destinationId ? restore.previousEntry : item);
+        }
+        timelineOptimisticEdits.delete(entry.id);
+        timelineOptimisticEditGenerations.delete(entry.id);
+        return;
+      }
+      if (!previousState?.rejected) break;
+      restore = previousState;
+    }
+    if (restoreRecent && restore.previousEntry) {
+      recent = recent.map(item => item.id === entry.id && item._path === entry._path && item.destinationId === entry.destinationId ? restore.previousEntry : item);
+    }
+    if (restore.hadPreviousOptimisticEdit) timelineOptimisticEdits.set(entry.id, restore.previousOptimisticEdit);
+    else timelineOptimisticEdits.delete(entry.id);
+    if (restore.previousGeneration) timelineOptimisticEditGenerations.set(entry.id, restore.previousGeneration);
+    else timelineOptimisticEditGenerations.delete(entry.id);
+  }
+
+  async function queueCalendarEntry(entry, edits) {
+    const acceptanceId = beginTimelineQueueAcceptance();
+    const requestOrder = timelineQueueAcceptanceSequence;
+    refreshTimelineQueueIndicator();
+    try {
+      const result = await send({ type: 'QUEUE_ENTRY_EDIT', payload: {
+        destinationId: entry.destinationId,
+        path: entry._path, originalSha: entry._sha, index: entry._index,
+        original: originalRecord(entry), edits,
+      } });
+      // A slower earlier acceptance must not replace a newer accepted edit.
+      if (requestOrder < (timelineAcceptedEditOrders.get(entry.id) || 0)) return;
+      timelineAcceptedEditOrders.set(entry.id, requestOrder);
+      const previousEntry = recent.find(item => item.id === entry.id && item._path === entry._path && item.destinationId === entry.destinationId);
+      const previousOptimisticEditGeneration = timelineOptimisticEditGenerations.get(entry.id);
+      const optimisticEditGeneration = {};
+      timelineOptimisticEditStates.set(optimisticEditGeneration, {
+        previousEntry, hadPreviousOptimisticEdit: timelineOptimisticEdits.has(entry.id),
+        previousOptimisticEdit: timelineOptimisticEdits.get(entry.id),
+        previousGeneration: previousOptimisticEditGeneration, rejected: false, settled: false,
+      });
+      timelineOptimisticEditGenerations.set(entry.id, optimisticEditGeneration);
+      timelineOptimisticEdits.set(entry.id, edits);
+      applyTimelineOptimisticEntry(entry, edits);
+      trackTimelineQueuedOperation(result?.operationId, entry.id, optimisticEditGeneration);
+      (timesMode ? shadow : shadow)?.querySelector('.timeline-edit-error')?.remove();
+      recordTimelineQueueDiagnostic('Edit time entry: accepted locally and queued for GitHub.');
+    } catch (error) {
+      recordTimelineQueueDiagnostic('Edit time entry: local queue rejected the change.');
+      throw error;
+    } finally {
+      finishTimelineQueueAcceptance(acceptanceId);
+      refreshTimelineQueueIndicator();
+      if (!refreshMountedTimeline()) renderUi();
+    }
+    void refreshMountedTimelineState().catch(setError);
+  }
+
+  async function queueActiveEdit(entry, requestedEdits, diagnostic = 'Edit running timer') {
+    const hadPreviousOptimisticEdit = timelineOptimisticEdits.has(entry.id);
+    const previousOptimisticEdit = timelineOptimisticEdits.get(entry.id);
+    const previousOptimisticEditGeneration = timelineOptimisticEditGenerations.get(entry.id);
+    const optimisticEditGeneration = {};
+    const edits = { ...(previousOptimisticEdit || {}), ...requestedEdits };
+    if (requestedEdits.startedAt !== undefined && requestedEdits.description === undefined) delete edits.description;
+    const acceptVisualEdit = () => {
+      timelineOptimisticEditStates.set(optimisticEditGeneration, {
+        previousEntry: null, hadPreviousOptimisticEdit, previousOptimisticEdit,
+        previousGeneration: previousOptimisticEditGeneration, rejected: false, settled: false,
+      });
+      timelineOptimisticEditGenerations.set(entry.id, optimisticEditGeneration);
+      timelineOptimisticEdits.set(entry.id, edits);
+      refreshMountedTimeline();
+    };
+    const waitForAcceptance = requestedEdits.startedAt !== undefined;
+    if (!waitForAcceptance) acceptVisualEdit();
+    const acceptanceId = beginTimelineQueueAcceptance();
+    const requestOrder = timelineQueueAcceptanceSequence;
+    refreshTimelineQueueIndicator();
+    if (!timelineInstance) renderUi();
+    try {
+      const result = await send({ type: 'QUEUE_ACTIVE_START_EDIT', payload: {
+        original: { id: entry.id, startedAt: entry.startedAt },
+        ...(requestedEdits.startedAt !== undefined ? { startedAt: requestedEdits.startedAt } : {}),
+        ...(requestedEdits.description !== undefined ? { description: requestedEdits.description } : {}),
+      } });
+      if (waitForAcceptance) {
+        if (requestOrder < (timelineAcceptedEditOrders.get(entry.id) || 0)) return;
+        timelineAcceptedEditOrders.set(entry.id, requestOrder);
+        acceptVisualEdit();
+      }
+      trackTimelineQueuedOperation(result?.operationId, entry.id, optimisticEditGeneration);
+      recordTimelineQueueDiagnostic(`${diagnostic}: accepted locally and queued for GitHub.`);
+    } catch (error) {
+      if (!waitForAcceptance) rollbackTimelineOptimisticEdit(entry, optimisticEditGeneration, false);
+      recordTimelineQueueDiagnostic(`${diagnostic}: local queue rejected the change.`);
+      throw error;
+    } finally {
+      finishTimelineQueueAcceptance(acceptanceId);
+      refreshTimelineQueueIndicator();
+      if (!refreshMountedTimeline()) renderUi();
+    }
+    void refreshMountedTimelineState().catch(setError);
+  }
+
+  function queueActiveStartEdit(entry, startedAt) {
+    return queueActiveEdit(entry, { startedAt: new Date(startedAt).toISOString() }, 'Adjust timer start');
+  }
+
+  async function queueActiveDescriptionEdit(entry, description) {
+    await queueActiveEdit(entry, { description }, 'Edit running timer description');
+    retireActiveDescriptionDraft(entry, description);
+  }
+
+  async function queueTimelineEntryDelete(entry) {
+    if (!entry || timelineDeleteInFlight || timelineStartInFlight || timelineStopInFlight) return false;
+    if (!confirm(`Delete this ${formatDuration(entry.durationSeconds)} entry?`)) return false;
+    timelineDeleteInFlight = true;
+    const previousRecent = recent, previousCompletion = timelineOptimisticCompletions.get(entry.id);
+    const previousTotals = { todayTrackedMs: pageState.todayTrackedMs, weekTrackedMs: pageState.weekTrackedMs };
+    recent = recent.filter(item => !(item.id === entry.id && item._path === entry._path && item.destinationId === entry.destinationId));
+    timelineOptimisticCompletions.delete(entry.id);
+    pageState = { ...pageState, todayTrackedMs: null, weekTrackedMs: null };
+    const acceptanceId = beginTimelineQueueAcceptance();
+    refreshTimelineQueueIndicator();
+    refreshMountedTimeline();
+    recordTimelineQueueDiagnostic('Delete time entry: accepted locally and queued for GitHub.');
+    if (timesMode && activityViewMode === 'list') renderUi();
+    try {
+      const result = await send({ type: 'QUEUE_ENTRY_DELETE', payload: {
+        destinationId: entry.destinationId,
+        path: entry._path, originalSha: entry._sha, index: entry._index, original: originalRecord(entry),
+      } });
+      if (result?.operationId) timelineQueuedOperationIds.set(result.operationId, entry.id);
+    } catch (error) {
+      recent = previousRecent;
+      if (previousCompletion) timelineOptimisticCompletions.set(entry.id, previousCompletion);
+      pageState = { ...pageState, ...previousTotals };
+      recordTimelineQueueDiagnostic('Delete time entry: local queue rejected the change.');
+      throw error;
+    } finally {
+      finishTimelineQueueAcceptance(acceptanceId);
+      timelineDeleteInFlight = false;
+      refreshTimelineQueueIndicator();
+      if (!refreshMountedTimeline() || (timesMode && activityViewMode === 'list')) renderUi();
+    }
+    void refreshMountedTimelineState().catch(setError);
+    return true;
+  }
+
+  async function stopTimelineEntry(activeEntry, { preserveSavedDescription = false } = {}) {
+    if (!activeEntry || timelineStartInFlight || timelineDeleteInFlight || !beginTimelineStop()) return false;
+    try {
+      if (!confirmLongEntry(activeEntry)) return false;
+      const result = await send(preserveSavedDescription ? { type: 'STOP' } : { type: 'STOP', description: activeDescriptionValue(activeEntry) });
+      if (!result?.entry?.id) throw new Error('The locally accepted Stop did not return its completed time entry.');
+      if (timelineAcceptedActive && sameTask(timelineAcceptedActive, activeEntry)) timelineAcceptedActive = null;
+      rememberCompletedLocally(result, result.destinationId);
+      pageState = { ...pageState, active: null };
+      refreshMountedTimeline();
+      if (timesMode && activityViewMode === 'list') renderUi();
+      await refreshState(false, false);
+      return true;
+    } catch (error) { setError(error); throw error; }
+    finally { finishTimelineStop(); }
+  }
+
+  async function restartTimelineEntry(entry) {
+    if (!entry || !trackableTaskIdentityOf(entry) || entry._active || timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || sameTask(entry, pageState.active)) return false;
+    if (!confirmLongEntry()) return false;
+    timelineStartInFlight = true;
+    refreshMountedTimeline();
+    try {
+    const previousDescription = activeDescriptionValue();
+    const startContext = acceptTimelineStartImmediately(entry, { completePrevious: true, identity: entry.id, previousDescription });
+    try {
+      const result = await send({ type: 'SWITCH_TASK', timelineTask: true, taskUrl: trackableTaskIdentityOf(entry), taskTitle: taskTitleOf(entry) || '', description: previousDescription,
+        sourceEntry: { id: entry.id, destinationId: entry.destinationId, entryDate: entry.entryDate } });
+      rememberCompletedLocally(result?.stopped, result?.destinationId);
+      if (result?.active) {
+        timelineAcceptedActive = { ...result.active, _pending: Boolean(result.active._pending) };
+        pageState = { ...pageState, active: timelineAcceptedActive };
+        if (!refreshMountedTimeline() || (timesMode && activityViewMode === 'list')) renderUi();
+      }
+    } catch (error) {
+      rollbackTimelineStart(startContext);
+      setError(error); throw error;
+    } finally {
+      finishTimelineQueueAcceptance(startContext.acceptanceId);
+      refreshTimelineQueueIndicator();
+      if (!refreshMountedTimeline()) renderUi();
+    }
+    void refreshMountedTimelineState().catch(setError);
+    } finally {
+      timelineStartInFlight = false;
+      refreshMountedTimeline();
+      if (timesMode && activityViewMode === 'list') renderUi();
+    }
+    return true;
+  }
+
+  function renderPopupTimeline(preservedSection = null) {
+    if (preservedSection) return preservedSection;
+    const section = el('section', undefined, 'popup-timeline-section');
+    if (!timesMode) {
+      const listTotal = el('div', listWeekTotalText(), 'popup-list-total');
+      listTotal.hidden = timelineViewMode !== 'list';
+      section.append(weekNavigation(), listTotal);
+    }
+    timelineQueueIndicator = el('div', undefined, 'timeline-queue-status muted');
+    timelineQueueIndicator.setAttribute('role', 'status');
+    timelineQueueIndicator.setAttribute('aria-live', 'polite');
+    timelineQueueIndicator.hidden = true;
+    const createTimeline = globalThis.ClockoliTaskTimeline?.createTimeline;
+    if (!createTimeline) {
+      section.append(timelineQueueIndicator, el('div', 'Timeline component is unavailable. Reload the extension.', 'error'));
+      return section;
+    }
+    const timelineShell = el('div', undefined, 'timeline-shell');
+    const loading = el('div', undefined, 'calendar-week-loading');
+    loading.setAttribute('role', 'status'); loading.setAttribute('aria-live', 'polite');
+    const spinner = el('span', undefined, 'calendar-week-spinner'); spinner.setAttribute('aria-hidden', 'true');
+    loading.append(spinner, el('span', 'Loading week…', 'calendar-week-loading-label'));
+    loading.hidden = !(calendarWeekLoadingId !== null || selectedTimesCalendarLoadingId !== null)
+      || (timesMode ? activityViewMode !== 'calendar' : timelineViewMode !== 'calendar');
+    timelineShell.append(loading);
+    if (!recentLoaded && !timelineAcceptedActive) {
+      if (loading.hidden) {
+        const placeholder = el('div', undefined, 'times-loading-placeholder');
+        placeholder.setAttribute('role', 'status');
+        placeholder.append(el('span', undefined, 'times-loading-spinner'), el('span', 'Loading activity…'));
+        timelineShell.append(placeholder);
+      }
+      section.append(timelineShell, timelineQueueIndicator);
+      return section;
+    }
+    const now = Math.min(timelineNow(), weekWindow().end - 1), periodStart = weekWindow().start;
+    const focusCurrentActivityWeek = timesMode && activityViewMode === 'timeline'
+      && periodStart === weekWindow(Date.now()).start
+      && (!activityInitialFocusMounted || (activityInitialFocusPending && recentFresh));
+    if (focusCurrentActivityWeek && !recentFresh) activityInitialFocusPending = true;
+    const historyStart = activityHistoryStart(periodStart);
+    timelineWindow = { historyStart, now };
+    if (timesMode) activityTimelineView ||= activityPeriodTimelineView(now);
+    else timelineView ||= activityPeriodTimelineView(now);
+    const initialView = timesMode ? activityTimelineView : timelineView;
+    const { items, rows, byId } = popupTimelineItems(historyStart, now);
+    timelineEntriesById = byId;
+    const host = el('div', undefined, 'task-timeline-host'); timelineShell.prepend(host);
+    if (timesMode && activityInitialFocusPending) {
+      const cancelInitialFocus = () => { activityInitialFocusPending = false; activityInitialFocusMounted = true; };
+      host.addEventListener('wheel', cancelInitialFocus, { passive: true });
+      host.addEventListener('pointerdown', cancelInitialFocus);
+      host.addEventListener('keydown', cancelInitialFocus);
+    }
+    if (compactSurface) compactSurface.host = host;
+    section.append(timelineShell, timelineQueueIndicator);
+    placeCalendarWeekNavigation(section, timelineViewMode);
+    globalThis.requestAnimationFrame(() => {
+      if (!host.isConnected) return;
+      try {
+        timelineInstance = createTimeline(host, {
+        items,
+        rows,
+        now,
+        domainStart: periodStart,
+        totalRange: activityTotalRange(),
+        view: initialView,
+        viewMode: timesMode ? (activityViewMode === 'list' ? 'timeline' : activityViewMode) : timelineGraphicViewMode,
+        weeklyCalendar: true,
+        activityDashboard: timesMode || popupMode,
+        activityPage: timesMode || popupMode,
+        toolbarPopup: popupMode,
+        onCalendarNavigate: range => suppressCalendarNavigate ? undefined : loadActivityCalendarWeek(range),
+        onViewModeChange: mode => {
+          if (timesMode) {
+            activityViewMode = mode;
+            for (const control of shadow?.querySelectorAll('.times-view-button') ?? []) {
+              control.setAttribute('aria-pressed', String(control.textContent.toLowerCase() === mode));
+            }
+          } else { timelineGraphicViewMode = mode; if (timelineViewMode !== 'list') timelineViewMode = mode; }
+        },
+        onViewChange: view => { if (timesMode) activityTimelineView = view; else timelineView = view; globalThis.requestAnimationFrame?.(refreshTimelineOverlaps); },
+        onEditDebug: detail => recordTimelineGestureDiagnostic(detail),
+        onError: (error, context) => {
+          if (!host.isConnected) return;
+          if (context?.action === 'edit' && showTimelineEditConflict(error)) return;
+          if (!showTimelineWeekError(error)) setError(error,
+            context?.action === 'edit' || ['move', 'resize-start', 'resize-end'].includes(context?.event?.action) ? 'edit' : null);
+        },
+        onStop: item => {
+          const entry = timelineEntriesById.get(item.id);
+          return entry?._active ? stopTimelineEntry(entry) : false;
+        },
+        onDelete: async item => {
+          const entry = timelineEntriesById.get(item.id);
+          if (!entry || timelineDeleteInFlight || timelineStartInFlight || timelineStopInFlight) return false;
+          if (!entry._active) return queueTimelineEntryDelete(entry);
+          if (!confirm('Delete this running timer without saving its tracked time?')) return false;
+          timelineDeleteInFlight = true;
+          const acceptanceId = beginTimelineQueueAcceptance();
+          refreshTimelineQueueIndicator();
+          refreshMountedTimeline();
+          try {
+            const result = await send({ type: 'DISCARD_ACTIVE' });
+            if (result?.operationId) timelineQueuedOperationIds.set(result.operationId, entry.id);
+            if (timelineAcceptedActive && sameTask(timelineAcceptedActive, entry)) timelineAcceptedActive = null;
+            pageState = { ...pageState, active: null };
+            refreshMountedTimeline();
+            void refreshMountedTimelineState().catch(setError);
+          } catch (error) { setError(error); throw error; }
+          finally {
+            finishTimelineQueueAcceptance(acceptanceId);
+            refreshTimelineQueueIndicator();
+            timelineDeleteInFlight = false;
+            refreshMountedTimeline();
+          }
+          return true;
+        },
+        onStart: item => restartTimelineEntry(timelineEntriesById.get(item.id)),
+        onEntryEdit: async (item, trigger) => {
+          const entry = timelineEntriesById.get(item.id);
+          if (!entry) return false;
+          await openTimeEntryForm(entry, trigger);
+          return true;
+        },
+        onDescriptionInput: (item, value) => {
+          const entry = timelineEntriesById.get(item.id);
+          if (!entry) return;
+          rememberTimelineDescription(entry, value);
+        },
+        onDescriptionCommit: async (item, value) => {
+          const entry = timelineEntriesById.get(item.id);
+          if (!entry) return false;
+          const description = normalizedDescription(value);
+          if (description === String(entry._active ? savedActiveDescriptionValue(entry) : entry.description || '').trim()) {
+            if (entry._active && description === normalizedDescription(entry.description)) retireActiveDescriptionDraft(entry, description);
+            return true;
+          }
+          if (entry._active) await queueActiveDescriptionEdit(entry, description);
+          else await queueCalendarEntry(entry, { description });
+          if (normalizedDescription(timelineDescriptionDrafts.get(entry.id)) === description) timelineDescriptionDrafts.delete(entry.id);
+          return true;
+        },
+        onEditCommit: async edit => {
+          if (!timesMode && completeVisualWeekStart !== weekWindow().start) return false;
+          const entry = timelineEntriesById.get(edit.id)
+            || recent.find(item => !item._active && `entry:${item.id}` === edit.id);
+          if (!entry) return false;
+          if (entry._active) {
+            if (edit.kind !== 'resize-left') return;
+            try {
+              await queueActiveStartEdit(entry, edit.startedAt);
+            } catch (error) { setError(error, 'edit'); throw error; }
+            return;
+          }
+          const edits = edit.kind === 'move'
+            ? { startedAt: new Date(edit.startedAt).toISOString(), endedAt: new Date(edit.endedAt).toISOString() }
+            : edit.kind === 'resize-left'
+              ? { startedAt: new Date(edit.startedAt).toISOString() }
+              : { endedAt: new Date(edit.endedAt).toISOString() };
+          try { await queueCalendarEntry(entry, edits); }
+          catch (error) { setError(error, 'edit'); throw error; }
+        },
+        });
+        if ((!timesMode || focusCurrentActivityWeek) && periodStart === weekWindow(Date.now()).start) timelineInstance.scrollToEnd();
+        if (focusCurrentActivityWeek && timelineInstance.getViewMode?.() === 'timeline') {
+          activityInitialFocusMounted = true;
+          if (recentFresh) activityInitialFocusPending = false;
+        }
+        if (timesMode && activityViewMode === 'calendar') {
+          focusActivityCalendarPeriod();
+          void loadActivityCalendarWeek(timelineInstance.getCalendarRange());
+        }
+      } catch (error) {
+        timelineInstance = null;
+        const message = error instanceof Error ? error.message : String(error || 'Invalid timeline data');
+        timelineShell.replaceChildren(timelineWeekError(error)
+          || el('div', `Timeline could not be displayed. ${message}`, 'error'));
+        return;
+      }
+      refreshTimelineOverlaps();
+      if (timelineScrollToRightPending) {
+        timelineInstance.scrollToEnd();
+        timelineScrollToRightPending = false;
+      }
+    });
+    return section;
+  }
+
+  function renderQueueDiagnostics() {
+    if (pageState.showQueueDiagnostics !== true) return null;
+    if (!queueDiagnostics.length && !pageState.pendingWrites?.length) return null;
+    const diagnostics = el('details', undefined, 'queue-diagnostics');
+    diagnostics.open = false;
+    diagnostics.setAttribute('data-testid', 'queue-diagnostics');
+    diagnostics.append(el('summary', `Queue diagnostics${pageState.pendingCount ? ` (${pageState.pendingCount})` : ''}`));
+    const explanation = el('div', 'Local diagnostic log. Safe operation details only.', 'muted');
+    const entries = el('ol', undefined, 'queue-diagnostics-list');
+    for (const event of queueDiagnostics.slice(-40).reverse()) {
+      const row = el('li', undefined, 'queue-diagnostic-event');
+      row.append(el('time', new Date(event.at).toLocaleTimeString(), 'queue-diagnostic-time'), document.createTextNode(event.message));
+      entries.append(row);
+    }
+    if (!queueDiagnostics.length) entries.append(el('li', 'Waiting for the first queue update.', 'queue-diagnostic-event'));
+    diagnostics.append(explanation, entries);
+    return diagnostics;
+  }
+
+  function taskTrackedText() {
+    if (!participantData?.complete || participantData.taskUrl !== taskUrlOf(taskFromLocation()) || !Array.isArray(participantData.participants)) return '';
+    const totals = participantData.participants.map(effectiveParticipantSeconds);
+    if (totals.some(value => value === null)) return '';
+    return `Tracked on this issue/PR: ${formatDuration(totals.reduce((sum, value) => sum + value, 0))}${participantData.participants.some(value => value.activeStartedAt) ? ' (includes running time)' : ''}`;
+  }
+
+  function appendTrackedTotals(parent, compact = false) {
+    for (const [key, label] of [['todayTrackedMs', 'Today'], ['weekTrackedMs', 'This week']]) {
+      const row = el('div', undefined, 'today-total');
+      const value = el('strong', trackedTotalText(key), 'today-total-value'); value.setAttribute('data-tracked-total', key);
+      row.append(el('span', `${label}${compact ? ' ·' : ':'}`), value); parent.append(row);
+    }
+  }
+
+  function updatePanelClocks() {
+    if ((timesMode && activityViewMode === 'list') || (!timesMode && timelineViewMode === 'list')) updateListWeekTotal();
+    else updateActivityWeekSummary();
+    for (const scope of [shadow, timesMode ? document.getElementById?.('activity-summary') : null]) {
+      for (const value of scope?.querySelectorAll?.('[data-tracked-total]') ?? []) value.textContent = trackedTotalText(value.getAttribute('data-tracked-total'));
+      for (const value of scope?.querySelectorAll?.('.running-elapsed') ?? []) if (pageState.active) {
+        value.textContent = value.classList?.contains?.('running-status-metric-value') || value.className?.includes?.('running-status-metric-value')
+          ? formatElapsedCard(pageState.active.startedAt) : formatElapsed(pageState.active.startedAt);
+      }
+      for (const value of scope?.querySelectorAll?.('.task-tracked-total') ?? []) value.textContent = taskTrackedText();
+    }
+  }
+
+  function startPanelClock() {
+    clearInterval(tick);
+    tick = setInterval(() => {
+      if (!extensionContextActive) return;
+      updatePanelClocks();
+      if (timelineInstance && timelineWindow) {
+        timelineWindow = { ...timelineWindow, now: timelineNow() };
+        timelineInstance.update({ now: timelineWindow.now });
+        refreshTimelineOverlaps();
+      }
+      if (todayReportDate && todayReportDate !== localDateValue()) {
+        todayReportDate = ''; pageState = { ...pageState, todayTrackedMs: null, weekTrackedMs: null };
+        void refreshState(true).catch(setError);
+      }
+    }, PANEL_TICK_MS);
+  }
+
+  function renderPanelFeedback(parent, { conflicts = true } = {}) {
+    if (conflicts) renderPendingConflicts(parent);
+    const diagnostics = renderQueueDiagnostics();
+    if (diagnostics) parent.append(diagnostics);
+    const failure = errorText ? { ...connectionError, message: errorText, code: errorCode } : pageState.summaryError;
+    if (!failure) return;
+    const description = globalThis.ClockoliRecovery.describeConnectionError(failure);
+    const error = el('div', undefined, 'error');
+    error.append(el('strong', description.headline), el('div', description.detail));
+    const recovery = globalThis.ClockoliRecovery.actionFor(description.action === 'choose' ? 'repository_access_required' : failure.code || 'error');
+    if (recovery?.label) error.append(button(recovery.label, 'secondary wide', async () => {
+      if (recovery.kind === 'retry') {
+        if (pageState.configured != null) { errorText = ''; errorCode = ''; connectionError = null; }
+        renderUi();
+        try { await refreshState(true); await refreshRecent(true); }
+        catch (retryError) { setError(retryError); }
+        return;
+      }
+      await send({ type: 'OPEN_OPTIONS' }); closeMenu();
+    }));
+    parent.prepend(error);
+  }
+
+  function applyCompactViewMode() {
+    if (!compactSurface) return;
+    const list = timelineViewMode === 'list';
+    placeCalendarWeekNavigation(popupMode ? compactSurface.body : compactSurface.timeline, timelineViewMode);
+    updateWeekNavigationLabel();
+    compactSurface.timeline.hidden = (popupMode) && list;
+    const toolbar = compactSurface.body.querySelector('.popup-list-toolbar');
+    if (toolbar) toolbar.hidden = !list;
+    const shell = compactSurface.timeline.querySelector('.timeline-shell');
+    if (shell) shell.hidden = list;
+    const total = compactSurface.timeline.querySelector('.popup-list-total');
+    if (total) { total.hidden = popupMode || !list; total.textContent = listWeekTotalText(); }
+    compactSurface.overlaps.hidden = list;
+    compactSurface.today.hidden = !list;
+    for (const control of (shadow)?.querySelectorAll?.('[data-timeline-view-mode]') ?? []) {
+      control.setAttribute('aria-pressed', String(control.getAttribute('data-timeline-view-mode') === timelineViewMode));
+    }
+  }
+
+  function setTimelineViewMode(mode) {
+    if (!['timeline', 'calendar', 'list'].includes(mode)) return;
+    const switched = timelineViewMode !== mode;
+    timelineViewMode = mode;
+    saveActivityViewMode(mode);
+    if (switched) resetWeekForViewSwitch();
+    if (mode !== 'list') {
+      timelineGraphicViewMode = mode;
+      timelineInstance?.setViewMode(mode);
+    }
+    applyCompactViewMode();
+    if (switched) void loadActivityCalendarWeek(weekWindow()).catch(setError);
+  }
+
+  function refreshCompactSurface() {
+    if (!compactSurface) return;
+    const { strip, switchAction, today, feedback } = compactSurface;
+    const activeElement = shadow?.activeElement;
+    const actionKey = activeElement?.getAttribute?.('data-panel-action');
+    const scroll = null;
+    const scrollTop = scroll?.scrollTop;
+    const diagnosticsOpen = feedback.querySelector?.('details')?.open;
+    const active = pageState.active, current = taskFromLocation();
+    strip.classList.toggle('is-active', Boolean(active));
+    const activeIdentity = active ? String(active.id || active.startedAt) : '';
+    const preserveActiveDescription = Boolean(active && (strip.contains(activeElement)
+      || strip.getAttribute('data-moving-focus-to-stop') !== null)
+      && strip.getAttribute('data-active-id') === activeIdentity && strip.getAttribute('data-active-url') === taskUrlOf(active));
+    if (!preserveActiveDescription) {
+      strip.replaceChildren();
+      strip.setAttribute('data-active-id', activeIdentity); strip.setAttribute('data-active-url', active ? taskUrlOf(active) : '');
+    }
+    if (active && !preserveActiveDescription) {
+      const copy = el('div', undefined, 'strip-task-copy');
+      copy.append(taskResult(active, 'strip-task'));
+      const description = el('textarea');
+      description.rows = 1;
+      description.className = 'strip-description';
+      description.maxLength = 2000;
+      description.placeholder = 'Description (optional)';
+      description.value = activeDescriptionValue(active);
+      const descriptionMore = el('span', '↓ More lines — scroll', 'description-overflow-hint'); descriptionMore.hidden = true;
+      const resizeDescription = () => fitDescriptionTextarea(description, { maxHeight: 180, more: descriptionMore });
+      resizeDescription();
+      const descriptionField = el('div', undefined, 'save-field strip-description-field');
+      const savedIndicator = savedNotice('description-saved');
+      savedIndicator.setAttribute('role', 'status');
+      savedIndicator.hidden = true;
+      let savingDescription = null, saveAgain = false, submittedDescription = null, hideSavedTimer = null;
+      const showSaved = () => {
+        clearTimeout(hideSavedTimer);
+        savedIndicator.hidden = false;
+        hideSavedTimer = setTimeout(() => { savedIndicator.hidden = true; }, 3000);
+      };
+      const currentActive = () => active.id
+        ? (pageState.active?.id === active.id ? pageState.active : null)
+        : (pageState.active?.startedAt === active.startedAt ? pageState.active : null);
+      const saveActiveDescription = () => {
+        if (savingDescription) {
+          if (normalizedDescription(description.value) !== submittedDescription) saveAgain = true;
+          return savingDescription;
+        }
+        savingDescription = (async () => {
+          do {
+            saveAgain = false;
+            const current = currentActive();
+            if (!current) return; // The timer was stopped or switched while this field was focused.
+            const value = normalizedDescription(description.value);
+            submittedDescription = value;
+            if (value === normalizedDescription(savedActiveDescriptionValue(current))) {
+              if (value === normalizedDescription(current.description)) retireActiveDescriptionDraft(current, value);
+            } else {
+              await queueActiveDescriptionEdit(current, value);
+            }
+            if (!saveAgain && normalizedDescription(description.value) === value) showSaved();
+          } while (saveAgain);
+        })().finally(() => {
+          savingDescription = null;
+          submittedDescription = null;
+          updateDescriptionSave();
+        });
+        return savingDescription;
+      };
+      const saveDescription = saveCheckButton('Save description', saveActiveDescription);
+      const updateDescriptionSave = () => { saveDescription.hidden = normalizedDescription(description.value) === normalizedDescription(savedActiveDescriptionValue(currentActive() ?? active)); };
+      updateDescriptionSave();
+      description.addEventListener('input', () => {
+        descriptionDraft = { id: active.id || active.startedAt, taskUrl: taskUrlOf(active), value: description.value };
+        resizeDescription();
+        savedIndicator.hidden = true;
+        updateDescriptionSave();
+      });
+      description.addEventListener('keydown', event => {
+        if (event.key === 'Tab' && !event.shiftKey && event.isTrusted && !event.isComposing && event.keyCode !== 229 && !stop.disabled) {
+          event.preventDefault();
+          // Blur may trigger an immediate timeline render before focus reaches Stop.
+          strip.setAttribute('data-moving-focus-to-stop', '');
+          try { stop.focus({ preventScroll: true }); }
+          finally { strip.removeAttribute('data-moving-focus-to-stop'); }
+          return;
+        }
+        if (event.key !== 'Enter' || event.shiftKey || !event.isTrusted || event.isComposing || event.keyCode === 229) return;
+        event.preventDefault();
+        return saveActiveDescription().catch(setError);
+      });
+      description.addEventListener('blur', () => saveActiveDescription().catch(setError));
+      descriptionField.append(description, saveDescription, savedIndicator, descriptionMore);
+      const elapsed = el('span', undefined, 'running-status-elapsed');
+      elapsed.setAttribute('role', 'timer'); elapsed.setAttribute('aria-label', 'Elapsed time');
+      elapsed.append(el('span', 'Duration', 'running-status-metric-label'),
+        el('span', formatElapsedCard(active.startedAt), 'running-status-metric-value running-elapsed'));
+      const startField = el('div', undefined, 'running-status-start-field');
+      const startLabel = el('label', undefined, 'running-status-start-label');
+      startLabel.append(el('span', 'Started', 'running-status-start-caption'));
+      const startValue = el('span', undefined, 'running-status-start-value');
+      const start = el('input', undefined, 'running-status-start');
+      start.type = 'text'; start.inputMode = 'numeric'; start.maxLength = 5;
+      start.autocomplete = 'off'; start.setAttribute('aria-label', 'Started');
+      start.title = 'Edit started time; press Enter to save';
+      start.value = new Date(active.startedAt).toTimeString().slice(0, 5);
+      let displayedStartAt = active.startedAt;
+      startValue.append(start); startLabel.append(startValue);
+      const saveStart = el('button', undefined, 'running-status-start-save');
+      saveStart.type = 'button'; saveStart.title = 'Save start'; saveStart.setAttribute('aria-label', 'Save start');
+      saveStart.append(icon('check', CHECK_PATH)); saveStart.hidden = true;
+      const startSaved = savedNotice('running-status-start-saved');
+      startSaved.setAttribute('role', 'status'); startSaved.hidden = true;
+      startField.append(startLabel, saveStart, startSaved);
+      const updateStartDraft = async () => {
+        const { parseTime, timeValue } = await import(chrome.runtime.getURL('src/ui/local-time.js'));
+        const current = currentActive();
+        if (!start.isConnected || !current) return;
+        saveStart.hidden = parseTime(start.value) === timeValue(new Date(current.startedAt));
+      };
+      start.addEventListener('click', () => start.select());
+      start.addEventListener('input', () => { startSaved.hidden = true; void updateStartDraft().catch(setError); });
+      start.addEventListener('blur', async () => {
+        const { parseTime } = await import(chrome.runtime.getURL('src/ui/local-time.js'));
+        const normalized = parseTime(start.value);
+        if (start.isConnected && normalized) start.value = normalized;
+        await updateStartDraft();
+      });
+      let savingStart = false;
+      const commitStart = async () => {
+        const current = currentActive();
+        if (savingStart || !current) return;
+        const { parseTime, timeValue, localTimestamp } = await import(chrome.runtime.getURL('src/ui/local-time.js'));
+        if (!start.isConnected) return;
+        const clock = parseTime(start.value);
+        const timestamp = clock && localTimestamp(localDateValue(new Date(current.startedAt)), clock);
+        if (!timestamp) { setError(new Error('Enter a valid Started time (HH:MM or 1000).')); return; }
+        if (clock === timeValue(new Date(current.startedAt)) && current.startedAt === displayedStartAt) return;
+        if (timestamp.getTime() > Date.now()) { setError(new Error('Started time cannot be in the future.')); return; }
+        savingStart = true; start.disabled = true;
+        try {
+          const latest = await send({ type: 'GET_PAGE_STATE', refresh: true });
+          if (!start.isConnected || !currentActive()) return;
+          if (!latest.active || latest.active.id !== current.id || taskUrlOf(latest.active) !== taskUrlOf(current)
+            || latest.active.startedAt !== displayedStartAt || currentActive().startedAt !== displayedStartAt) {
+            applyPageState(latest);
+            setError(new Error('Start changed elsewhere. Reopen the panel before editing it.'));
+            return;
+          }
+          await queueActiveStartEdit(current, timestamp);
+          if (!currentActive() || !start.isConnected) return;
+          const confirmed = await send({ type: 'GET_PAGE_STATE', refresh: true });
+          if (!start.isConnected || !currentActive()) return;
+          if (!confirmed.active || confirmed.active.id !== current.id || confirmed.active.startedAt !== timestamp.toISOString()
+            || (pageState.active.startedAt !== displayedStartAt && pageState.active.startedAt !== timestamp.toISOString())) {
+            applyPageState(confirmed);
+            setError(new Error('Start changed elsewhere. Reopen the panel before editing it.'));
+            return;
+          }
+          applyPageState(confirmed);
+          active.startedAt = timestamp.toISOString();
+          displayedStartAt = timestamp.toISOString();
+          start.value = clock; saveStart.hidden = true; startSaved.hidden = false;
+          setTimeout(() => { if (startSaved.isConnected) startSaved.hidden = true; }, 3000);
+        } catch (error) { setError(error); }
+        finally { savingStart = false; start.disabled = false; }
+      };
+      start.addEventListener('keydown', event => {
+        if (event.key === 'Tab' && !event.shiftKey && event.isTrusted && !event.isComposing && event.keyCode !== 229 && !stop.disabled) {
+          event.preventDefault();
+          strip.setAttribute('data-moving-focus-to-stop', '');
+          try { stop.focus({ preventScroll: true }); }
+          finally { strip.removeAttribute('data-moving-focus-to-stop'); }
+          return;
+        }
+        if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return;
+        event.preventDefault(); void commitStart();
+      });
+      saveStart.addEventListener('click', () => void commitStart());
+      const stop = button('Stop and save', 'danger', async () => {
+        const current = pageState.active;
+        if (!current) return;
+        const hasDraft = descriptionDraft?.id === (current?.id || current?.startedAt)
+          && descriptionDraft.taskUrl === taskUrlOf(current);
+        try { await stopTimelineEntry({ ...current, description: description.value }, { preserveSavedDescription: !hasDraft }); } catch {}
+      });
+      stop.setAttribute('data-strip-primary', 'true'); stop.setAttribute('data-panel-action', 'stop');
+      stop.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
+      const { metrics } = globalThis.ClockoliTrackingCard.createTrackingCard(document, { root: strip, task: copy, description: descriptionField, elapsed, today: null, stop });
+      const stats = el('div', undefined, 'running-status-stats'); stats.append(startField, metrics);
+      strip.insertBefore(stats, stop);
+    }
+    if (!preserveActiveDescription && (!active || (current && !sameTask(current, active)))) {
+      const track = button('Track this task', 'primary popup-timeline-track', async () => {
+        if (timelineTrackActionDisabled()) return;
+        try { await trackCurrentTimelineTask({ preserveSavedDescription: true }); } catch {}
+      });
+      if (active) track.textContent = 'Switch to this task';
+      else track.setAttribute('data-strip-primary', 'true');
+      track.setAttribute('data-testid', 'popup-timeline-track'); track.setAttribute('data-panel-action', 'track');
+      track.disabled = timelineTrackActionDisabled();
+      switchAction.replaceChildren(track);
+      if (!active) {
+        const quickStart = el('div', undefined, 'running-status-quick-start');
+        quickStart.append(el('span', 'Quick start from recent tasks:', 'running-status-quick-label'));
+        const choices = el('div', undefined, 'running-status-recent');
+        const seen = new Set();
+        for (const entry of [...quickStartRecent].sort((left, right) =>
+          Date.parse(right.endedAt || right.startedAt) - Date.parse(left.endedAt || left.startedAt))) {
+          const identity = trackableTaskIdentityOf(entry);
+          if (!identity || seen.has(identity)) continue;
+          seen.add(identity);
+          const label = taskTitleOf(entry) || identity;
+          const choice = button('', 'running-status-recent-task', async () => {
+            try { await restartTimelineEntry(entry); } catch {}
+          });
+          choice.title = identity; choice.setAttribute('aria-label', `Start tracking ${label}`);
+          choice.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
+            || sameTask(entry, pageState.active) || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
+          const play = el('span', undefined, 'running-status-recent-play'); play.setAttribute('aria-hidden', 'true'); play.append(icon('play', PLAY_PATH));
+          choice.append(play, el('span', label, 'running-status-recent-name'));
+          choices.append(choice);
+          if (seen.size === 3) break;
+        }
+        if (!seen.size) choices.append(el('span', 'No recent tasks yet', 'running-status-recent-empty'));
+        quickStart.append(choices);
+        const idle = el('div', undefined, 'strip-idle-status');
+        idle.append(el('span', 'Not tracking', 'strip-idle'), el('span', 'Start a task to begin', 'strip-idle-caption'));
+        strip.append(idle, quickStart);
+      }
+    } else if (!preserveActiveDescription) {
+      switchAction.replaceChildren();
+    }
+    if (preserveActiveDescription) {
+      const elapsed = strip.querySelector('.running-elapsed'); if (elapsed) elapsed.textContent = formatElapsedCard(active.startedAt);
+      const stop = strip.querySelector('[data-panel-action="stop"]');
+      if (stop) stop.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
+      const track = switchAction.querySelector('[data-panel-action="track"]'); if (track) track.disabled = timelineTrackActionDisabled();
+    }
+    // Queue reconciliation may refresh the panel while an unsaved List editor is
+    // focused. Keep that input mounted; the next normal render can show updates.
+    const preserveTodayEditor = today.contains?.(activeElement) && activeElement?.matches?.('input,textarea');
+    if (!preserveTodayEditor) {
+    today.replaceChildren();
+    const { startDate, endDate } = timesRange();
+    const entries = mergeTimelineCompletedEntries(recent, timelineOptimisticCompletions.values()).map(entry => ({ ...entry, ...timelineOptimisticEdits.get(entry.id) }))
+      .filter(entry => entry.endedAt && ((activityRecordDate(entry) >= startDate && activityRecordDate(entry) <= endDate)
+        || overlapsSelectedWeek(entry)))
+      .sort((left, right) => new Date(right.startedAt) - new Date(left.startedAt));
+    compactSurface.listEntries = entries;
+    if (compactSurface.renderList) compactSurface.renderList(entries);
+    else renderRecent(today, entries, null, true);
+    }
+    feedback.replaceChildren(); renderPanelFeedback(feedback);
+    const diagnostics = feedback.querySelector?.('details'); if (diagnostics && diagnosticsOpen) diagnostics.open = true;
+    refreshTimelineQueueIndicator(); refreshTimelineOverlaps(); applyCompactViewMode();
+    if (actionKey) {
+      const replacement = [...strip.querySelectorAll?.('[data-panel-action]') ?? [], ...switchAction.querySelectorAll?.('[data-panel-action]') ?? [], ...today.querySelectorAll?.('[data-panel-action]') ?? []]
+        .find(node => node.getAttribute('data-panel-action') === actionKey);
+      replacement?.focus?.({ preventScroll: true });
+    }
+    if (scroll && scrollTop !== undefined) scroll.scrollTop = scrollTop;
+  }
+
+  function refreshTimelineOverlaps() {
+    if (!compactSurface) return;
+    const { host, overlaps } = compactSurface;
+    const blocks = host?.querySelectorAll?.('[data-overlap="true"]') ?? [];
+    const entries = [...blocks].map(block => timelineEntriesById.get(block.getAttribute('data-item-id'))).filter(Boolean);
+    overlaps.replaceChildren();
+    if (!entries.length) return;
+    const warning = el('div', undefined, 'overlap-warning');
+    warning.append(el('span', `Overlapping entries: ${entries.map(entry => `${taskTitleOf(entry) || storedTaskIdentityOf(entry)} (${wallTime(timestampParts(entry.startedAt, entry.timezone))}–${entry._active ? 'now' : wallTime(timestampParts(entry.endedAt, entry.timezone))})`).join('; ')}. `));
+    const link = el('a', 'Fix in Activity'); link.href = extensionResourceUrl('src/times/times.html');
+    link.addEventListener('click', event => { if (!event.isTrusted) return; event.preventDefault(); void send({ type: 'OPEN_TIMES' }).catch(setError); });
+    warning.append(link); overlaps.append(warning);
+  }
+
+  function renderMenu({ compact = popupMode, onClose = null } = {}) {
     const menu = el('section', undefined, 'menu'); menu.setAttribute('role', 'dialog'); menu.setAttribute('aria-label', 'Time tracker panel. Scroll for more content.'); menu.tabIndex = 0;
     const updateScrollState = event => {
       if (event?.isTrusted) menuScrollTop = menu.scrollTop;
@@ -1259,35 +4159,147 @@ The previous version remains in Git history.`)) return;
     globalThis.requestAnimationFrame?.(updateScrollState);
     const header = el('header', undefined, 'tracker-toolbar');
     const headerActions = el('div', undefined, 'header-actions');
+    const timelineToolbarEnd = el('div', undefined, 'timeline-toolbar-end');
+    const pageNavigation = el('nav', undefined, 'header-navigation');
+    pageNavigation.setAttribute('aria-label', 'Clockoli pages');
+    const brand = el('div', undefined, 'timeline-brand'); brand.append(clockoliWordmark());
     const tasks = button('Top tasks', 'reports-button', async () => { await send({ type: 'OPEN_TASKS' }); closeMenu(); }); tasks.title = 'Open top tasks'; tasks.prepend(icon('checklist', TASKS_PATH));
     const reports = button('Reports', 'reports-button', async () => { await send({ type: 'OPEN_REPORTS' }); closeMenu(); }); reports.title = 'Open reports'; reports.prepend(icon('graph', REPORTS_PATH));
-    const settings = button('', 'icon-button', async () => { await send({ type: 'OPEN_OPTIONS' }); closeMenu(); }); settings.title = 'Settings'; settings.setAttribute('aria-label', 'Time tracker settings'); settings.append(icon('gear', GEAR_PATH));
-    headerActions.append(tasks, reports, settings); header.append(headerActions); menu.append(header);
-    const body = el('div', undefined, 'menu-body');
-    if (!pageState.configured) {
-      body.append(el('p', 'Configure a private GitHub repository before tracking time.', 'muted'));
-      body.append(button('Connect GitHub', 'primary wide', async () => { await send({ type: 'OPEN_OPTIONS' }); closeMenu(); }));
+    const activity = button('Activity', 'reports-button', async () => { await send({ type: 'OPEN_TIMES' }); closeMenu(); }); activity.title = 'Open activity'; activity.prepend(icon('history', ACTIVITY_PATH));
+    const settings = button('Settings', 'reports-button settings-button', async () => { await send({ type: 'OPEN_OPTIONS' }); closeMenu(); }); settings.title = 'Open settings'; settings.prepend(icon('gear', GEAR_PATH));
+    pageNavigation.append(tasks, reports, ...(compact ? [activity] : []), settings);
+    headerActions.append(pageNavigation);
+    if (compact) {
+      if (onClose) {
+        const close = iconButton('Close Clockoli', 'x', X_PATH, 'icon-button popup-timeline-close', onClose);
+        timelineToolbarEnd.append(close);
+        header.append(brand, headerActions, timelineToolbarEnd);
+      } else header.append(brand, headerActions, timelineToolbarEnd);
+      menu.append(header);
     } else {
+      header.append(headerActions); menu.append(header);
+    }
+    const body = el('div', undefined, 'menu-body');
+    if (pageState.configured == null) {
+      if (!errorText) body.append(el('p', 'Loading…', 'muted'));
+    } else if (!pageState.configured) {
+      body.append(el('p', 'Choose where Clockoli should save your time before tracking.', 'muted'));
+      body.append(button('Set up Clockoli', 'primary wide', async () => { await send({ type: 'OPEN_OPTIONS' }); closeMenu(); }));
+    } else {
+      if (compact) {
+        const strip = el('div', undefined, 'active-task-strip'), today = el('section', undefined, 'today-list activity-list');
+        const feedback = el('div', undefined, 'panel-feedback'), overlaps = el('div', undefined, 'timeline-overlaps');
+        const switchAction = el('div', undefined, 'popup-switch-action');
+        const overview = el('div', undefined, 'popup-overview-layout');
+        const summary = createWeeklySummary();
+        overview.append(summary, strip);
+        compactSurface = { strip, summary, switchAction, today, feedback, overlaps, timeline: null, body, host: null };
+        const listToolbar = el('section', undefined, 'popup-list-toolbar');
+        const filterLabel = el('label', undefined, 'times-filter'), filter = el('input');
+        filter.type = 'search'; filter.placeholder = popupMode ? 'Search entries' : 'Search this week';
+        filter.setAttribute('aria-label', popupMode ? 'Search activity' : 'Search current week');
+        filter.value = popupMode ? timesFilter : panelListFilter;
+        filterLabel.append(icon('search', SEARCH_PATH), filter);
+        listToolbar.append(filterLabel);
+        const refresh = recentRefreshButton(); refresh.classList.add('times-refresh');
+        listToolbar.append(refresh);
+        if (popupMode) compactSurface.renderList = createActivityListRenderer(today, filter);
+        else {
+          const taskSearch = globalThis.ClockoliTaskSearch.mount(filter, { onInput: () => {
+            panelListFilter = filter.value; compactSurface.renderList();
+          }, textOf: activitySearchFields });
+          compactSurface.renderList = (entries = compactSurface.listEntries || []) => {
+            today.replaceChildren();
+            const matches = taskSearch.matches(entries);
+            const empty = taskSearch.query && !matches.length ? el('p', 'No entries match this week.', 'muted') : null;
+            renderRecent(today, matches, empty, true, true);
+          };
+        }
+        const timeline = renderPopupTimeline();
+        compactSurface.timeline = timeline;
+        const modeButton = (mode, label) => {
+          const control = button(label, 'timeline-view-button', () => setTimelineViewMode(mode));
+          control.setAttribute('aria-label', label); control.title = label;
+          control.replaceChildren(icon(mode, VIEW_MODE_PATHS[mode]));
+          control.setAttribute('data-timeline-view-mode', mode);
+          control.setAttribute('aria-pressed', String(timelineViewMode === mode));
+          return control;
+        };
+        const viewModes = el('div', undefined, 'timeline-view-modes');
+        viewModes.setAttribute('role', 'group');
+        viewModes.setAttribute('aria-label', 'Timeline view');
+        viewModes.append(modeButton('timeline', 'Timeline'), modeButton('calendar', 'Calendar'), modeButton('list', 'List'));
+        timelineToolbarEnd.prepend(viewModes);
+        const closeButton = timelineToolbarEnd.querySelector('.popup-timeline-close');
+        if (closeButton) timelineToolbarEnd.insertBefore(switchAction, closeButton);
+        else timelineToolbarEnd.append(switchAction);
+        body.append(overview);
+        body.append(listToolbar);
+        body.append(timeline, overlaps, today, feedback);
+        refreshCompactSurface();
+      }
       const current = taskFromLocation();
       if (pageState.active) {
+        if (!compact) {
         const active = pageState.active, same = current && sameTask(active, current);
         const tracking = el('div', undefined, `eyebrow tracking-status${same ? '' : ' tracking-another'}`);
         tracking.append(document.createTextNode('Tracking '), el('strong', same ? 'this' : 'another'), document.createTextNode(' task'));
         body.append(tracking);
         body.append(taskResult(active, 'active-task-result'));
-        elapsedValue = el('div', formatElapsed(active.startedAt), 'elapsed'); body.append(elapsedValue);
-        const label = el('label', 'Description'); const description = el('input'); description.maxLength = 2000; description.placeholder = 'Optional'; description.value = active.description || ''; label.append(description); body.append(label);
+        body.append(el('div', formatElapsed(active.startedAt), 'elapsed running-elapsed'));
+        const label = el('label', 'Description'), description = el('textarea');
+        description.rows = 2; description.maxLength = 2000; description.placeholder = 'Optional'; description.value = activeDescriptionValue(active);
+        const descriptionMore = el('span', '↓ More lines — scroll', 'description-overflow-hint'); descriptionMore.hidden = true;
+        const resizeDescription = () => fitDescriptionTextarea(description, { minRows: 2, more: descriptionMore });
+        resizeDescription();
+        const saved = savedNotice('description-saved dialog-description-saved'); saved.setAttribute('role', 'status'); saved.hidden = true;
+        label.append(description, saved, descriptionMore); body.append(label);
+        let savingDescription = null, saveAgain = false, submittedDescription = null;
+        const saveDescription = () => {
+          if (savingDescription) {
+            if (normalizedDescription(description.value) !== submittedDescription) saveAgain = true;
+            return savingDescription;
+          }
+          savingDescription = (async () => {
+            do {
+              saveAgain = false;
+              const current = pageState.active;
+              if (!current || (active.id ? current.id !== active.id : current.startedAt !== active.startedAt)) return;
+              const value = normalizedDescription(description.value);
+              submittedDescription = value;
+              if (value !== normalizedDescription(savedActiveDescriptionValue(current))) {
+                await queueActiveDescriptionEdit(current, value);
+              } else if (value === normalizedDescription(current.description)) {
+                retireActiveDescriptionDraft(current, value);
+              }
+              if (!saveAgain && normalizedDescription(description.value) === value) saved.hidden = false;
+            } while (saveAgain);
+          })().catch(setError).finally(() => { savingDescription = null; submittedDescription = null; });
+          return savingDescription;
+        };
+        description.addEventListener('input', () => {
+          descriptionDraft = { id: active.id || active.startedAt, taskUrl: taskUrlOf(active), value: description.value };
+          resizeDescription();
+          saved.hidden = true;
+        });
+        description.addEventListener('keydown', event => {
+          if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229 || !event.isTrusted) return;
+          event.preventDefault();
+          void saveDescription();
+        });
         const switchToCurrent = Boolean(!same && current);
+        const makeStop = switchToCurrent => {
         const stop = button(switchToCurrent ? 'Save and switch to this task' : 'Stop and save', switchToCurrent ? 'primary wide' : 'danger wide', async (event, node) => {
-          const hours = (Date.now() - new Date(active.startedAt).getTime()) / 3600000;
-          if (hours > 12 && !confirm(`This entry is ${Math.floor(hours)} hours long. Save anyway?`)) return;
-          node.disabled = true;
+          if (timelineStartInFlight || timelineDeleteInFlight || !beginTimelineStop()) return;
           try {
+            if (!confirmLongEntry(active)) return;
+            node.disabled = true;
             const actionRoute = popupMode ? null : `${location.protocol}//${location.hostname}${location.pathname}`;
             const recentWasFresh = !switchToCurrent && recentFresh;
             const result = await send(switchToCurrent
               ? { type: 'SWITCH_TASK', taskUrl: current.taskUrl, taskTitle: current.taskTitle || '', description: description.value }
               : { type: 'STOP', description: description.value });
+            if (timelineAcceptedActive && sameTask(timelineAcceptedActive, active)) timelineAcceptedActive = null;
             if (actionRoute && actionRoute !== `${location.protocol}//${location.hostname}${location.pathname}`) return;
             if (!switchToCurrent) {
               if (recentWasFresh && result?.entry?.id) recentFreshAfterPendingId = result.entry.id;
@@ -1295,76 +4307,63 @@ The previous version remains in Git history.`)) return;
             }
             recentLoaded = false; await refreshState(false, false);
           } catch (error) { node.disabled = false; setError(error); }
+          finally { finishTimelineStop(); }
         });
-        stop.disabled = pageState.pendingWrites?.some(item => item.status === 'conflict'); body.append(stop);
-      } else {
-        body.append(el('div', 'No timer running', 'eyebrow'));
+        stop.disabled = timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight
+          || pageState.pendingWrites?.some(item => item.status === 'conflict'); body.append(stop);
+        };
+        makeStop(false);
+        if (switchToCurrent) makeStop(true);
+        }
+      } else if (!compact) {
         const startButton = button(current ? 'Start tracking this task' : 'Open an HTTP(S) page to start tracking', 'primary wide', async (event, node) => {
+          if (timelineStartInFlight || timelineStopInFlight || timelineDeleteInFlight) return;
+          timelineStartInFlight = true;
           node.disabled = true;
+          refreshMountedTimeline();
           try {
             const activatedTask = popupMode ? await refreshPopupTask() : taskFromLocation();
             if (!activatedTask) throw new Error('Open an HTTP(S) page to start tracking.');
-            await send({ type: 'START', taskUrl: activatedTask.taskUrl, taskTitle: activatedTask.taskTitle || '' });
+            const startContext = acceptTimelineStartImmediately(activatedTask, { identity: 'current-task' });
+            let active;
+            try {
+              active = await send({ type: 'START', taskUrl: activatedTask.taskUrl, taskTitle: activatedTask.taskTitle || '' });
+            } catch (error) {
+              rollbackTimelineStart(startContext);
+              throw error;
+            } finally {
+              finishTimelineQueueAcceptance(startContext.acceptanceId);
+              refreshTimelineQueueIndicator();
+            }
+            if (active?.id) {
+              timelineAcceptedActive = { ...active, _pending: Boolean(active._pending) };
+              pageState = { ...pageState, active: timelineAcceptedActive };
+              if (!refreshMountedTimeline()) renderUi();
+            }
             await refreshState(false, false);
           } catch (error) { node.disabled = false; setError(error); }
+          finally {
+            timelineStartInFlight = false;
+            refreshMountedTimeline();
+          }
         });
-        startButton.disabled = !current || pageState.pendingWrites?.some(item => item.status === 'conflict');
+        startButton.disabled = !current || timelineStopInFlight || timelineDeleteInFlight
+          || pageState.pendingWrites?.some(item => item.status === 'conflict');
         body.append(startButton);
         if (!current) body.append(el('div', 'Clockoli tracks any HTTP(S) task URL; a title is optional.', 'muted'));
       }
+      if (!compact) {
       renderPendingConflicts(body);
-      const today = el('div', undefined, 'today-total');
-      summaryIndex = 0; summaryElapsedMs = 0;
-      const currentSummary = () => summaryFrames[summaryIndex] ?? { label: 'Today', seconds: 0, startDate: todayReportDate, endDate: todayReportDate, displayMs: 2000 };
-      const updateSummary = () => {
-        const frame = currentSummary();
-        if (summaryLabel) summaryLabel.textContent = `${frame.label}:`;
-        if (summaryTotalValue) summaryTotalValue.textContent = recentLoaded && todayReportDate === localDateValue() ? formatDuration(summarySeconds(frame)) : '…';
-      };
-      today.append(summaryLabel = el('span'), summaryTotalValue = el('strong', undefined, 'today-total-value'));
-      updateSummary(); body.append(today);
-      clearInterval(tick); tick = setInterval(() => {
-        const todayDate = localDateValue();
-        if (elapsedValue && pageState.active) elapsedValue.textContent = formatElapsed(pageState.active.startedAt);
-        if (todayReportDate && todayReportDate !== todayDate) {
-          clearInterval(tick); tick = null; recentLoaded = false; summaryTotalValue.textContent = '…';
-          void refreshState(false, true).catch(setError); return;
-        }
-        summaryElapsedMs += 1000;
-        if (summaryElapsedMs >= currentSummary().displayMs) {
-          summaryIndex = (summaryIndex + 1) % summaryFrames.length; summaryElapsedMs = 0;
-        }
-        updateSummary();
-      }, 1000);
+      appendTrackedTotals(body);
+      const taskTotal = el('div', taskTrackedText(), 'task-tracked-total muted'); body.append(taskTotal);
       renderRecent(body);
       const more = el('div', undefined, 'more-times'); more.append(button('View activity', 'secondary', async () => { await send({ type: 'OPEN_TIMES' }); closeMenu(); })); body.append(more);
+      }
     }
-    if (errorText) {
-      const error = el('div', errorText, 'error'), recovery = globalThis.ClockoliRecovery.actionFor(errorCode), label = recovery?.label || '';
-      if (label) error.append(button(label, 'secondary wide', async () => {
-        if (recovery.kind === 'retry') {
-          errorText = ''; errorCode = ''; renderUi();
-          try { await refreshState(true, true); }
-          catch (retryError) { setError(retryError); }
-          return;
-        }
-        await send({ type: 'OPEN_OPTIONS' }); closeMenu();
-      }));
-      body.prepend(error);
-    }
-    menu.append(body); return menu;
+    if (!compact || !pageState.configured) renderPanelFeedback(body, { conflicts: false });
+    menu.append(body); startPanelClock(); return menu;
   }
 
-  function renderNavigationMenu() {
-    const menu = el('section', undefined, 'navigation-menu'); menu.setAttribute('role', 'menu'); menu.setAttribute('aria-label', 'Time tracker pages');
-    const reports = button('Reports', 'navigation-item', async () => { await send({ type: 'OPEN_REPORTS' }); closeMenu(); });
-    reports.setAttribute('role', 'menuitem'); reports.prepend(icon('graph', REPORTS_PATH));
-    const tasks = button('Top tasks', 'navigation-item', async () => { await send({ type: 'OPEN_TASKS' }); closeMenu(); });
-    tasks.setAttribute('role', 'menuitem'); tasks.prepend(icon('checklist', TASKS_PATH));
-    const activity = button('Activity', 'navigation-item', async () => { await send({ type: 'OPEN_TIMES' }); closeMenu(); });
-    activity.setAttribute('role', 'menuitem'); activity.prepend(icon('history', ACTIVITY_PATH));
-    menu.append(reports, tasks, activity); return menu;
-  }
 
   function restoreMenuScroll(scrollTop) {
     const menu = shadow?.querySelector('.menu');
@@ -1373,59 +4372,525 @@ The previous version remains in Git history.`)) return;
     globalThis.requestAnimationFrame?.(() => { if (menu.isConnected) menu.scrollTop = scrollTop; });
   }
 
+  function renderActionSourceContext() {
+    if (!timesMode) return;
+    const banner = document.getElementById?.('activity-source-context');
+    if (!banner) return;
+    const task = actionSourceTask;
+    banner.hidden = !task;
+    if (!task) return;
+    const link = document.getElementById('activity-source-link');
+    const url = document.getElementById('activity-source-url');
+    const track = document.getElementById('activity-source-track');
+    const label = document.getElementById('activity-source-track-label');
+    link.href = task.taskUrl;
+    link.textContent = githubTabTitle(task.taskTitle) || task.taskUrl;
+    link.title = task.taskUrl;
+    url.textContent = task.taskUrl;
+    const alreadyTracking = sameTask(task, pageState.active);
+    label.textContent = alreadyTracking ? 'Tracking this task' : pageState.active ? 'Switch to this task' : 'Track this task';
+    track.disabled = !pageState.configured || alreadyTracking || timelineStartInFlight
+      || timelineStopInFlight || timelineDeleteInFlight
+      || Boolean(pageState.pendingWrites?.some(item => item.status === 'conflict'));
+  }
+
+  async function refreshActionSourceContext() {
+    const result = await send({ type: 'CONSUME_TOOLBAR_TASK_CONTEXT' });
+    if (result?.present) receiveActionSourceContext(result.value);
+  }
+
+  function receiveActionSourceContext(value) {
+    if (!timesMode) return;
+    const age = Date.now() - Number(value?.openedAt);
+    let task = null;
+    if (age >= -10_000 && age <= 120_000) {
+      try { task = taskFromUrl(value?.taskUrl, value?.taskTitle); } catch { /* Invalid context. */ }
+    }
+    actionSourceTask = task?.taskUrl === value?.taskUrl ? task : null;
+    renderActionSourceContext();
+    // The worker atomically deletes the one-use context on consumption.
+  }
+
   function renderUi() {
     if (!shadow || !root?.isConnected) return;
+    if (descriptionDraft && (!pageState.active || descriptionDraft.id !== (pageState.active.id || pageState.active.startedAt)
+        || descriptionDraft.taskUrl !== taskUrlOf(pageState.active))) descriptionDraft = null;
     updateTaskAnimation();
     const preservedMenuScrollTop = menuScrollTop;
-    clearInterval(tick); tick = null; summaryLabel = null; summaryTotalValue = null;
-    shadow.replaceChildren();
+    const preservedActivityTimeline = timesMode && pageState.configured && timelineInstance && timelineWindow
+      ? shadow?.querySelector('.popup-timeline-section') : null;
+    const preservedActivityCalendarScroll = preservedActivityTimeline && timelineInstance.captureCalendarScroll?.();
+    preservedActivityTimeline?.remove();
+    clearInterval(tick); tick = null;
+    if (!preservedActivityTimeline) {
+      timelineInstance?.destroy(); timelineInstance = null; timelineWindow = null; timelineEntriesById = new Map(); timelineQueueIndicator = null;
+    }
+    if (shadow && root?.isConnected) shadow.replaceChildren();
+    if (timesMode) {
+      document.getElementById?.('activity-summary')?.replaceChildren();
+      document.getElementById?.('activity-view-switcher')?.replaceChildren();
+    }
     const style = el('style', `
-      :host { all:initial; position:relative; display:inline-flex; align-items:center; color:var(--fgColor-default,#1f2328); color-scheme:light dark; font:var(--text-body-shorthand-medium,400 14px/1.5 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") }
-      * { box-sizing:border-box } button,input,textarea,select { font:inherit } .trigger { display:inline-flex; align-items:center; justify-content:center; gap:3px; width:46px; height:32px; margin:0 8px 0 0; padding:0 6px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:6px; background:var(--button-default-bgColor-rest,#f6f8fa); color:var(--fgColor-muted,#59636e); cursor:pointer }
-      .trigger:hover { background:var(--button-default-bgColor-hover,#eff2f5) } .trigger:active:not(:disabled) { background:var(--button-default-bgColor-active,#e6eaef) } .trigger[aria-expanded="true"] { background:var(--button-default-bgColor-selected,#e6eaef) } .clockoli-mark { display:block; width:22px; height:22px; flex:none; transform-origin:center } .trigger.running-current .clockoli-mark { animation:clockoli-task-spin 1s linear infinite } @keyframes clockoli-task-spin { to { transform:rotate(360deg) } } .trigger:focus-visible,button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,.time-value:focus-visible,.time-date:focus-visible { outline:2px solid var(--focus-outlineColor,#0969da); outline-offset:2px }
-      .menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:-24px; width:min(420px,calc(100vw - 24px)); max-height:calc(100vh - 76px); overflow-y:scroll; overflow-x:hidden; scrollbar-gutter:stable; overscroll-behavior:contain; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:12px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328); box-shadow:var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } .menu.has-more { box-shadow:inset 0 -18px 14px -18px var(--fgColor-muted,#59636e),var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } :host(.popup-surface) { display:block; width:100%; min-width:0; min-height:220px } :host(.popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:600px; border-radius:0 } :host(.times-surface) { display:block; width:100%; min-width:0 } :host(.times-surface) .times-page { width:min(920px,calc(100% - 32px)); min-height:calc(100vh - 48px); margin:0 auto; background:var(--bgColor-default,#fff); border-inline:1px solid var(--borderColor-muted,#d1d9e0b3) } .times-header h1 { margin:2px 0 0; font-size:24px; line-height:1.2 } .times-body { padding:20px 24px 40px } .times-toolbar { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:12px; margin-bottom:16px } .times-toolbar label { margin:0 } .times-toolbar select { width:100%; min-height:34px; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,#d1d9e0); border-radius:6px; background:var(--control-bgColor-rest,#f6f8fa); color:var(--control-fgColor-rest,#25292e) } .times-filter { grid-column:auto } .times-custom { display:grid; grid-column:1/-1; grid-template-columns:1fr 1fr auto; align-items:end; gap:12px } .times-apply { align-self:end; min-height:34px } .times-results { min-height:120px } .bulk-time { margin-top:24px; padding:14px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:8px; background:var(--bgColor-muted,#f6f8fa) } .bulk-time summary { font-weight:650; cursor:pointer } .bulk-time-input { min-height:160px; resize:vertical } .bulk-time-input::placeholder { color:var(--fgColor-muted,#59636e); opacity:.42 } .more-times { display:flex; justify-content:center; padding:12px 0 2px }
-      header,.header-actions,.section-head,.entry-row,.form-actions,.today-total { display:flex; align-items:center; justify-content:space-between; gap:12px } header { padding:12px 16px; border-bottom:1px solid var(--borderColor-muted,#d1d9e0b3) } .menu-body { padding:14px 16px } .muted { color:var(--fgColor-muted,#59636e); font:var(--text-caption-shorthand,400 12px/1.25 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"); margin-top:3px } .eyebrow { color:var(--fgColor-muted,#59636e); font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"); text-transform:uppercase; letter-spacing:normal; margin-bottom:5px } .tracking-status strong { font-weight:900 } .tracking-another strong { display:inline-block; padding:1px 5px; border-radius:999px; background:#ff2d55; color:#fff; box-shadow:0 0 0 2px #ff2d5533 }
-      a { color:var(--fgColor-accent,#0969da); font-weight:600; text-decoration:none } a:hover { text-decoration:underline } .task-result { min-width:0 } .task-url { display:block; overflow:hidden; color:var(--fgColor-muted,#59636e); font-size:12px; font-weight:400; line-height:1.35; text-overflow:ellipsis; white-space:nowrap } .task-title { display:-webkit-box; overflow:hidden; margin-top:2px; color:var(--fgColor-accent,#0969da); font-size:16px; font-weight:600; line-height:1.35; overflow-wrap:anywhere; -webkit-box-orient:vertical; -webkit-line-clamp:2 } .task-result-untitled .task-url { overflow:hidden; color:var(--fgColor-accent,#0969da); font-size:16px; font-weight:600; text-overflow:ellipsis; white-space:nowrap } .active-task-result { margin-bottom:2px } .elapsed { margin:8px 0 10px; font:600 2rem/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
-      button { border:1px solid var(--button-default-borderColor-rest,#d1d9e0); border-radius:6px; padding:7px 12px; background:var(--button-default-bgColor-rest,#f6f8fa); color:var(--button-default-fgColor-rest,#25292e); font-weight:600; cursor:pointer } button:hover { background:var(--button-default-bgColor-hover,#eff2f5) } button:active:not(:disabled) { background:var(--button-default-bgColor-active,#e6eaef) } button:disabled { border-color:var(--button-default-borderColor-disabled,#818b981a); background:var(--button-default-bgColor-disabled,#eff2f5); color:var(--button-default-fgColor-disabled,#818b98); cursor:default } .wide { width:100%; margin-top:10px } .primary { border-color:var(--button-primary-borderColor-rest,#1f232826); background:var(--button-primary-bgColor-rest,#1f883d); color:var(--button-primary-fgColor-rest,#fff) } .primary:hover { background:var(--button-primary-bgColor-hover,#1c8139) } .primary:active:not(:disabled) { background:var(--button-primary-bgColor-active,#197935) } .primary:disabled { border-color:var(--button-primary-borderColor-disabled,#95d8a6); background:var(--button-primary-bgColor-disabled,#95d8a6); color:var(--button-primary-fgColor-disabled,#fffc) } .danger,.danger-outline { border-color:var(--button-danger-borderColor-rest,#d1d9e0); background:var(--button-danger-bgColor-rest,#f6f8fa); color:var(--button-danger-fgColor-rest,#d1242f) } .danger:hover,.danger-outline:hover { border-color:var(--button-danger-borderColor-hover,#1f232826); background:var(--button-danger-bgColor-hover,#cf222e); color:var(--button-danger-fgColor-hover,#fff) } .danger:active:not(:disabled),.danger-outline:active:not(:disabled) { border-color:var(--button-danger-borderColor-active,#1f232826); background:var(--button-danger-bgColor-active,#a40e26); color:var(--button-danger-fgColor-active,#fff) } .danger:disabled,.danger-outline:disabled { border-color:var(--button-danger-borderColor-rest,#d1d9e0); background:var(--button-danger-bgColor-disabled,#eff2f5); color:var(--button-danger-fgColor-disabled,#d1242f80) }
-      .tracker-toolbar { justify-content:flex-end } .header-actions { justify-content:flex-end; gap:4px } .reports-button { display:inline-flex; align-items:center; gap:6px; padding:5px 7px } .reports-button,.icon-button,.link-button,.navigation-item { border:1px solid var(--button-invisible-borderColor-rest,#fff0); background:var(--button-invisible-bgColor-rest,#fff0) } .reports-button,.icon-button { color:var(--button-invisible-iconColor-rest,#59636e) } .reports-button:hover,.icon-button:hover,.link-button:hover,.navigation-item:hover { border-color:var(--button-invisible-borderColor-hover,#fff0); background:var(--button-invisible-bgColor-hover,#818b981a) } .reports-button:hover,.icon-button:hover { color:var(--button-invisible-iconColor-hover,#59636e) } .reports-button:active:not(:disabled),.icon-button:active:not(:disabled),.link-button:active:not(:disabled),.navigation-item:active:not(:disabled) { background:var(--button-invisible-bgColor-active,#818b9826) } .reports-button:disabled,.icon-button:disabled,.link-button:disabled,.navigation-item:disabled { border-color:var(--button-invisible-borderColor-disabled,#fff0); background:var(--button-invisible-bgColor-disabled,#fff0); color:var(--button-invisible-fgColor-disabled,#818b98) } .icon-button.syncing svg { animation:clockoli-sync-spin .8s linear infinite; transform-origin:center } @keyframes clockoli-sync-spin { to { transform:rotate(360deg) } } .today-total { margin-top:14px; padding:10px 12px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:8px; background:var(--bgColor-muted,#f6f8fa) } .today-total-value { font-size:16px } .icon-button,.link-button { padding:5px } .link-button { color:var(--fgColor-accent,#0969da) } .section-head { margin-bottom:7px }
-      .time-range-editor { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px } .time-picker { min-width:0; margin:0; padding:10px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:10px; background:var(--bgColor-muted,#f6f8fa) } .time-picker legend { padding:0 5px; color:var(--fgColor-muted,#59636e); font-weight:700 } .time-date { margin:0 0 8px; padding:5px 6px; background:var(--bgColor-default,#fff); font-size:12px } .time-picker-values { display:flex; align-items:center; justify-content:center; gap:6px } .time-value { width:62px; height:48px; margin:0; padding:4px; border-color:var(--control-borderColor-rest,#d1d9e0); background:var(--bgColor-default,#fff); font:700 26px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); text-align:center; font-variant-numeric:tabular-nums } .time-colon { font:700 24px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
-      .trigger-group { display:inline-flex; align-items:center; margin:0 8px 0 0 } .trigger-group .trigger { margin:0; border-radius:0 } .trigger-main { width:34px; border-radius:6px 0 0 6px!important } .trigger-menu { width:24px; border-left:0; border-radius:0 6px 6px 0!important }
-      .navigation-menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:-24px; width:180px; padding:6px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:8px; background:var(--bgColor-default,#fff); color:var(--fgColor-default,#1f2328); box-shadow:var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f) } .navigation-item { display:flex; align-items:center; gap:8px; width:100%; padding:7px 8px; color:var(--button-invisible-fgColor-rest,#25292e); text-align:left }
-      .entry { padding:8px 0 } .entry + .entry { margin-top:6px } .entry-record-task-result { margin-bottom:7px } .entry-record { padding:10px 12px; border:1px solid var(--borderColor-default,#d1d9e0); border-radius:8px; background:var(--bgColor-muted,#f6f8fa) } .entry-record + .entry-record { margin-top:8px } .entry-record.entry-overlap { padding:10px 12px; border-color:var(--borderColor-danger-muted,#ff818266); background:var(--bgColor-danger-muted,#ffebe9) } .overlap-warning { margin-bottom:5px; color:var(--fgColor-danger,#d1242f); font-size:12px; font-weight:700 } .entry-day { margin-bottom:2px; color:var(--fgColor-muted,#59636e); font-size:13px; font-weight:650; white-space:nowrap } .entry-time-row { display:flex; align-items:center; justify-content:flex-start; gap:8px; min-width:0; white-space:nowrap } .entry-time-range,.inline-time-range { flex:0 0 auto } .inline-time-line { display:flex; flex-wrap:nowrap; align-items:center; justify-content:flex-start; gap:4px; min-width:0; white-space:nowrap } .compact-time-picker { display:inline-flex; align-items:center; min-width:0; margin:0; padding:0; border:0; background:transparent } .compact-time-picker legend { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap } .compact-time-picker .time-date { display:none } .compact-time-picker .time-picker-values { display:inline-flex; justify-content:flex-start; gap:2px; white-space:nowrap } .compact-time-picker .time-value { width:34px; height:32px; margin:0; padding:2px; border-radius:5px; font-size:17px } .compact-time-picker .time-colon { font-size:17px } .inline-time-separator { color:var(--fgColor-muted,#59636e); font-weight:650 } .entry-time-range { color:var(--fgColor-default,#1f2328); font:600 13px/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); font-variant-numeric:tabular-nums } .inline-duration { flex:0 1 auto; min-width:0; overflow:hidden; color:var(--fgColor-muted,#59636e); font-size:13px; font-weight:650; text-overflow:ellipsis; white-space:nowrap } .entry-description { margin-top:4px; color:var(--fgColor-muted,#59636e); overflow-wrap:anywhere } .entry-description-editable { display:block; width:100%; padding:5px 7px; border:1px dashed var(--borderColor-default,#d1d9e0); background:var(--bgColor-default,#fff0); color:var(--fgColor-muted,#59636e); font-size:inherit; font-weight:400; line-height:inherit; text-align:left } .entry-description-editable:hover { border-style:solid; background:var(--button-invisible-bgColor-hover,#818b981a); color:var(--fgColor-default,#1f2328) } .inline-metadata-editor { margin:6px 0 2px; padding:9px; border:1px solid var(--borderColor-muted,#d1d9e0b3); border-radius:7px; background:var(--bgColor-muted,#f6f8fa) } .inline-metadata-editor label { margin:6px 0 0 } .inline-metadata-editor label:first-child { margin-top:0 } .inline-metadata-editor input { font-size:14px } .entry-actions { display:flex; flex:0 0 auto; align-items:center; gap:4px; opacity:0; pointer-events:none } .entry-actions.dirty { opacity:1; pointer-events:auto } .entry-actions.dirty .entry-edit,.entry-actions.dirty .entry-delete { display:none } .entry-actions button { padding:3px 5px; font-size:12px } .entry-record:hover .entry-actions,.entry-record:focus-within .entry-actions,.entry-actions-visible { opacity:1; pointer-events:auto }
- label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid var(--control-borderColor-rest,#d1d9e0); border-radius:6px; background:var(--control-bgColor-rest,#f6f8fa); color:var(--control-fgColor-rest,#25292e) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,#59636e) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,#eff2f5) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,#e6eaef) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,#818b981a); background:var(--control-bgColor-disabled,#eff2f5); color:var(--control-fgColor-disabled,#818b98) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,#d1242f); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:340px) { .entry-time-row { gap:3px } .inline-time-line { gap:1px } .compact-time-picker .time-picker-values { gap:1px } .compact-time-picker .time-value { width:27px; font-size:15px } .inline-duration { font-size:12px } .entry-actions { gap:1px } .entry-actions button { padding:2px; font-size:10px } } @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } .times-header { align-items:flex-start; flex-direction:column } .times-body { padding:16px } .times-toolbar { grid-template-columns:1fr } .times-filter { grid-column:auto } .times-custom { grid-column:auto; grid-template-columns:1fr } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } }
+      :host, :where(:host > :not(style)) {
+        /* One side gutter for every full-width panel row, so they stay aligned as the viewport grows. */
+        --clockoli-gutter: clamp(16px, 2.5vw, 32px);
+        --ck-fg: var(--fgColor-default,#1f2328);
+        --ck-border: var(--borderColor-default,#d1d9e0);
+        --ck-button-default-bg-rest: var(--button-default-bgColor-rest,#f6f8fa);
+        --ck-fg-muted: var(--fgColor-muted,#59636e);
+        --ck-button-default-bg-hover: var(--button-default-bgColor-hover,#eff2f5);
+        --ck-button-default-bg-active: var(--button-default-bgColor-active,#e6eaef);
+        --ck-button-default-bg-selected: var(--button-default-bgColor-selected,#e6eaef);
+        --ck-focus: var(--focus-outlineColor,#0969da);
+        --ck-bg: var(--bgColor-default,#fff);
+        --ck-shadow: var(--shadow-floating-small,0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f);
+        --ck-border-muted: var(--borderColor-muted,#d1d9e0b3);
+        --ck-control-border-rest: var(--control-borderColor-rest,#d1d9e0);
+        --ck-control-bg-rest: var(--control-bgColor-rest,#f6f8fa);
+        --ck-control-fg-rest: var(--control-fgColor-rest,#25292e);
+        --ck-bg-muted: var(--bgColor-muted,#f6f8fa);
+        --ck-bg-attention: var(--bgColor-attention-muted,#fff8c5);
+        --ck-accent: var(--fgColor-accent,#0969da);
+        --ck-success: var(--fgColor-success,#1f883d);
+        --ck-button-default-border-rest: var(--button-default-borderColor-rest,#d1d9e0);
+        --ck-button-default-fg-rest: var(--button-default-fgColor-rest,#25292e);
+        --ck-button-default-border-disabled: var(--button-default-borderColor-disabled,#818b981a);
+        --ck-button-default-bg-disabled: var(--button-default-bgColor-disabled,#eff2f5);
+        --ck-button-default-fg-disabled: var(--button-default-fgColor-disabled,#818b98);
+        --ck-button-primary-border-rest: var(--button-primary-borderColor-rest,#1f232826);
+        --ck-button-primary-bg-rest: var(--button-primary-bgColor-rest,#1f883d);
+        --ck-button-primary-fg-rest: var(--button-primary-fgColor-rest,#fff);
+        --ck-button-primary-bg-hover: var(--button-primary-bgColor-hover,#1c8139);
+        --ck-button-primary-bg-active: var(--button-primary-bgColor-active,#197935);
+        --ck-button-primary-border-disabled: var(--button-primary-borderColor-disabled,#95d8a6);
+        --ck-button-primary-bg-disabled: var(--button-primary-bgColor-disabled,#95d8a6);
+        --ck-button-primary-fg-disabled: var(--button-primary-fgColor-disabled,#fffc);
+        --ck-button-danger-border-rest: var(--button-danger-borderColor-rest,#d1d9e0);
+        --ck-button-danger-bg-rest: var(--button-danger-bgColor-rest,#f6f8fa);
+        --ck-button-danger-fg-rest: var(--button-danger-fgColor-rest,#d1242f);
+        --ck-button-danger-border-hover: var(--button-danger-borderColor-hover,#1f232826);
+        --ck-button-danger-bg-hover: var(--button-danger-bgColor-hover,#cf222e);
+        --ck-button-danger-fg-hover: var(--button-danger-fgColor-hover,#fff);
+        --ck-button-danger-border-active: var(--button-danger-borderColor-active,#1f232826);
+        --ck-button-danger-bg-active: var(--button-danger-bgColor-active,#a40e26);
+        --ck-button-danger-fg-active: var(--button-danger-fgColor-active,#fff);
+        --ck-button-danger-bg-disabled: var(--button-danger-bgColor-disabled,#eff2f5);
+        --ck-button-danger-fg-disabled: var(--button-danger-fgColor-disabled,#d1242f80);
+        --ck-button-invisible-border-rest: var(--button-invisible-borderColor-rest,#fff0);
+        --ck-button-invisible-bg-rest: var(--button-invisible-bgColor-rest,#fff0);
+        --ck-button-invisible-icon-rest: var(--button-invisible-iconColor-rest,#59636e);
+        --ck-button-invisible-border-hover: var(--button-invisible-borderColor-hover,#fff0);
+        --ck-button-invisible-bg-hover: var(--button-invisible-bgColor-hover,#818b981a);
+        --ck-button-invisible-icon-hover: var(--button-invisible-iconColor-hover,#59636e);
+        --ck-button-invisible-bg-active: var(--button-invisible-bgColor-active,#818b9826);
+        --ck-button-invisible-border-disabled: var(--button-invisible-borderColor-disabled,#fff0);
+        --ck-button-invisible-bg-disabled: var(--button-invisible-bgColor-disabled,#fff0);
+        --ck-button-invisible-fg-disabled: var(--button-invisible-fgColor-disabled,#818b98);
+        --ck-border-danger: var(--borderColor-danger-muted,#ff818266);
+        --ck-bg-danger: var(--bgColor-danger-muted,#ffebe9);
+        --ck-danger: var(--fgColor-danger,#d1242f);
+        --ck-bg-editable: var(--bgColor-default,#fff0);
+        --ck-control-fg-placeholder: var(--control-fgColor-placeholder,#59636e);
+        --ck-control-bg-hover: var(--control-bgColor-hover,#eff2f5);
+        --ck-control-bg-active: var(--control-bgColor-active,#e6eaef);
+        --ck-control-border-disabled: var(--control-borderColor-disabled,#818b981a);
+        --ck-control-bg-disabled: var(--control-bgColor-disabled,#eff2f5);
+        --ck-control-fg-disabled: var(--control-fgColor-disabled,#818b98);
+        --ck-shadow-overlay: var(--shadow-floating-small,0 12px 30px #1f23284d);
+        --ck-transparent: var(--button-invisible-bgColor-rest,#fff0);
+        /* Shadow DOM blocks selectors, but inherited custom properties still cross
+           the host boundary. Pin every Primer-compatible style value locally so a site
+           such as vc.ru cannot restyle Clockoli. */
+        --fgColor-default:#1f2328; --fgColor-muted:#59636e; --fgColor-accent:#0969da; --fgColor-danger:#d1242f;
+        --bgColor-default:#fff; --bgColor-muted:#f6f8fa; --bgColor-inset:#f6f8fa; --bgColor-attention-muted:#fff8c5; --bgColor-danger-muted:#ffebe9;
+        --borderColor-default:#d1d9e0; --borderColor-muted:#d1d9e0b3; --borderColor-danger-muted:#ff818266; --focus-outlineColor:#0969da;
+        --button-default-borderColor-rest:#d1d9e0; --button-default-bgColor-rest:#f6f8fa; --button-default-fgColor-rest:#25292e;
+        --button-default-bgColor-hover:#eff2f5; --button-default-bgColor-active:#e6eaef; --button-default-bgColor-selected:#e6eaef;
+        --button-default-borderColor-disabled:#818b981a; --button-default-bgColor-disabled:#eff2f5; --button-default-fgColor-disabled:#818b98;
+        --button-primary-borderColor-rest:#1f232826; --button-primary-bgColor-rest:#1f883d; --button-primary-fgColor-rest:#fff;
+        --button-primary-bgColor-hover:#1c8139; --button-primary-bgColor-active:#197935; --button-primary-borderColor-disabled:#95d8a6; --button-primary-bgColor-disabled:#95d8a6; --button-primary-fgColor-disabled:#fffc;
+        --button-danger-borderColor-rest:#d1d9e0; --button-danger-bgColor-rest:#f6f8fa; --button-danger-fgColor-rest:#d1242f;
+        --button-danger-borderColor-hover:#1f232826; --button-danger-bgColor-hover:#cf222e; --button-danger-fgColor-hover:#fff;
+        --button-danger-borderColor-active:#1f232826; --button-danger-bgColor-active:#a40e26; --button-danger-fgColor-active:#fff; --button-danger-bgColor-disabled:#eff2f5; --button-danger-fgColor-disabled:#d1242f80;
+        --button-invisible-borderColor-rest:#fff0; --button-invisible-bgColor-rest:#fff0; --button-invisible-iconColor-rest:#59636e; --button-invisible-fgColor-rest:#25292e;
+        --button-invisible-borderColor-hover:#fff0; --button-invisible-bgColor-hover:#818b981a; --button-invisible-iconColor-hover:#59636e; --button-invisible-bgColor-active:#818b9826;
+        --button-invisible-borderColor-disabled:#fff0; --button-invisible-bgColor-disabled:#fff0; --button-invisible-fgColor-disabled:#818b98;
+        --control-borderColor-rest:#d1d9e0; --control-bgColor-rest:#f6f8fa; --control-fgColor-rest:#25292e; --control-fgColor-placeholder:#59636e;
+        --control-bgColor-hover:#eff2f5; --control-bgColor-active:#e6eaef; --control-borderColor-disabled:#818b981a; --control-bgColor-disabled:#eff2f5; --control-fgColor-disabled:#818b98;
+        --shadow-floating-small:0 0 0 1px #d1d9e040,0 6px 12px -3px #25292e0a,0 6px 18px 0 #25292e1f;
+        --fontStack-sansSerif:"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+        --fontStack-monospace:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+        --text-body-shorthand-medium:400 14px/1.5 var(--fontStack-sansSerif);
+        --text-caption-shorthand:400 12px/1.25 var(--fontStack-sansSerif);
+      }
+      @media (prefers-color-scheme: dark) {
+        :host, :where(:host > :not(style)) {
+          --ck-fg: var(--fgColor-default,#f0f6fc);
+          --ck-border: var(--borderColor-default,#3d444d);
+          --ck-button-default-bg-rest: var(--button-default-bgColor-rest,#212830);
+          --ck-fg-muted: var(--fgColor-muted,#9198a1);
+          --ck-button-default-bg-hover: var(--button-default-bgColor-hover,#262c36);
+          --ck-button-default-bg-active: var(--button-default-bgColor-active,#2a313c);
+          --ck-button-default-bg-selected: var(--button-default-bgColor-selected,#2a313c);
+          --ck-focus: var(--focus-outlineColor,#1f6feb);
+          --ck-bg: var(--bgColor-default,#0d1117);
+          --ck-shadow: var(--shadow-floating-small,0 0 0 1px #3d444d,0 6px 12px -3px #01040966,0 6px 18px 0 #01040966);
+          --ck-border-muted: var(--borderColor-muted,#3d444db3);
+          --ck-control-border-rest: var(--control-borderColor-rest,#3d444d);
+          --ck-control-bg-rest: var(--control-bgColor-rest,#212830);
+          --ck-control-fg-rest: var(--control-fgColor-rest,#f0f6fc);
+          --ck-bg-muted: var(--bgColor-muted,#151b23);
+          --ck-bg-attention: var(--bgColor-attention-muted,#bb800926);
+          --ck-accent: var(--fgColor-accent,#4493f8);
+          --ck-success: var(--fgColor-success,#3fb950);
+          --ck-button-default-border-rest: var(--button-default-borderColor-rest,#3d444d);
+          --ck-button-default-fg-rest: var(--button-default-fgColor-rest,#f0f6fc);
+          --ck-button-default-border-disabled: var(--button-default-borderColor-disabled,#656c761a);
+          --ck-button-default-bg-disabled: var(--button-default-bgColor-disabled,#212830);
+          --ck-button-default-fg-disabled: var(--button-default-fgColor-disabled,#656c76);
+          --ck-button-primary-border-rest: var(--button-primary-borderColor-rest,#ffffff26);
+          --ck-button-primary-bg-rest: var(--button-primary-bgColor-rest,#238636);
+          --ck-button-primary-fg-rest: var(--button-primary-fgColor-rest,#fff);
+          --ck-button-primary-bg-hover: var(--button-primary-bgColor-hover,#29903b);
+          --ck-button-primary-bg-active: var(--button-primary-bgColor-active,#2e9a40);
+          --ck-button-primary-border-disabled: var(--button-primary-borderColor-disabled,#105823);
+          --ck-button-primary-bg-disabled: var(--button-primary-bgColor-disabled,#105823);
+          --ck-button-primary-fg-disabled: var(--button-primary-fgColor-disabled,#fff6);
+          --ck-button-danger-border-rest: var(--button-danger-borderColor-rest,#3d444d);
+          --ck-button-danger-bg-rest: var(--button-danger-bgColor-rest,#212830);
+          --ck-button-danger-fg-rest: var(--button-danger-fgColor-rest,#fa5e55);
+          --ck-button-danger-border-hover: var(--button-danger-borderColor-hover,#ffffff26);
+          --ck-button-danger-bg-hover: var(--button-danger-bgColor-hover,#b62324);
+          --ck-button-danger-fg-hover: var(--button-danger-fgColor-hover,#fff);
+          --ck-button-danger-border-active: var(--button-danger-borderColor-active,#ffffff26);
+          --ck-button-danger-bg-active: var(--button-danger-bgColor-active,#da3633);
+          --ck-button-danger-fg-active: var(--button-danger-fgColor-active,#fff);
+          --ck-button-danger-bg-disabled: var(--button-danger-bgColor-disabled,#212830);
+          --ck-button-danger-fg-disabled: var(--button-danger-fgColor-disabled,#f8514980);
+          --ck-button-invisible-border-rest: var(--button-invisible-borderColor-rest,#0000);
+          --ck-button-invisible-bg-rest: var(--button-invisible-bgColor-rest,#0000);
+          --ck-button-invisible-icon-rest: var(--button-invisible-iconColor-rest,#9198a1);
+          --ck-button-invisible-border-hover: var(--button-invisible-borderColor-hover,#0000);
+          --ck-button-invisible-bg-hover: var(--button-invisible-bgColor-hover,#656c7633);
+          --ck-button-invisible-icon-hover: var(--button-invisible-iconColor-hover,#9198a1);
+          --ck-button-invisible-bg-active: var(--button-invisible-bgColor-active,#656c7640);
+          --ck-button-invisible-border-disabled: var(--button-invisible-borderColor-disabled,#0000);
+          --ck-button-invisible-bg-disabled: var(--button-invisible-bgColor-disabled,#0000);
+          --ck-button-invisible-fg-disabled: var(--button-invisible-fgColor-disabled,#656c76);
+          --ck-border-danger: var(--borderColor-danger-muted,#f8514966);
+          --ck-bg-danger: var(--bgColor-danger-muted,#f851491a);
+          --ck-danger: var(--fgColor-danger,#f85149);
+          --ck-bg-editable: var(--bgColor-default,#0000);
+          --ck-control-fg-placeholder: var(--control-fgColor-placeholder,#9198a1);
+          --ck-control-bg-hover: var(--control-bgColor-hover,#262c36);
+          --ck-control-bg-active: var(--control-bgColor-active,#2a313c);
+          --ck-control-border-disabled: var(--control-borderColor-disabled,#656c761a);
+          --ck-control-bg-disabled: var(--control-bgColor-disabled,#212830);
+          --ck-control-fg-disabled: var(--control-fgColor-disabled,#656c76);
+          --ck-shadow-overlay: var(--shadow-floating-small,0 0 0 1px #3d444d,0 6px 12px -3px #01040966,0 6px 18px 0 #01040966);
+          --ck-transparent: var(--button-invisible-bgColor-rest,#0000);
+          --fgColor-default:#f0f6fc; --fgColor-muted:#9198a1; --fgColor-accent:#4493f8; --fgColor-danger:#f85149;
+          --bgColor-default:#0d1117; --bgColor-muted:#151b23; --bgColor-inset:#010409; --bgColor-attention-muted:#bb800926; --bgColor-danger-muted:#f851491a;
+          --borderColor-default:#3d444d; --borderColor-muted:#3d444db3; --borderColor-danger-muted:#f8514966; --focus-outlineColor:#1f6feb;
+          --button-default-borderColor-rest:#3d444d; --button-default-bgColor-rest:#212830; --button-default-fgColor-rest:#f0f6fc;
+          --button-default-bgColor-hover:#262c36; --button-default-bgColor-active:#2a313c; --button-default-bgColor-selected:#2a313c;
+          --button-default-borderColor-disabled:#656c761a; --button-default-bgColor-disabled:#212830; --button-default-fgColor-disabled:#656c76;
+          --button-primary-borderColor-rest:#ffffff26; --button-primary-bgColor-rest:#238636; --button-primary-fgColor-rest:#fff;
+          --button-primary-bgColor-hover:#29903b; --button-primary-bgColor-active:#2e9a40; --button-primary-borderColor-disabled:#105823; --button-primary-bgColor-disabled:#105823; --button-primary-fgColor-disabled:#fff6;
+          --button-danger-borderColor-rest:#3d444d; --button-danger-bgColor-rest:#212830; --button-danger-fgColor-rest:#fa5e55;
+          --button-danger-borderColor-hover:#ffffff26; --button-danger-bgColor-hover:#b62324; --button-danger-fgColor-hover:#fff;
+          --button-danger-borderColor-active:#ffffff26; --button-danger-bgColor-active:#da3633; --button-danger-fgColor-active:#fff; --button-danger-bgColor-disabled:#212830; --button-danger-fgColor-disabled:#f8514980;
+          --button-invisible-borderColor-rest:#0000; --button-invisible-bgColor-rest:#0000; --button-invisible-iconColor-rest:#9198a1; --button-invisible-fgColor-rest:#f0f6fc;
+          --button-invisible-borderColor-hover:#0000; --button-invisible-bgColor-hover:#656c7633; --button-invisible-iconColor-hover:#9198a1; --button-invisible-bgColor-active:#656c7640;
+          --button-invisible-borderColor-disabled:#0000; --button-invisible-bgColor-disabled:#0000; --button-invisible-fgColor-disabled:#656c76;
+          --control-borderColor-rest:#3d444d; --control-bgColor-rest:#212830; --control-fgColor-rest:#f0f6fc; --control-fgColor-placeholder:#9198a1;
+          --control-bgColor-hover:#262c36; --control-bgColor-active:#2a313c; --control-borderColor-disabled:#656c761a; --control-bgColor-disabled:#212830; --control-fgColor-disabled:#656c76;
+          --shadow-floating-small:0 0 0 1px #3d444d,0 6px 12px -3px #01040966,0 6px 18px 0 #01040966;
+        }
+        }
+      :host { all:initial; position:relative; display:inline-flex; align-items:center; color:var(--fgColor-default,var(--ck-fg)); color-scheme:light dark; font:var(--text-body-shorthand-medium,400 14px/1.5 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") }
+      :where(:host > :not(style)) { all:revert; color:var(--fgColor-default,var(--ck-fg)); color-scheme:light dark; font:var(--text-body-shorthand-medium,400 14px/1.5 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") }
+      * { box-sizing:border-box } b,strong,h1,h2,h3,h4,h5,h6 { font-weight:600 } button,input,textarea,select { font:inherit } .trigger { display:inline-flex; align-items:center; justify-content:center; gap:3px; width:46px; height:32px; margin:0 8px 0 0; padding:0 6px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; background:var(--button-default-bgColor-rest,var(--ck-button-default-bg-rest)); color:var(--fgColor-muted,var(--ck-fg-muted)); cursor:pointer }
+      .trigger:hover { background:var(--button-default-bgColor-hover,var(--ck-button-default-bg-hover)) } .trigger:active:not(:disabled) { background:var(--button-default-bgColor-active,var(--ck-button-default-bg-active)) } .trigger[aria-expanded="true"] { background:var(--button-default-bgColor-selected,var(--ck-button-default-bg-selected)) } .clockoli-mark { display:block; width:20px; height:20px; flex:none; transform-origin:center } @media(prefers-reduced-motion: no-preference) { .trigger.running-current .clockoli-mark { animation:clockoli-task-spin 1s linear infinite } } @keyframes clockoli-task-spin { to { transform:rotate(360deg) } } .trigger:focus-visible,button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,.time-value:focus-visible,.time-date:focus-visible { outline:2px solid var(--focus-outlineColor,var(--ck-focus)); outline-offset:2px } input:not([type=radio],[type=checkbox]):focus-visible,textarea:focus-visible,select:focus-visible,.time-value:focus-visible,.time-date:focus-visible { outline-offset:-1px }
+      .menu { position:absolute; z-index:2147483647; top:calc(100% + 8px); right:-24px; width:min(420px,calc(100vw - 24px)); max-height:calc(100vh - 76px); overflow-y:scroll; overflow-x:hidden; scrollbar-gutter:stable; overscroll-behavior:contain; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:12px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); box-shadow:var(--shadow-floating-small,var(--ck-shadow)) } .menu.has-more { box-shadow:inset 0 -18px 14px -18px var(--fgColor-muted,var(--ck-fg-muted)),var(--shadow-floating-small,var(--ck-shadow)) } :host(.popup-surface) { display:block; width:100%; min-width:0; min-height:220px } :host(.popup-surface) .menu { position:relative; inset:auto; width:100%; max-height:600px; border-radius:0} :host(.times-surface) { display:block; width:100%; min-width:0 } :host(.times-surface) .times-page { width:min(920px,calc(100% - 32px)); min-height:calc(100vh - 48px); margin:0 auto; background:var(--bgColor-default,var(--ck-bg)); border-inline:1px solid var(--borderColor-muted,var(--ck-border-muted)) } .times-header h1 { margin:2px 0 0; font-size:24px; line-height:1.2 } .times-body { padding:20px 24px 40px } .times-toolbar { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:12px; margin-bottom:16px } .times-toolbar label { margin:0 } .times-toolbar select { width:100%; min-height:32px; margin-top:4px; padding:7px 32px 7px 8px; border:1px solid var(--control-borderColor-rest,var(--ck-control-border-rest)); border-radius:6px; background-color:var(--control-bgColor-rest,var(--ck-control-bg-rest)); color:var(--control-fgColor-rest,var(--ck-control-fg-rest)); appearance:none; background-image:linear-gradient(45deg,transparent 50%,var(--fgColor-muted,var(--ck-fg-muted)) 50%),linear-gradient(135deg,var(--fgColor-muted,var(--ck-fg-muted)) 50%,transparent 50%); background-position:right 17px center,right 12px center; background-size:5px 5px; background-repeat:no-repeat } .times-filter { grid-column:auto } .times-custom { display:grid; grid-column:1/-1; grid-template-columns:1fr 1fr auto; align-items:end; gap:12px } .times-apply { align-self:end; min-height:32px } .times-results { min-height:120px } .bulk-time { margin-top:24px; padding:14px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .bulk-time summary { font-weight:600; cursor:pointer } .bulk-time-input { min-height:160px; resize:vertical } .bulk-time-input::placeholder { color:var(--fgColor-muted,var(--ck-fg-muted)); opacity:.42 } .more-times { display:flex; justify-content:center; padding:12px 0 2px }
+      header,.header-actions,.section-head,.entry-row,.form-actions,.today-total { display:flex; align-items:center; justify-content:space-between; gap:12px } header { padding:12px 16px; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) } .menu-body { padding:14px 16px } .muted { color:var(--fgColor-muted,var(--ck-fg-muted)); font:var(--text-caption-shorthand,400 12px/1.25 "Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"); margin-top:3px } .eyebrow { color:var(--fgColor-muted,var(--ck-fg-muted)); font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"); letter-spacing:normal; margin-bottom:5px } .tracking-status strong { font-weight:600 } .tracking-another strong { display:inline-block; padding:1px 5px; border-radius:999px; background:var(--bgColor-attention-muted,var(--ck-bg-attention)); color:var(--fgColor-muted,var(--ck-fg-muted)) }
+      a { color:var(--fgColor-accent,var(--ck-accent)); font-weight:600; text-decoration:none } a:hover { text-decoration:underline } .task-result { min-width:0 } .task-url { display:block; overflow:hidden; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:400; line-height:1.35; text-overflow:ellipsis; white-space:nowrap } .task-title { display:-webkit-box; overflow:hidden; margin-top:2px; color:var(--fgColor-accent,var(--ck-accent)); font-size:16px; font-weight:600; line-height:1.35; overflow-wrap:anywhere; -webkit-box-orient:vertical; -webkit-line-clamp:2 } .task-result-untitled .task-url { overflow:hidden; color:var(--fgColor-accent,var(--ck-accent)); font-size:16px; font-weight:600; text-overflow:ellipsis; white-space:nowrap } .active-task-result { margin-bottom:2px } .elapsed { margin:8px 0 10px; font:600 2rem/1.5 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
+      button { border:1px solid var(--button-default-borderColor-rest,var(--ck-button-default-border-rest)); border-radius:6px; min-height:32px; padding:5px 12px; line-height:20px; background:var(--button-default-bgColor-rest,var(--ck-button-default-bg-rest)); color:var(--button-default-fgColor-rest,var(--ck-button-default-fg-rest)); font-weight:500; cursor:pointer } button:hover { background:var(--button-default-bgColor-hover,var(--ck-button-default-bg-hover)) } button:active:not(:disabled) { background:var(--button-default-bgColor-active,var(--ck-button-default-bg-active)) } button:disabled { border-color:var(--button-default-borderColor-disabled,var(--ck-button-default-border-disabled)); background:var(--button-default-bgColor-disabled,var(--ck-button-default-bg-disabled)); color:var(--button-default-fgColor-disabled,var(--ck-button-default-fg-disabled)); cursor:default } .wide { width:100%; margin-top:10px } .primary { border-color:var(--button-primary-borderColor-rest,var(--ck-button-primary-border-rest)); background:var(--button-primary-bgColor-rest,var(--ck-button-primary-bg-rest)); color:var(--button-primary-fgColor-rest,var(--ck-button-primary-fg-rest)) } .primary:hover { background:var(--button-primary-bgColor-hover,var(--ck-button-primary-bg-hover)) } .primary:active:not(:disabled) { background:var(--button-primary-bgColor-active,var(--ck-button-primary-bg-active)) } .primary:disabled { border-color:var(--button-primary-borderColor-disabled,var(--ck-button-primary-border-disabled)); background:var(--button-primary-bgColor-disabled,var(--ck-button-primary-bg-disabled)); color:var(--button-primary-fgColor-disabled,var(--ck-button-primary-fg-disabled)) } .danger,.danger-outline { border-color:var(--button-danger-borderColor-rest,var(--ck-button-danger-border-rest)); background:var(--button-danger-bgColor-rest,var(--ck-button-danger-bg-rest)); color:var(--button-danger-fgColor-rest,var(--ck-button-danger-fg-rest)) } .danger:hover,.danger-outline:hover { border-color:var(--button-danger-borderColor-hover,var(--ck-button-danger-border-hover)); background:var(--button-danger-bgColor-hover,var(--ck-button-danger-bg-hover)); color:var(--button-danger-fgColor-hover,var(--ck-button-danger-fg-hover)) } .danger:active:not(:disabled),.danger-outline:active:not(:disabled) { border-color:var(--button-danger-borderColor-active,var(--ck-button-danger-border-active)); background:var(--button-danger-bgColor-active,var(--ck-button-danger-bg-active)); color:var(--button-danger-fgColor-active,var(--ck-button-danger-fg-active)) } .danger:disabled,.danger-outline:disabled { border-color:var(--button-danger-borderColor-rest,var(--ck-button-danger-border-rest)); background:var(--button-danger-bgColor-disabled,var(--ck-button-danger-bg-disabled)); color:var(--button-danger-fgColor-disabled,var(--ck-button-danger-fg-disabled)) }
+      .tracker-toolbar { justify-content:flex-end } .header-actions { justify-content:flex-end; gap:4px } .header-navigation { display:flex; align-items:center; gap:4px } .reports-button { display:inline-flex; align-items:center; gap:8px; min-height:32px; padding:5px 8px }
+      .save-field { position:relative; display:block; width:100% } .save-field input,.save-field textarea { padding-right:32px }
+      .description-saved { display:inline-flex; align-items:center; gap:4px; color:var(--ck-success); font:500 12px/20px var(--fontStack-sansSerif); white-space:nowrap }
+      .description-saved[hidden] { display:none }
+      .description-overflow-hint { display:block; margin-top:3px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:500 }
+      .description-overflow-hint[hidden] { display:none }
+      .strip-description-field .description-saved { position:absolute; right:38px; top:50%; transform:translateY(-50%); padding:2px 4px; background:var(--bgColor-default,var(--ck-bg)); border-radius:3px}
+      .dialog-description-saved { margin:4px 0 0 8px }
+      .entry-description-saved { margin:4px 0 0 24px }
+      .save-check { position:absolute; z-index:1; top:50%; right:4px; display:inline-flex; align-items:center; justify-content:center; width:24px; min-height:0; height:24px; margin:0; padding:0; transform:translateY(-50%); border:0; border-radius:6px; background:transparent; color:var(--ck-success); cursor:pointer }
+      .save-check:hover:not(:disabled) { border:0; background:color-mix(in srgb,var(--ck-success) 12%,transparent); color:var(--ck-success) } .save-check:disabled { border:0; background:transparent; color:color-mix(in srgb,var(--ck-success) 50%,transparent) } .save-check[hidden] { display:none } .reports-button,.icon-button,.link-button,.navigation-item { border:1px solid var(--button-invisible-borderColor-rest,var(--ck-button-invisible-border-rest)); background:var(--button-invisible-bgColor-rest,var(--ck-button-invisible-bg-rest)) } .reports-button,.icon-button { color:var(--button-invisible-iconColor-rest,var(--ck-button-invisible-icon-rest)) } .reports-button:hover,.icon-button:hover,.link-button:hover,.navigation-item:hover { border-color:var(--button-invisible-borderColor-hover,var(--ck-button-invisible-border-hover)); background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)) } .reports-button:hover,.icon-button:hover { color:var(--button-invisible-iconColor-hover,var(--ck-button-invisible-icon-hover)) } .reports-button:active:not(:disabled),.icon-button:active:not(:disabled),.link-button:active:not(:disabled),.navigation-item:active:not(:disabled) { background:var(--button-invisible-bgColor-active,var(--ck-button-invisible-bg-active)) } .reports-button:disabled,.icon-button:disabled,.link-button:disabled,.navigation-item:disabled { border-color:var(--button-invisible-borderColor-disabled,var(--ck-button-invisible-border-disabled)); background:var(--button-invisible-bgColor-disabled,var(--ck-button-invisible-bg-disabled)); color:var(--button-invisible-fgColor-disabled,var(--ck-button-invisible-fg-disabled)) } @media(prefers-reduced-motion: no-preference) { .icon-button.syncing svg { animation:clockoli-sync-spin .8s linear infinite; transform-origin:center } } @keyframes clockoli-sync-spin { to { transform:rotate(360deg) } } .today-total { margin-top:14px; padding:10px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      .timeline-queue-status { margin:0 0 8px; font-size:12px; font-weight:600 }
+      .timeline-queue-status[hidden] { display:none } .today-total-value { font-size:16px } .icon-button,.link-button { min-height:28px; padding:3px 5px } .link-button { color:var(--fgColor-accent,var(--ck-accent)) } .section-head { margin-bottom:7px }
+      .time-range-editor { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px } .time-picker { min-width:0; margin:0; padding:10px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .time-picker legend { padding:0 5px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-weight:600 } .time-date { margin:0 0 8px; padding:5px 6px; background:var(--bgColor-default,var(--ck-bg)); font-size:12px } .time-picker-values { display:flex; align-items:center; justify-content:center; gap:6px } .time-value { width:48px; height:32px; min-height:0; margin:0; padding:4px; border-color:var(--control-borderColor-rest,var(--ck-control-border-rest)); background:var(--bgColor-default,var(--ck-bg)); font:600 16px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); text-align:center; font-variant-numeric:tabular-nums } .time-colon { font:600 16px/1 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
+      .trigger-main { width:32px; margin-right:8px }
+      .entry-date-header { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px } .entry-date-header h2 { margin:0; font-size:14px; font-weight:600 } .entry-day-total,.inline-unsaved { color:var(--ck-fg-muted); font-size:12px; white-space:nowrap } .entry-record-task-identity { display:flex; align-items:flex-start; gap:10px; min-width:0 } .entry-record-task-result { flex:1; min-width:0 } .entry-record-favicon { margin-top:2px }
+      .entry { padding:8px 0 } .entry + .entry { margin-top:6px } .entry-record-task-result { margin-bottom:7px } .entry-record { padding:10px 12px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .entry-record + .entry-record { margin-top:8px } .entry-record.entry-overlap { padding:10px 12px; border-color:var(--borderColor-danger-muted,var(--ck-border-danger)); background:var(--bgColor-danger-muted,var(--ck-bg-danger)) } .overlap-warning { margin-bottom:5px; color:var(--fgColor-danger,var(--ck-danger)); font-size:12px; font-weight:600 } .entry-day { margin-bottom:2px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:14px; font-weight:600; white-space:nowrap } .entry-time-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-start; gap:8px; min-width:0; white-space:nowrap } .entry-time-range,.inline-time-range { flex:0 0 auto } .inline-time-line { display:flex; flex-wrap:nowrap; align-items:center; justify-content:flex-start; gap:4px; min-width:0; white-space:nowrap } .compact-time-picker { display:inline-flex; align-items:center; min-width:0; margin:0; padding:0; border:0; background:var(--button-invisible-bgColor-rest,var(--ck-transparent)) } .compact-time-picker legend { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap } .compact-time-picker .time-date { display:none } .compact-time-picker .time-picker-values { display:inline-flex; justify-content:flex-start; gap:2px; white-space:nowrap } .compact-time-picker .time-value { width:34px; height:32px; min-height:0; margin:0; padding:2px; border-radius:6px; font-size:14px } .compact-time-picker .time-colon { font-size:14px } .inline-time-separator { color:var(--fgColor-muted,var(--ck-fg-muted)); font-weight:600 } .entry-time-range { color:var(--fgColor-default,var(--ck-fg)); font:500 12px/20px var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace); font-variant-numeric:tabular-nums } .inline-duration { flex:0 1 auto; min-width:0; overflow:hidden; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:400; text-overflow:ellipsis; white-space:nowrap } .entry-description { margin-top:4px; color:var(--fgColor-muted,var(--ck-fg-muted)); overflow-wrap:anywhere } .entry-description-editable { display:block; width:100%; padding:5px 7px; border:1px dashed var(--borderColor-default,var(--ck-border)); background:var(--bgColor-default,var(--ck-bg-editable)); color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:inherit; font-weight:400; line-height:inherit; text-align:left } .entry-description-editable:hover { border-style:solid; background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)); color:var(--fgColor-default,var(--ck-fg)) } .inline-metadata-editor { margin:6px 0 2px; padding:9px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .inline-metadata-editor label { margin:6px 0 0 } .inline-metadata-editor label:first-child { margin-top:0 } .inline-metadata-editor input,.inline-metadata-editor textarea { font-size:14px } .inline-metadata-editor textarea { width:100%; min-height:54px; max-height:200px; resize:vertical; padding-right:34px; overflow-y:auto; white-space:pre-wrap } .entry-actions { display:flex; flex:0 0 auto; align-items:center; gap:4px; opacity:0; pointer-events:none } .entry-actions.dirty { opacity:1; pointer-events:auto } .entry-actions.dirty .entry-edit,.entry-actions.dirty .entry-delete { display:none } .entry-actions button { padding:3px 5px; font-size:12px } .entry-record:hover .entry-actions,.entry-record:focus-within .entry-actions,.entry-actions-visible { opacity:1; pointer-events:auto }
+ .queue-diagnostics { margin-top:18px; padding:10px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) } .queue-diagnostics summary { cursor:pointer; color:var(--fgColor-default,var(--ck-fg)); font-weight:600 } .queue-diagnostics-list { max-height:220px; margin:8px 0 0; padding:0 0 0 20px; overflow:auto; font:12px/1.45 var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) } .queue-diagnostic-event { overflow-wrap:anywhere } .queue-diagnostic-event + .queue-diagnostic-event { margin-top:5px } .queue-diagnostic-time { margin-right:7px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-variant-numeric:tabular-nums }
+ label { display:block; margin:10px 0 4px; font:600 12px/1.5 var(--fontStack-sansSerif,"Mona Sans VF",-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Backtick Fix","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji") } input,textarea { display:block; width:100%; min-height:32px; margin-top:4px; padding:5px 12px; line-height:20px; border:1px solid var(--control-borderColor-rest,var(--ck-control-border-rest)); border-radius:6px; background:var(--control-bgColor-rest,var(--ck-control-bg-rest)); color:var(--control-fgColor-rest,var(--ck-control-fg-rest)); font:400 14px/20px var(--fontStack-sansSerif,sans-serif) } input::placeholder,textarea::placeholder { color:var(--control-fgColor-placeholder,var(--ck-control-fg-placeholder)) } input:hover:not(:disabled),textarea:hover:not(:disabled) { background:var(--control-bgColor-hover,var(--ck-control-bg-hover)) } input:active:not(:disabled),textarea:active:not(:disabled) { background:var(--control-bgColor-active,var(--ck-control-bg-active)) } input:disabled,textarea:disabled { border-color:var(--control-borderColor-disabled,var(--ck-control-border-disabled)); background:var(--control-bgColor-disabled,var(--ck-control-bg-disabled)); color:var(--control-fgColor-disabled,var(--ck-control-fg-disabled)) } .form-actions { margin-top:12px } .error { margin-bottom:10px; color:var(--fgColor-danger,var(--ck-danger)); white-space:pre-wrap } @media(hover:none) { .entry-actions { opacity:1; pointer-events:auto } } @media(max-width:340px) { .entry-time-row { gap:3px } .inline-time-line { gap:1px } .compact-time-picker .time-picker-values { gap:1px } .compact-time-picker .time-value { width:27px; font-size:14px } .inline-duration { font-size:12px } .entry-actions { gap:1px } .entry-actions button { padding:2px; font-size:12px } } @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } .times-header { align-items:flex-start; flex-direction:column } .times-body { padding:16px } .times-toolbar { grid-template-columns:1fr } .times-filter { grid-column:auto } .times-custom { grid-column:auto; grid-template-columns:1fr } } @media(max-width:380px) { .time-range-editor { grid-template-columns:1fr } }
+      /* Activity redesign: compact, scan-first list rows. */
+      :host(.times-surface) .times-page { width:min(920px,calc(100% - 32px)); min-height:calc(100vh - 48px); background:var(--bgColor-default,var(--ck-bg)); border-inline:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      :host(.times-surface) .times-body { padding:24px }
+      :host(.times-surface) .times-view-modes { display:flex; justify-content:center; gap:0; margin-bottom:16px; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      :host(.times-surface) .times-view-button { min-height:32px; margin-bottom:-1px; padding:8px 18px; border:0; border-bottom:3px solid transparent; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-weight:600 }
+      :host(.times-surface) .times-view-button:hover { background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)); color:var(--fgColor-default,var(--ck-fg)) }
+      :host(.times-surface) .times-view-button[aria-pressed="true"] { border-bottom-color:var(--ck-success); background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); font-weight:600 }
+      :host(.times-surface) .popup-timeline-section { min-width:0; margin-bottom:20px }
+      :host(.times-surface) .popup-timeline-section[hidden],:host(.times-surface) .times-results[hidden] { display:none }
+      :host(.times-surface) .times-toolbar { grid-template-columns:minmax(0,1fr); margin-bottom:22px }
+      :host(.times-surface) .times-toolbar.times-visual { grid-template-columns:1fr; justify-items:end }
+      .timeline-shell { position:relative }
+      .timeline-week-error,.timeline-edit-error { display:grid; justify-items:start; gap:8px; padding:12px 14px; border:1px solid var(--borderColor-danger-muted,var(--ck-border-danger)); border-radius:6px; background:var(--bgColor-danger-muted,var(--ck-bg-danger)) }
+      .timeline-shell:has(>.calendar-week-loading:not([hidden])) { min-height:240px }
+      .calendar-week-loading { position:absolute; z-index:5; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; min-height:240px; background:color-mix(in srgb,var(--bgColor-default,var(--ck-bg)) 90%,transparent); color:var(--fgColor-default,var(--ck-fg)); font-size:14px; font-weight:600; pointer-events:none }
+      .calendar-week-loading[hidden] { display:none }
+      .calendar-week-spinner { width:64px; height:64px; border:4px solid var(--borderColor-muted,var(--ck-border-muted)); border-top-color:var(--ck-success); border-radius:50%; animation:calendar-week-spin .8s linear infinite }
+      @keyframes calendar-week-spin { to { transform:rotate(360deg) } }
+      @media(prefers-reduced-motion:reduce) { .calendar-week-spinner { animation:none; border-top-color:var(--ck-success); border-right-color:var(--ck-success) } }
+      .week-navigation { box-sizing:border-box; display:grid; grid-template-columns:minmax(30px,1fr) auto minmax(30px,1fr); align-items:center; gap:8px; width:100%; margin:0; padding-inline:14px; white-space:nowrap }
+      .week-navigation { position:relative }
+      .week-navigation-label { min-height:0; padding:0; border:0; background:none; font-size:12px; font-weight:500; color:var(--fgColor-muted,var(--ck-fg-muted)); font-variant-numeric:tabular-nums; cursor:pointer }
+      .week-navigation-label:hover { background:var(--button-default-bgColor-hover,var(--ck-button-default-bg-hover)) }
+      .week-navigation-picker { position:absolute; left:50%; bottom:0; width:1px; height:1px; min-height:0; margin:0; padding:0; border:0; opacity:0; pointer-events:none }
+      .week-navigation-button { display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; min-width:32px; min-height:32px; padding:0 }
+      .week-navigation-button:first-child { justify-self:start }
+      .week-navigation-button:last-child { justify-self:end }
+      :host(.times-surface) .times-list-total { margin:0 0 8px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:600; text-align:center }
+      :host(.times-surface) .times-list-total[hidden] { display:none }
+      :host(.times-surface) .times-filter[hidden] { display:none }
+      :host(.times-surface) .times-search-pagination { display:flex; flex-wrap:wrap; justify-content:center; align-items:center; gap:8px; margin:18px 0 4px; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-variant-numeric:tabular-nums; text-align:center }
+      :host(.times-surface) .times-toolbar label { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:600 }
+      :host(.times-surface) .times-toolbar input,:host(.times-surface) .times-toolbar select { min-height:32px; background-color:var(--bgColor-muted,var(--ck-bg-muted)) }
+      .activity-list .section-head { margin-bottom:14px }
+      .activity-list .section-head strong { font-size:16px; font-weight:600 }
+      .activity-list .entry { padding:0; margin:0 0 16px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; background:var(--bgColor-default,var(--ck-bg)) }
+      .activity-list .entry-date-header { margin:0; padding:8px 16px; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:5px 5px 0 0; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      .activity-list { border-top:0 }
+      .activity-list .entry-record { position:relative; padding:8px 110px 8px 16px; border:0; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:0; background:var(--bgColor-default,var(--ck-bg)); transition:background .12s ease }
+      .activity-list .entry-record:last-child { border-bottom:0; border-radius:0 0 5px 5px}
+      .activity-list .entry-record + .entry-record { margin-top:0 }
+      .activity-list .entry-record:hover { background:linear-gradient(90deg,var(--bgColor-default,var(--ck-bg)) 0,color-mix(in srgb,var(--bgColor-muted,var(--ck-bg-muted)) 45%,var(--bgColor-default,var(--ck-bg))) 100%) }
+      .activity-list .entry-record.entry-overlap { padding:8px 110px 8px 16px; border-bottom-color:var(--borderColor-danger-muted,var(--ck-border-danger)); background:var(--bgColor-danger-muted,var(--ck-bg-danger)) }
+      .activity-list .entry-time-row { gap:8px; min-height:20px; margin:0 0 4px; font:500 12px/20px var(--fontStack-monospace,ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace) }
+      .activity-list .entry-time-display { color:var(--fgColor-default,var(--ck-fg)) }
+      .activity-list .inline-duration { margin:0; color:var(--fgColor-muted,var(--ck-fg-muted)); font-family:var(--fontStack-sansSerif,"Mona Sans VF",sans-serif); font-weight:400 }
+      .activity-list .inline-time-range { display:none }
+      .activity-list .entry-editing .entry-time-display { display:none }
+      .activity-list .entry-editing .inline-time-range { display:block }
+      .activity-list .entry-record-task-result.activity-task-result { display:flex; flex:1; flex-direction:column }
+      .activity-list .activity-task-result .task-title { order:-1; max-width:720px; margin:0; font-size:14px }
+      .activity-list .activity-task-result .task-url { width:max-content; max-width:100%; margin-top:2px; line-height:1.35 }
+      .activity-list .entry-record-task-identity { gap:8px }
+      .activity-list .entry-record-favicon { width:18px; height:18px; margin-top:1px; border-radius:6px}
+      .site-github-favicon { filter:var(--clockoli-github-favicon-filter,none) }
+      @media(prefers-color-scheme:dark) { .site-github-favicon { filter:var(--clockoli-github-favicon-filter,brightness(0) invert(1)) } }
+      .activity-list .entry-record-task-result { margin:0 }
+      .entry-description-link { white-space:pre-wrap; overflow-wrap:anywhere }
+      .activity-list .entry-description-link { min-height:0; margin:4px 0 0 24px; padding:0; border:0; border-radius:0; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px; font-weight:400; text-align:left }
+      .activity-list .entry-description-link:hover { background:transparent; color:var(--fgColor-accent,var(--ck-accent)); text-decoration:underline }
+      .activity-list .entry-actions { position:absolute; top:8px; right:8px; gap:4px; opacity:0; transform:translateY(2px); transition:opacity .12s ease,transform .12s ease }
+      .activity-list .entry-record:hover .entry-actions,.activity-list .entry-record:focus-within .entry-actions,.activity-list .entry-actions-visible { opacity:1; transform:translateY(0); pointer-events:auto }
+      .activity-list .entry-actions .entry-edit,.activity-list .entry-actions .entry-delete,.activity-list .entry-actions .entry-track-control { display:inline-flex; align-items:center; justify-content:center; width:28px; min-height:28px; height:28px; padding:0; overflow:hidden; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:0 }
+      .activity-list .entry-actions svg { width:16px; height:16px; flex:none }
+      .activity-list .entry-actions .entry-track-control:hover { border-color:var(--fgColor-accent,var(--ck-accent)); color:var(--fgColor-accent,var(--ck-accent)) }
+      .activity-list .entry-actions .entry-stop { border-color:var(--borderColor-danger-muted,var(--ck-border-danger)); color:var(--fgColor-danger,var(--ck-danger)) }
+      .activity-list .entry-actions .entry-edit:hover { background:var(--bgColor-muted,var(--ck-bg-muted)); color:var(--fgColor-default,var(--ck-fg)) }
+      .activity-list .entry-actions .entry-delete:hover { border-color:var(--borderColor-danger-muted,var(--ck-border-danger)); background:var(--bgColor-danger-muted,var(--ck-bg-danger)); color:var(--fgColor-danger,var(--ck-danger)) }
+      .activity-list .entry-actions.dirty .entry-edit,.activity-list .entry-actions.dirty .entry-delete,.activity-list .entry-actions.dirty .entry-track-control { display:none }
+      :host(.times-surface) .bulk-time { margin-top:18px; padding:0 12px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.times-surface) .bulk-time[open] { padding-bottom:12px }
+      :host(.times-surface) .bulk-time summary { padding:10px 0; font-weight:600 }
+      :host(.times-surface) .bulk-time-examples { margin:8px 0 12px; padding:10px 12px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:var(--bgColor-default,var(--ck-bg)) }
+      :host(.times-surface) .bulk-time-examples strong { display:block; font-size:12px }
+      :host(.times-surface) .bulk-time-examples pre { margin:4px 0 0; color:var(--fgColor-muted,var(--ck-fg-muted)); font:12px/1.6 var(--fontStack-monospace,ui-monospace,monospace); white-space:pre-wrap; overflow-wrap:anywhere }
+      :host(.times-surface) .bulk-time-feedback { position:fixed; z-index:1000; right:24px; bottom:24px; display:flex; align-items:center; gap:12px; box-sizing:border-box; width:max-content; max-width:calc(100vw - 32px); padding:12px 14px; border:1px solid var(--borderColor-default,var(--ck-border)); border-left:4px solid var(--ck-success); border-radius:6px; background:var(--bgColor-default,var(--ck-bg)); color:var(--fgColor-default,var(--ck-fg)); box-shadow:var(--shadow-floating-small,var(--ck-shadow)); font-weight:600; overflow-wrap:anywhere }
+      :host(.times-surface) .bulk-time-feedback-error { border-left-color:var(--ck-danger) }
+      :host(.times-surface) .bulk-time-feedback-dismiss { display:inline-flex; align-items:center; justify-content:center; flex:none; width:28px; min-height:28px; margin-left:auto; padding:0; border:0; border-radius:6px; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); cursor:pointer }
+      :host(.times-surface) .bulk-time-feedback-dismiss:hover { background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      @media(max-width:480px) { :host(.times-surface) .bulk-time-feedback { right:16px; bottom:16px; left:16px; width:auto } }
+      @media(hover:none) { .activity-list .entry-actions { position:static; margin:8px 0 0 24px; opacity:1; transform:none; pointer-events:auto } .activity-list .entry-record { padding-right:14px } }
+      @media(max-width:700px) { :host(.times-surface) .times-page { width:100%; border:0 } :host(.times-surface) .times-body { padding:16px 12px 40px } :host(.times-surface) .times-toolbar { grid-template-columns:1fr } .activity-list .entry-record { padding-right:14px } .activity-list .entry-actions { position:static; margin:8px 0 0 24px; opacity:1; transform:none; pointer-events:auto } }
+      @media(max-width:400px) { .activity-list .inline-duration { display:block; width:100%; margin:3px 0 0 } }
     `);
-    if (timesMode) { shadow.append(style, renderTimesPage()); return; }
-    if (popupMode) { shadow.append(style, renderMenu()); restoreMenuScroll(preservedMenuScrollTop); return; }
-    const current = taskFromLocation(), group = el('div', undefined, 'trigger-group');
+
+    // On trusted extension pages, inherit Primer colors from the document instead
+    // of pinning the light/dark values used to isolate the widget on GitHub.
+    // Custom properties inherit across both shadow boundaries into Calendar.
+    if (extensionPageMode) style.textContent += `
+      :host(.times-surface), :host(.popup-surface),
+      :host(.times-surface) > :not(style), :host(.popup-surface) > :not(style),
+      :host(.times-surface) .times-page, :host(.popup-surface) .menu {
+        --fgColor-default:inherit; --fgColor-muted:inherit; --fgColor-accent:inherit; --fgColor-danger:inherit; --bgColor-default:inherit; --bgColor-muted:inherit; --bgColor-inset:inherit; --bgColor-attention-muted:inherit; --bgColor-danger-muted:inherit; --borderColor-default:inherit; --borderColor-muted:inherit; --borderColor-danger-muted:inherit; --focus-outlineColor:inherit; --button-default-borderColor-rest:inherit; --button-default-bgColor-rest:inherit; --button-default-fgColor-rest:inherit; --button-default-bgColor-hover:inherit; --button-default-bgColor-active:inherit; --button-default-bgColor-selected:inherit; --button-default-borderColor-disabled:inherit; --button-default-bgColor-disabled:inherit; --button-default-fgColor-disabled:inherit; --button-primary-borderColor-rest:inherit; --button-primary-bgColor-rest:inherit; --button-primary-fgColor-rest:inherit; --button-primary-bgColor-hover:inherit; --button-primary-bgColor-active:inherit; --button-primary-borderColor-disabled:inherit; --button-primary-bgColor-disabled:inherit; --button-primary-fgColor-disabled:inherit; --button-danger-borderColor-rest:inherit; --button-danger-bgColor-rest:inherit; --button-danger-fgColor-rest:inherit; --button-danger-borderColor-hover:inherit; --button-danger-bgColor-hover:inherit; --button-danger-fgColor-hover:inherit; --button-danger-borderColor-active:inherit; --button-danger-bgColor-active:inherit; --button-danger-fgColor-active:inherit; --button-danger-bgColor-disabled:inherit; --button-danger-fgColor-disabled:inherit; --button-invisible-borderColor-rest:inherit; --button-invisible-bgColor-rest:inherit; --button-invisible-iconColor-rest:inherit; --button-invisible-fgColor-rest:inherit; --button-invisible-borderColor-hover:inherit; --button-invisible-bgColor-hover:inherit; --button-invisible-iconColor-hover:inherit; --button-invisible-bgColor-active:inherit; --button-invisible-borderColor-disabled:inherit; --button-invisible-bgColor-disabled:inherit; --button-invisible-fgColor-disabled:inherit; --control-borderColor-rest:inherit; --control-bgColor-rest:inherit; --control-fgColor-rest:inherit; --control-fgColor-placeholder:inherit; --control-bgColor-hover:inherit; --control-bgColor-active:inherit; --control-borderColor-disabled:inherit; --control-bgColor-disabled:inherit; --control-fgColor-disabled:inherit; --shadow-floating-small:inherit;
+        color-scheme:inherit;
+      }
+    `;
+    if (timesMode) style.textContent += `
+      /* Activity dashboard: one compact information hierarchy above the calendar. */
+      :host(.times-surface) { color-scheme:inherit }
+      :host(.times-surface) .times-page {width:var(--clockoli-page-width);min-height:calc(100vh - 116px);margin:0 auto 24px;border:0;border-radius:0;background:var(--bgColor-default,var(--ck-bg));box-shadow:none}
+      :host(.times-surface) .times-body {padding:0 0 30px}
+      :host(.times-surface) .times-toolbar:not(.times-visual) {display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:8px;margin:16px 0}
+      :host(.times-surface) .times-filter {position:relative;width:100%;margin:0}
+      :host(.times-surface) .times-filter svg {position:absolute;top:50%;left:8px;transform:translateY(-50%);color:var(--fgColor-muted,var(--ck-fg-muted));pointer-events:none}
+      :host(.times-surface) .times-filter input {box-sizing:border-box;min-height:32px;margin-top:0;padding-left:32px;border-radius:6px;font:400 14px/20px var(--fontStack-sansSerif)}
+      :host(.times-surface) .times-toolbar:not(.times-visual) .week-navigation {display:grid;grid-template-columns:auto auto auto;gap:8px;width:auto;min-height:0;margin:0;padding:0}
+      :host(.times-surface) .times-toolbar .week-navigation-label {display:block;padding:5px 12px;line-height:20px;border:1px solid var(--borderColor-muted,var(--ck-border-muted));border-radius:6px;color:var(--fgColor-muted,var(--ck-fg-muted));font-size:14px}
+      :host(.times-surface) .times-toolbar .week-navigation-button {min-width:32px;min-height:32px}
+      :host(.times-surface) .times-refresh {display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:1px solid var(--borderColor-default,var(--ck-border));border-radius:6px;background:var(--bgColor-muted,var(--ck-bg-muted))}
+      :host(.times-surface) .times-refresh:hover {background:var(--button-default-bgColor-hover,var(--ck-button-default-bg-hover))}
+      :host(.times-surface) .times-refresh[hidden] {display:none}
+      :host(.times-surface) .activity-list .entry {padding-bottom:8px}
+      :host(.times-surface) .activity-list .entry-record {margin:8px 8px 0;padding:8px 110px 8px 16px;border:1px solid var(--borderColor-muted,var(--ck-border-muted));border-radius:6px;background:var(--bgColor-muted,var(--ck-bg-muted))}
+      :host(.times-surface) .activity-list .entry-record + .entry-record {margin-top:8px}
+      :host(.times-surface) .activity-list .entry-record:last-child {border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted));border-radius:6px}
+      :host(.times-surface) .times-toolbar.times-visual {min-height:0;margin:0;padding:0}
+      :host(.times-surface) .popup-timeline-section {padding-top:24px;margin-bottom:16px}
+      :host(.times-surface) .times-loading-placeholder {display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;min-height:240px;padding:88px 16px 28px;border:1px solid var(--borderColor-muted,var(--ck-border-muted));border-radius:6px;background:var(--bgColor-muted,var(--ck-bg-muted));color:var(--fgColor-muted,var(--ck-fg-muted))}
+      :host(.times-surface) .times-loading-spinner {width:16px;height:16px;border:2px solid var(--borderColor-muted,var(--ck-border-muted));border-top-color:var(--fgColor-accent,var(--ck-accent));border-radius:50%;animation:activity-loading-spin .9s linear infinite}
+      @keyframes activity-loading-spin {to{transform:rotate(360deg)}}
+      :host(.times-surface) .times-load-error {display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:2px 14px;margin:16px 0;padding:10px 14px;border:1px solid var(--borderColor-muted,var(--ck-border-muted));border-left:4px solid var(--fgColor-attention,var(--ck-accent));border-radius:6px;background:var(--bgColor-muted,var(--ck-bg-muted))}
+      :host(.times-surface) .times-load-error-copy {display:grid;gap:2px;min-width:0}
+      :host(.times-surface) .times-load-error strong {font-size:14px}
+      :host(.times-surface) .times-load-error p {margin:0;color:var(--fgColor-muted,var(--ck-fg-muted));font-size:14px}
+      :host(.times-surface) .times-load-error-actions {display:flex;gap:8px;grid-column:2;grid-row:1}
+      :host(.times-surface) .times-load-error-actions button {min-height:32px;padding:4px 10px}
+      :host(.times-surface) .times-error-details {grid-column:1/-1;font-size:12px;color:var(--fgColor-muted,var(--ck-fg-muted))}
+      :host(.times-surface) .times-error-details summary {cursor:pointer}
+      :host(.times-surface) .times-error-details pre {white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0 0}
+      @media(max-width:460px){:host(.times-surface) .times-load-error-actions{grid-column:1/-1;grid-row:auto}}
+      @media(prefers-reduced-motion:reduce){:host(.times-surface) .times-loading-spinner{animation:none}}
+      :host(.times-surface) .week-navigation {min-height:32px;margin:0 0 4px;border-bottom:0}
+      :host(.times-surface) .week-navigation {grid-template-columns:1fr 1fr}
+      :host(.times-surface) .week-navigation-label,:host(.times-surface) .times-list-total {display:none}
+      :host(.times-surface) .activity-list .section-head {justify-content:flex-end;margin-bottom:0}
+      :host(.times-surface) .week-navigation-button {border-radius:6px}
+      :host(.times-surface) .timeline-shell > .week-navigation {position:absolute;z-index:30;inset:0 0 auto;height:84px;min-height:0;margin:0;pointer-events:none}
+      :host(.times-surface) .timeline-shell.calendar-week-navigation > .week-navigation {height:44px}
+      :host(.times-surface) .timeline-shell > .week-navigation::before,
+      :host(.times-surface) .timeline-shell > .week-navigation::after {content:"";position:absolute;inset-block:0;width:90px;pointer-events:none}
+      :host(.times-surface) .timeline-shell > .week-navigation::before {left:0;background:linear-gradient(90deg,color-mix(in srgb,var(--bgColor-muted,var(--ck-bg-muted)) 90%,var(--fgColor-muted,var(--ck-fg-muted))),transparent)}
+      :host(.times-surface) .timeline-shell > .week-navigation::after {right:0;background:linear-gradient(270deg,color-mix(in srgb,var(--bgColor-muted,var(--ck-bg-muted)) 90%,var(--fgColor-muted,var(--ck-fg-muted))),transparent)}
+      :host(.times-surface) .timeline-shell > .week-navigation .week-navigation-button {position:relative;z-index:1;pointer-events:auto}
+      @media(max-width:1000px){:host(.times-surface) .activity-weekly-copy{flex-direction:column;gap:0}:host(.times-surface) .activity-weekly-cards{gap:8px}}
+      @media(max-width:700px){:host(.times-surface) .times-page,:host(.times-surface[data-clockoli-width="full"]) .times-page{width:100%;margin:0}:host(.times-surface) .times-body{padding:0 12px 24px}}
+      @media(max-width:700px){:host(.times-surface) .times-toolbar:not(.times-visual){grid-template-columns:minmax(0,1fr) auto;gap:10px}:host(.times-surface) .times-filter{grid-column:1/-1}:host(.times-surface) .times-toolbar:not(.times-visual) .week-navigation{grid-column:1;justify-self:start;gap:8px}:host(.times-surface) .times-refresh{grid-column:2}}
+      @media(max-width:700px){:host(.times-surface) .popup-timeline-section{padding-top:16px}}
+      @media(max-width:460px){:host(.times-surface) .activity-weekly-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    `;
+    if (popupMode) style.textContent += `
+      :host(.popup-surface) .menu { max-height:min(720px,calc(100vh - 16px)); overflow-y:auto }
+      :host(.popup-surface) .tracker-toolbar { display:grid; grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"brand end" "actions actions"; align-items:center; gap:8px; margin:0; padding:10px 12px 8px; border-top:0; border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      :host(.popup-surface) .timeline-brand { grid-area:brand; display:flex; justify-content:flex-start; min-width:0 }
+      :host(.popup-surface) .clockoli-wordmark { display:block; width:auto; max-width:160px; height:28px; object-fit:contain }
+      :host(.popup-surface) .timeline-toolbar-end { grid-area:end; display:flex; align-items:center }
+      :host(.popup-surface) .header-actions { grid-area:actions; width:100%; justify-content:space-between; gap:0 }
+      :host(.popup-surface) .header-navigation { width:100%; justify-content:space-between; gap:0 }
+      :host(.popup-surface) .reports-button { gap:4px; padding:5px 4px; font-size:12px }
+      .timeline-view-modes { display:flex; gap:1px; padding:1px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px}
+      .popup-switch-action:not(:empty) { display:flex; align-self:center }
+            .timeline-view-button { display:flex; align-items:center; justify-content:center; width:28px; height:28px; min-height:0; margin:0; padding:0; border:0; border-radius:6px; background:transparent; color:var(--fgColor-muted,var(--ck-fg-muted)); cursor:pointer }
+      .timeline-view-button svg { width:16px; height:16px; fill:currentColor }
+      .timeline-view-button:hover { background:var(--button-invisible-bgColor-hover,var(--ck-button-invisible-bg-hover)); color:var(--fgColor-default,var(--ck-fg)) }
+      .timeline-view-button[aria-pressed="true"] { background:var(--bgColor-success-muted,color-mix(in srgb,var(--ck-success) 14%,transparent)); color:var(--ck-success) }
+      .timeline-view-button:focus-visible { outline:2px solid var(--focus-outlineColor,var(--ck-accent)); outline-offset:2px }
+      :host(.popup-surface) .popup-overview-layout { grid-template-columns:1fr }
+      .popup-switch-action .popup-timeline-track { padding:5px 12px; border-color:var(--button-primary-borderColor-rest,var(--ck-button-primary-border-rest)); background:var(--button-primary-bgColor-rest,var(--ck-button-primary-bg-rest)); color:var(--button-primary-fgColor-rest,var(--ck-button-primary-fg-rest)); white-space:nowrap }
+      .popup-switch-action .popup-timeline-track:hover:not(:disabled) { background:var(--button-primary-bgColor-hover,var(--ck-button-primary-bg-hover)) }
+      :host(.popup-surface) .tracker-toolbar { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"brand end" "stats stats" "actions actions"; gap:4px; padding:8px 12px }
+      :host(.popup-surface) .tracker-toolbar .activity-weekly-summary { grid-area:stats; width:100%; justify-content:space-between }
+      :host(.popup-surface) .tracker-toolbar .activity-weekly-cards { justify-content:space-between; flex:1 }
+      :host(.popup-surface) .timeline-toolbar-end { grid-area:end; gap:4px }
+      :host(.popup-surface) .header-actions { grid-area:actions }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active { display:grid; grid-template-columns:minmax(0,1fr) max-content; grid-template-rows:auto auto auto; align-items:start; gap:8px 12px }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active .running-status-live { grid-column:1; grid-row:1; justify-self:start; align-self:start }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-task-copy { grid-column:1; grid-row:2; max-width:100%; min-width:0; align-self:start }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-description-field { grid-column:1; grid-row:3; width:100%; min-width:0; max-width:none; align-self:start }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active .running-status-stats { grid-column:2; grid-row:1/span 2; justify-self:end; align-self:start; margin:0 }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active > .danger { box-sizing:border-box; grid-column:2; grid-row:3; justify-self:stretch; align-self:start; width:100% }
+      @media(max-width:520px) { :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-description { min-height:44px } :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active > .danger { min-height:44px } }
+      @media(max-width:359px) { :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-task-copy { grid-column:1/span 2 } :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active .strip-description-field { grid-column:1/span 2 } :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active .running-status-stats { grid-row:4 } :host(.popup-surface) .popup-overview-layout .active-task-strip.is-active > .danger { grid-row:5 } }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip .running-status-quick-start { flex-wrap:wrap; gap:6px }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip .running-status-recent-task { flex:0 0 145px }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip:not(.is-active) { display:grid; grid-template-columns:minmax(0,1fr); gap:8px; align-items:start }
+      :host(.popup-surface) .strip-idle-status { display:flex; flex-direction:column; align-items:flex-start; gap:4px }
+      :host(.popup-surface) .strip-idle { padding:0 7px; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:999px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.popup-surface) .strip-idle-caption { color:var(--fgColor-muted,var(--ck-fg-muted)); font-size:12px }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip:not(.is-active) .running-status-quick-start { display:grid; grid-template-columns:minmax(0,1fr); width:100% }
+      :host(.popup-surface) .popup-overview-layout .active-task-strip:not(.is-active) .running-status-recent { width:100% }
+      :host(.popup-surface) .popup-overview-layout .activity-weekly-summary { margin-bottom:10px; padding:12px }
+      :host(.popup-surface) .popup-overview-layout .activity-weekly-label { display:none }
+      :host(.popup-surface) .popup-overview-layout .activity-weekly-range { display:block; font-size:14px }
+      :host(.popup-surface) .popup-overview-layout .activity-weekly-cards { grid-template-columns:repeat(3,minmax(0,1fr)); gap:4px }
+      :host(.popup-surface) .popup-overview-layout .activity-weekly-card { padding:0 4px; border:0; border-right:1px solid var(--borderColor-muted,var(--ck-border-muted)) }
+      :host(.popup-surface) .popup-overview-layout .activity-weekly-card:last-child { border-right:0 }
+      :host(.popup-surface) .popup-overview-layout .activity-weekly-copy { flex-direction:column; align-items:flex-start; gap:0 }
+      :host(.popup-surface) .popup-overview-layout .activity-weekly-value { font-size:16px }
+      :host(.popup-surface) .popup-overview-layout .activity-weekly-name { font-size:12px }
+      :host(.popup-surface) .popup-timeline-section { padding-top:16px }
+      :host(.popup-surface) .popup-timeline-section[hidden],:host(.popup-surface) .popup-list-toolbar[hidden] { display:none }
+      :host(.popup-surface) .timeline-shell > .week-navigation { position:absolute; z-index:30; inset:0 0 auto; grid-template-columns:1fr 1fr; height:84px; min-height:0; margin:0; padding:0 6px; border:0; pointer-events:none }
+      :host(.popup-surface) .timeline-shell.calendar-week-navigation > .week-navigation { height:44px }
+      :host(.popup-surface) .timeline-shell > .week-navigation .week-navigation-label { display:none }
+      :host(.popup-surface) .timeline-shell > .week-navigation::before,:host(.popup-surface) .timeline-shell > .week-navigation::after { content:""; position:absolute; inset-block:0; width:55px; pointer-events:none }
+      :host(.popup-surface) .timeline-shell > .week-navigation::before { left:0; background:linear-gradient(90deg,color-mix(in srgb,var(--bgColor-muted,var(--ck-bg-muted)) 90%,var(--fgColor-muted,var(--ck-fg-muted))),transparent) }
+      :host(.popup-surface) .timeline-shell > .week-navigation::after { right:0; background:linear-gradient(270deg,color-mix(in srgb,var(--bgColor-muted,var(--ck-bg-muted)) 90%,var(--fgColor-muted,var(--ck-fg-muted))),transparent) }
+      :host(.popup-surface) .timeline-shell > .week-navigation .week-navigation-button { position:relative; z-index:1; pointer-events:auto }
+      :host(.popup-surface) .popup-list-toolbar { display:grid; grid-template-columns:minmax(0,1fr) 32px; align-items:center; gap:8px; min-width:0; margin:16px 12px 12px }
+      :host(.popup-surface) .popup-list-toolbar .times-filter { position:relative; grid-column:1/-1; min-width:0; margin:0 }
+      :host(.popup-surface) .popup-list-toolbar .times-filter svg { position:absolute; top:50%; left:8px; transform:translateY(-50%); color:var(--fgColor-muted,var(--ck-fg-muted)); pointer-events:none }
+      :host(.popup-surface) .popup-list-toolbar .times-filter input { box-sizing:border-box; min-height:32px; margin:0; padding-left:32px; font:400 14px/20px var(--fontStack-sansSerif); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.popup-surface) .popup-list-toolbar .week-navigation { grid-column:1; grid-row:2; grid-template-columns:32px auto 32px; justify-self:end; width:max-content; max-width:100%; min-width:0; min-height:0; margin:0; padding:0; border:0; gap:8px }
+      :host(.popup-surface) .popup-list-toolbar .week-navigation-label { box-sizing:border-box; display:flex; align-items:center; justify-content:center; overflow:hidden; height:32px; padding:0 8px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; color:var(--fgColor-muted,var(--ck-fg-muted)); text-align:center; text-overflow:ellipsis }
+      :host(.popup-surface) .popup-list-toolbar .week-navigation-button { width:32px; height:32px; border-radius:6px}
+      :host(.popup-surface) .popup-list-toolbar .times-refresh { display:inline-flex; align-items:center; justify-content:center; grid-column:2; grid-row:2; width:32px; height:32px; padding:0; border:1px solid var(--borderColor-default,var(--ck-border)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.popup-surface) .today-list { margin:0 12px 16px }
+      :host(.popup-surface) .activity-list .entry { margin:0 0 12px; border:0; background:transparent }
+      :host(.popup-surface) .activity-list .entry-record,:host(.popup-surface) .activity-list .entry-record.entry-overlap { margin:8px 0 0; padding:12px 14px; border:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px; background:var(--bgColor-muted,var(--ck-bg-muted)) }
+      :host(.popup-surface) .activity-list .entry-record + .entry-record { margin-top:8px }
+      :host(.popup-surface) .activity-list .entry-record:last-child { border-bottom:1px solid var(--borderColor-muted,var(--ck-border-muted)); border-radius:6px}
+      :host(.popup-surface) .activity-list .entry-actions { position:static; margin:8px 0 0 24px; opacity:1; transform:none; pointer-events:auto }
+      :host(.popup-surface) .times-search-pagination { display:flex; flex-wrap:wrap; justify-content:center; gap:8px; margin:16px 0; font-size:12px }
+    `;
+    if (timesMode || popupMode) style.textContent += `
+      :host .timeline-shell.calendar-week-navigation > .week-navigation { display:flex; align-items:center; justify-content:center; gap:0; right:auto; width:62px }
+      :host .timeline-shell.calendar-week-navigation > .week-navigation::before,:host .timeline-shell.calendar-week-navigation > .week-navigation::after { display:none }
+      :host .timeline-shell.calendar-week-navigation > .week-navigation .week-navigation-button { min-width:28px; min-height:28px; width:28px; height:28px; border-radius:6px 0 0 6px }
+      :host .timeline-shell.calendar-week-navigation > .week-navigation .week-navigation-button:last-child { margin-left:-1px; border-radius:0 6px 6px 0 }
+    `;
+    if (!shadow || !root?.isConnected) return;
+    if (timesMode) {
+      shadow.append(style, renderTimesPage(preservedActivityTimeline));
+      updateActivityWeekSummary();
+      if (preservedActivityTimeline) {
+        refreshMountedTimeline();
+        timelineInstance.restoreCalendarScroll?.(preservedActivityCalendarScroll);
+      }
+      renderActionSourceContext();
+      return;
+    }
+    if (popupMode) { shadow.append(style, renderMenu()); updateActivityWeekSummary(); restoreMenuScroll(preservedMenuScrollTop); return; }
+    const current = taskFromLocation();
     const currentRunning = sameTask(taskFromLocation(), pageState.active);
     const main = el('button', undefined, `trigger trigger-main${pageState.active ? ' running' : ''}${currentRunning ? ' running-current' : ''}`); main.type = 'button';
     main.setAttribute('aria-label', pageState.active ? `Time tracker running: ${formatElapsed(pageState.active.startedAt)}` : 'Time tracker');
-    main.setAttribute('aria-haspopup', 'dialog'); main.setAttribute('aria-expanded', String(menuOpen));
-    main.title = pageState.active ? 'Time tracker is running' : 'Open time tracker'; main.append(clockoliMark(22));
+    main.title = pageState.active ? 'Open Clockoli (timer running)' : 'Open Clockoli'; main.append(clockoliMark(20));
     main.addEventListener('click', async event => {
       if (!event.isTrusted) return;
-      const activatedTask = taskFromLocation();
-      if (!activatedTask) return;
-      navigationOpen = false; menuOpen = !menuOpen; if (!menuOpen) menuScrollTop = 0; cancelActiveInlineDraft(); errorText = ''; renderUi();
-      if (menuOpen && pageState.configured) {
-        try { await refreshRecent(); }
-        catch (error) { setError(error); }
-      }
+      await send({ type: 'OPEN_PREFERRED_SURFACE' });
     });
-    const arrow = el('button', undefined, 'trigger trigger-menu'); arrow.type = 'button'; arrow.setAttribute('aria-label', 'Open time tracker pages');
-    arrow.setAttribute('aria-haspopup', 'menu'); arrow.setAttribute('aria-expanded', String(navigationOpen)); arrow.title = 'Reports, top tasks, and activity'; arrow.append(icon('triangle-down', TRIANGLE_PATH, 12));
-    arrow.addEventListener('click', event => {
-      if (!event.isTrusted) return;
-      menuOpen = false; menuScrollTop = 0; navigationOpen = !navigationOpen; cancelActiveInlineDraft(); errorText = ''; renderUi();
-    });
-    group.append(main, arrow); shadow.append(style, group);
-    if (navigationOpen) shadow.append(renderNavigationMenu());
-    else if (menuOpen) shadow.append(renderMenu());
+    shadow.append(style, main);
     restoreMenuScroll(preservedMenuScrollTop);
   }
 
   async function render(refresh = false) {
-    if (location.protocol !== 'https:' || location.hostname !== 'github.com') { root?.remove(); root = null; shadow = null; menuOpen = false; navigationOpen = false; return; }
+    if (location.protocol !== 'https:' || location.hostname !== 'github.com') { root?.remove(); root = null; shadow = null; menuOpen = false; return; }
     if (!mountInHeader()) return;
     renderUi();
     try { applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: false })); errorText = ''; }
@@ -1444,10 +4909,10 @@ The previous version remains in Git history.`)) return;
   }
 
   function navigationCheck() {
-    const route = `https://github.com${location.pathname}`;
+    const route = projectPaneIssueUrl(location.href) || `https://github.com${location.pathname}`;
     if (route !== lastRoute) {
       const firstRender = lastRoute === null;
-      lastRoute = route; recent = []; recentLoaded = false; recentFresh = false; recentFreshAfterPendingId = null; cancelActiveInlineDraft(); menuOpen = false; menuScrollTop = 0; navigationOpen = false;
+      lastRoute = route; recent = []; recentLoaded = false; recentFresh = false; recentFreshAfterPendingId = null; cancelActiveInlineDraft(); menuOpen = false; menuScrollTop = 0;
       participantLoadId += 1; clearClockoliParticipantRetry(); participantData = null; scheduleClockoliParticipantAugmentation();
       void render(firstRender);
       void refreshClockoliParticipants();
@@ -1458,32 +4923,114 @@ The previous version remains in Git history.`)) return;
     }
   }
 
+  function handleLocalPreferencesChanged(message) {
+    if (message?.type !== 'LOCAL_PREFERENCES_CHANGED') return false;
+    void send({ type: 'GET_PAGE_STATE', refresh: false }).then(data => {
+      applyPageState(data);
+      if (Array.isArray(data?.recent)) applyMenuData(data.recent, recentFresh);
+      renderUi();
+    }).catch(setError);
+    return true;
+  }
+
+  if (!extensionPageMode) globalThis.ClockoliInstantTooltips?.attach(document, { selector: '.clockoli-participant-time' });
+  if (!popupMode && !timesMode) document.addEventListener('visibilitychange', () => {
+    updateTaskAnimation();
+  });
+
   if (timesMode) {
-    mountInHeader(); renderUi();
+    const sourceBanner = document.getElementById?.('activity-source-context');
+    if (sourceBanner) {
+      chrome.runtime.onMessage?.addListener?.(message => {
+        if (message?.type === 'TOOLBAR_CONTEXT_UPDATED') {
+          void refreshActionSourceContext().catch(setError);
+        }
+      });
+      void refreshActionSourceContext().catch(setError);
+      document.getElementById('activity-source-track')?.addEventListener('click', async event => {
+        if (!event.isTrusted || !actionSourceTask) return;
+        const task = actionSourceTask;
+        if (sameTask(task, pageState.active)) return;
+        try { await trackCurrentTimelineTask({ sourceTask: task, preserveSavedDescription: true }); }
+        catch { /* trackCurrentTimelineTask displays the error. */ }
+        finally { renderActionSourceContext(); }
+      });
+      document.getElementById('activity-source-dismiss')?.addEventListener('click', event => {
+        if (!event.isTrusted) return;
+        actionSourceTask = null;
+        renderActionSourceContext();
+      });
+    }
+    document.addEventListener('clockoli:local-tracking-changed', event => {
+      const detail = event.detail ?? {};
+      if (detail.type === 'STOP' && detail.completion?.entry?.id) {
+        rememberCompletedLocally(detail.completion, detail.completion.destinationId);
+        mergeLocalPendingActivity([{
+          ...detail.completion.entry, ...(detail.completion.localEntry ?? {}),
+          destinationId: detail.completion.destinationId,
+          _pending: Boolean(detail.completion.pending),
+        }]);
+        pageState = { ...pageState, active: null };
+      } else if (['START', 'EDIT_ACTIVE_START'].includes(detail.type) && detail.active?.id) {
+        pageState = { ...pageState, active: detail.active };
+      } else return;
+      if (!refreshMountedTimeline() || activityViewMode === 'list') renderUi();
+      void refreshActivityState().catch(setError);
+    });
+    document.addEventListener('clockoli:local-time-added', event => {
+      const result = event.detail ?? {};
+      if (result.entry?.id) {
+        recent = mergeActivityRecords([{ ...result.entry, destinationId: result.destinationId }], timesRange(), true);
+        recentLoaded = true;
+      }
+      if (result.active?.id) {
+        pageState = { ...pageState, active: { ...result.active, destinationId: result.destinationId } };
+      }
+      renderUi();
+      void refreshActivityState().catch(setError);
+    });
+    mountInHeader();
+    void restoreActivityViewMode();
     void loadSelectedTimes();
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) {
+        void refreshRecent(true).then(refreshActivityState).catch(setError);
+      }
+    });
+    setInterval(() => {
+      if (!document.hidden) void refreshActivityState().catch(setError);
+    }, 5_000);
   } else if (popupMode) {
     menuOpen = true;
     mountInHeader();
     renderUi();
+    void restoreActivityViewMode();
     refreshPopupTask().then(async () => {
       applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: false }));
+      if (!pageState.configured) {
+        await send({ type: 'OPEN_OPTIONS' });
+        return;
+      }
       renderUi();
+      let recentReady = false;
       if (pageState.configured) {
-        try { await refreshRecent(); }
+        try { recentReady = (await refreshRecent())?.configured === true; }
         catch (error) { setError(error); }
       }
-      try { applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: true })); }
-      catch (error) { setError(error); return; }
-      renderUi();
+      // LOAD_RECENT already refreshes the records, active timer and pending writes.
+      // Do not block the editable full-week view on a second remote state refresh.
+      if (!recentReady) {
+        try { applyPageState(await send({ type: 'GET_PAGE_STATE', refresh: true })); }
+        catch (error) { setError(error); return; }
+        renderUi();
+      }
+      if (pageState.configured) await loadActivityCalendarWeek(weekWindow());
     }).catch(setError);
   } else {
-    document.addEventListener('click', event => {
-      if ((menuOpen || navigationOpen) && !event.composedPath().includes(root)) closeMenu();
-    });
-    document.addEventListener('keydown', event => { if ((menuOpen || navigationOpen) && event.key === 'Escape') closeMenu(); });
-    document.addEventListener('visibilitychange', updateTaskAnimation);
+    chrome.runtime.onMessage?.addListener?.(message => { handleLocalPreferencesChanged(message); });
+    motionPreference?.addEventListener?.('change', updateTaskAnimation);
     watchClockoliTimeline();
     navigationCheck();
-    setInterval(navigationCheck, 750);
+    navigationTimer = setInterval(() => { if (extensionContextActive) navigationCheck(); }, 750);
   }
 })();

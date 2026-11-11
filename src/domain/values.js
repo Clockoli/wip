@@ -18,7 +18,45 @@ export function normalizeTaskUrl(value) {
   return parsed.href;
 }
 
-export function taskUrlOf(value) { return normalizeTaskUrl(value); }
+// A task is searchable by identity only when it is a real HTTP(S) URL.
+// Bare imported Clockify identities are still valid stored work records.
+export function isUrlTaskIdentity(value) {
+  if (typeof value !== 'string') return false;
+  try { normalizeTaskUrl(value); return true; } catch { return false; }
+}
+
+// Page-context identity only: do not rewrite stored project URLs when reading old records.
+export function parseGitHubProjectPaneIssueUrl(value) {
+  let parsed;
+  try { parsed = new URL(value); } catch { return null; }
+  if (typeof value !== 'string' || value.length > TASK_URL_MAX || parsed.protocol !== 'https:'
+      || parsed.hostname !== 'github.com' || parsed.username || parsed.password
+      || !/^\/orgs\/[^/]+\/projects\/[1-9]\d*\/views\/[1-9]\d*\/?$/.test(parsed.pathname)
+      || parsed.searchParams.getAll('pane').length !== 1 || parsed.searchParams.get('pane') !== 'issue'
+      || parsed.searchParams.getAll('issue').length !== 1) return null;
+  const parts = parsed.searchParams.get('issue').split('|');
+  if (parts.length !== 3 || !OWNER_RE.test(parts[0]) || parts[0].includes('--')
+      || !REPO_RE.test(parts[1]) || parts[1] === '.' || parts[1] === '..'
+      || !/^[1-9]\d*$/.test(parts[2]) || !Number.isSafeInteger(Number(parts[2]))) return null;
+  return normalizeIssue({ owner: parts[0], repo: parts[1], number: Number(parts[2]) }).url;
+}
+
+// Stored Clockify work may have a deterministic identity without a navigable URL.
+// New URL tasks go through normalizeTaskUrl; an existing imported task can be reused.
+export function normalizeStoredTaskIdentity(value) {
+  const candidate = typeof value === 'string' ? value : value?.taskUrl ?? value?.issue?.url ?? value?.url;
+  if (typeof candidate === 'string' && candidate.length <= TASK_URL_MAX) {
+    const parts = candidate.split('/');
+    if (parts.length === 3 && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(parts[1])
+        && /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(parts[2])) {
+      validateOwner(parts[0]);
+      return candidate;
+    }
+  }
+  return normalizeTaskUrl(candidate);
+}
+
+export function taskUrlOf(value) { return normalizeStoredTaskIdentity(value); }
 
 export function validateOwner(value) {
   if (typeof value !== 'string' || !OWNER_RE.test(value) || value.includes('--')) throw new Error('Invalid owner');

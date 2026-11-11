@@ -3,7 +3,7 @@ import {
   validateEntry, validateTimestamp,
 } from './records.js';
 import {
-  entryDateParts, normalizeTaskUrl, parseGitHubTaskUrl, taskUrlOf, validateEntryId, validatePathSegment,
+  entryDateParts, normalizeStoredTaskIdentity, parseGitHubTaskUrl, taskUrlOf, validateEntryId, validatePathSegment,
 } from './values.js';
 
 const MONTH_PATH = /^times\/(\d{4}-(?:0[1-9]|1[0-2]))\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)\.jsonl$/;
@@ -61,7 +61,7 @@ function validateStoredRecord(record, expectedState) {
 
   const item = object(record.work_item, 'work item');
   nonEmpty(item.kind, 'work item kind'); nonEmpty(item.id, 'work item ID');
-  const taskUrl = normalizeTaskUrl(item.url);
+  const taskUrl = normalizeStoredTaskIdentity(item.url);
   if (item.url !== taskUrl) throw new Error('Work item URL is not canonical');
   if (typeof item.title !== 'string' || item.title !== normalizeTaskTitle(item.title)) throw new Error('Invalid work item title');
 
@@ -101,7 +101,7 @@ function workItemKind(taskUrl) {
 function toStoredRecord(runtime, state) {
   if (state === 'running') validateActiveTimer(runtime); else validateEntry(runtime);
   const base = runtime._record ? clone(runtime._record) : {};
-  const taskUrl = normalizeTaskUrl(taskUrlOf(runtime));
+  const taskUrl = taskUrlOf(runtime);
   const previousUrl = base.work_item?.url;
   const sameItem = previousUrl === taskUrl;
   const title = normalizeTaskTitle(runtime.taskTitle ?? runtime.issueTitle);
@@ -139,7 +139,7 @@ function toStoredRecord(runtime, state) {
 }
 
 function fromStoredRecord(stored, { user, path, sha, index } = {}) {
-  const record = clone(stored), taskUrl = normalizeTaskUrl(record.work_item.url);
+  const record = clone(stored), taskUrl = normalizeStoredTaskIdentity(record.work_item.url);
   if (user !== undefined && record.actor.name !== user) throw new Error('Record actor does not match storage user');
   const title = normalizeTaskTitle(record.work_item.title), github = parseGitHubTaskUrl(taskUrl);
   const runtime = {
@@ -257,7 +257,11 @@ export function parseMonthlyRecords(text, context = {}) {
     try { stored = JSON.parse(line); }
     catch { throw new Error(`Monthly record line ${index + 1} is not valid JSON`); }
     validateStoredRecord(stored, 'completed');
-    if (stored.activity.local_date.slice(0, 7) !== month) throw new Error(`Record line ${index + 1} does not match monthly partition ${month}`);
+    if (stored.activity.local_date.slice(0, 7) !== month) {
+      const error = new Error(`Record line ${index + 1} does not match monthly partition ${month}`);
+      error.repair = { kind: 'monthly_partition_mismatch', line: index + 1, actualMonth: stored.activity.local_date.slice(0, 7), expectedMonth: month };
+      throw error;
+    }
     if (ids.has(stored.id)) throw new Error(`Duplicate work record ID: ${stored.id}`);
     ids.add(stored.id);
     return fromStoredRecord(stored, { ...context, user, index });

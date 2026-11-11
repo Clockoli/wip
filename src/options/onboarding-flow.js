@@ -1,7 +1,22 @@
-export function onboardingStep({ authorized = false, repositories = [], repositoryAccessDetected = repositories.length > 0 } = {}) {
-  if (!authorized) return 1;
-  if (!repositoryAccessDetected) return 2;
-  return 3;
+import { validateOwner, validateRepo } from '../domain/values.js';
+
+export function onboardingStep({ authorized = false } = {}) {
+  return authorized ? 2 : 1;
+}
+
+// Coordinates are unverified intent, never proof of existence or permission.
+export function parseRepositoryTarget(value) {
+  const input = typeof value === 'string' ? value.trim() : '';
+  let coordinates = input;
+  if (input.includes('://')) {
+    const url = new URL(input);
+    if (url.origin !== 'https://github.com' || url.username || url.password || url.search || url.hash
+        || !/^https:\/\/github\.com\/[^/]+\/[^/]+\/?$/.test(input)) throw new Error('Enter a GitHub repository URL or owner/name.');
+    coordinates = url.pathname.slice(1).replace(/\/$/, '');
+  }
+  const parts = coordinates.split('/');
+  if (parts.length !== 2) throw new Error('Enter a GitHub repository URL or owner/name.');
+  return `${validateOwner(parts[0])}/${validateRepo(parts[1])}`;
 }
 
 export function selectOnlyEligibleRepository(repositories = []) {

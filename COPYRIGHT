@@ -1,0 +1,10 @@
+Copyright (c) 2026 Manticore Software LTD (https://manticoresearch.com)
+
+This copyright notice applies to original Clockoli code and documentation,
+including the Clockoli-owned TaskTimeline component.
+
+Original Clockoli code is licensed under the GNU General Public License,
+version 3 only (GPL-3.0-only). See LICENSE for the complete terms.
+
+Third-party components retain their respective copyright and license terms.
+See THIRD_PARTY_NOTICES.md and the LICENSES/ directory for attribution.

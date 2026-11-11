@@ -46,11 +46,20 @@ test('visible extension identity is Clockoli with complete logo assets', () => {
 test('GitHub page trigger uses the green Clockoli mark instead of the stopwatch icon', () => {
   const content = read('src/content/github.js');
   assert.match(content, /function clockoliMark\(/);
-  assert.match(content, /main\.append\(clockoliMark\(22\)\)/);
+  assert.match(content, /main\.append\(clockoliMark\(20\)\)/);
   assert.match(content, /\.clockoli-mark/);
   assert.doesNotMatch(content, /main\.append\(icon\('stopwatch', STOPWATCH_PATH\)\)/);
   assert.ok(manifest.web_accessible_resources.some(group => group.resources.includes('src/assets/clockoli-32.png')),
     'GitHub pages can load the 2x timeline mark');
+});
+
+test('theme-colored task fallback is an inverted circular Clockoli mark', () => {
+  const file = 'src/assets/clockoli-inverse-circle.svg';
+  assert.ok(fs.existsSync(new URL(`../${file}`, import.meta.url)));
+  const asset = read(file);
+  assert.match(asset, /<circle\b/);
+  assert.match(asset, /<mask\b/);
+  assert.ok(manifest.web_accessible_resources.some(group => group.resources.includes(file)));
 });
 
 test('the Clockoli mark and tab-scoped extension icon rotate only for the current tracked task', () => {
@@ -87,7 +96,9 @@ test('storage, branch, DOM, settings, and GitHub App identities are Clockoli-onl
 });
 
 test('documentation and clone instructions use Clockoli GitHub coordinates', () => {
-  const docs = ['README.md', 'docs/README.md', 'docs/getting-started.md', 'docs/features.md',
+  const docs = ['README.md', 'docs/README.md', 'docs/install.md', 'docs/getting-started.md', 'docs/tracking.md',
+    'docs/activity.md', 'docs/editing-time.md', 'docs/top-tasks.md', 'docs/reports.md', 'docs/billable-rates.md',
+    'docs/invoicing.md', 'docs/projects-and-routing.md', 'docs/teams.md', 'docs/settings.md', 'docs/sync.md',
     'docs/data-and-privacy.md', 'docs/time-data-repository.md', 'docs/troubleshooting.md',
     'docs/why-clockoli.md', 'docs/spec-compliance.md'].map(read).join('\n');
   assertClockoliOnly(docs);

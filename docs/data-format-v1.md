@@ -1,8 +1,10 @@
-# Clockoli Data Format Specification
+# Data format v1
+
+The normative format of the files Clockoli writes to a time repository: active timers, monthly JSONL time records, and the task index.
 
 **Status:** Canonical Version 1
 **Scope:** Persistent Clockoli work data stored in the user's GitHub repository
-**Compatibility:** Clockoli supports only this format. There is no legacy reader or migration contract.
+**Format:** Clockoli reads and writes the structures defined in this specification.
 
 ---
 
@@ -75,7 +77,7 @@ A future storage profile may repartition records without changing their logical 
   "producer": {
     "kind": "browser_extension",
     "name": "clockoli-chrome",
-    "version": "0.1.30"
+    "version": "0.2.0"
   },
   "description": "Investigated replication failure and prepared fix",
   "metadata": {
@@ -215,10 +217,10 @@ url
 Rules:
 
 - `kind` and `id` are required;
-- `url` is optional in the general schema, but required for work created by the current browser extension;
+- `url` is optional in the general schema; the browser extension can record time against an existing imported task identity without a navigable HTTP(S) URL;
 - `title` is a bounded display snapshot and may be empty;
 - when a provider supplies an immutable object ID, writers should use a provider-qualified ID;
-- otherwise the current browser writer uses `url:{canonical-url}`;
+- otherwise the current browser writer uses `url:{canonical-url}`; imported unresolved records may use `url:{owner/project/task-slug}`;
 - URL-derived identity follows Clockoli URL canonicalization;
 - identity and display URL remain separate fields so a future writer can preserve identity across URL changes;
 - the set of `kind` values is extensible.
@@ -229,6 +231,10 @@ Clockoli URL canonicalization:
 - rejects embedded username/password credentials;
 - removes query strings and fragments from canonical GitHub issue/PR URLs;
 - preserves query strings and fragments for other URLs because they may identify different work.
+
+Imported unresolved Clockify work records and the personal-branch `.clockoli/tasks.json` projection recognize bare identities of the form `owner/project/task-slug` (for example `manticoresoftware/NexusRepo/Fixed-last-block-encoding`). These are task identities, not navigable URLs: they have exactly three slash-separated segments, a valid owner, an alphanumeric-starting project containing only letters, digits, dots, underscores or hyphens, and a non-empty alphanumeric/hyphen task slug. Store that identity unchanged in `work_item.url` and in the task index. The browser extension may use an existing verified imported identity for tracking and editing in its time repository; direct entry of a new task identity uses a canonical HTTP(S) URL. Imports do not guess a GitHub URL from an unresolved identity.
+
+The personal-branch `.clockoli/tasks.json` index has `version: 1`, `storageLogin`, and a `tasks` map keyed by canonical task identity. Each task summary has nonnegative `totalSeconds`, positive `sessionCount`, and strictly sorted unique `recordIds` (exactly one per session). A summary may additionally have **both** `title` (a normalized display snapshot of at most 300 characters, including an empty string) and `titleSourceId` (one of its `recordIds`); `titleStartedAt` records that source's timestamp when available. A newer untitled completion does not erase an older nonempty title, and editing an older record does not replace a newer title. These fields are updated atomically with completed-record changes. If the source record is removed without a replacement title, the title fields are removed; readers reconstruct older missing titles from validated monthly records rather than inventing them. Older index entries without these fields remain valid and do not require a bulk rewrite of another person's branch.
 
 ---
 
@@ -286,7 +292,7 @@ Rules:
   "producer": {
     "kind": "browser_extension",
     "name": "clockoli-chrome",
-    "version": "0.1.30"
+    "version": "0.2.0"
   }
 }
 ```
@@ -463,7 +469,7 @@ Rules:
 
 ## 14. Edits, unknown fields, and corrections
 
-Clockoli version 1 updates the logical work record in place while preserving:
+Clockoli updates the logical work record in place while preserving:
 
 - `id`;
 - `created_at`;
@@ -476,7 +482,7 @@ Mandatory preservation rule:
 
 This includes unknown fields under `actor`, `work_item`, `activity`, `producer`, `metadata`, `metrics`, and `execution`.
 
-The root `record_type` leaves room for a future append-only correction model, but version 1 supports only `record_type: work` and in-place edits.
+The root `record_type` allows for future extension; Clockoli currently supports only `record_type: work` and in-place edits.
 
 ---
 
@@ -524,25 +530,23 @@ Additional rules:
 - duplicate IDs in one monthly file are rejected;
 - storage-path month must equal `activity.local_date.slice(0, 7)`;
 - the actor name must match the file's immutable storage login for data created by the current human tracker;
-- current browser-created work items require a valid canonical HTTP(S) URL;
+- browser-created work items use a canonical HTTP(S) URL or a verified existing imported identity in the selected time repository;
 - malformed or structurally invalid files are rejected as a whole, never partially ignored.
 
 ---
 
-## 17. Compatibility principles
+## 17. Data format principles
 
-1. This is Clockoli's first and only persistent work-record format.
-2. No old text-block format is supported.
-3. Prefer additive fields over changed semantics.
-4. Never reuse a field with a different meaning.
-5. Keep actor, execution, producer, and record identities separate.
-6. Keep work-item identity separate from display URL and title.
-7. Keep activity timestamps separate from persistence timestamps.
-8. Preserve local calendar semantics explicitly.
-9. Preserve unknown fields on every rewrite.
-10. Keep sensitive rates outside ordinary records.
-11. Keep browser-specific implementation details out of the logical schema.
-12. Any future breaking change requires a new explicit schema version and migration plan; version 1 defines no backward migration behavior.
+1. Prefer additive fields over changed semantics.
+2. Never reuse a field with a different meaning.
+3. Keep actor, execution, producer, and record identities separate.
+4. Keep work-item identity separate from display URL and title.
+5. Keep activity timestamps separate from persistence timestamps.
+6. Preserve local calendar semantics explicitly.
+7. Preserve unknown fields on every rewrite.
+8. Keep sensitive rates outside ordinary records.
+9. Keep browser-specific implementation details out of the logical schema.
+10. Assign an explicit schema version when changing the data contract.
 
 ---
 

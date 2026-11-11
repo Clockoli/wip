@@ -1,4 +1,4 @@
-import { normalizeIssue, validateBranch, validateOwner, validateRepo } from '../domain/values.js';
+import { normalizeIssue, validateBranch, validateOwner, validatePathSegment, validateRepo } from '../domain/values.js';
 
 export class GitHubApiError extends Error {
   constructor(message, status, code = 'github_api_error') { super(message); this.name = this.constructor.name; this.status = status; this.code = code; }
@@ -10,7 +10,7 @@ export class GitHubConflictError extends GitHubApiError {
   constructor(message = 'GitHub resource changed concurrently') { super(message, 409, 'conflict'); }
 }
 export class GitHubValidationError extends GitHubApiError {
-  constructor(message = 'GitHub rejected the request') { super(message, 422, 'validation'); }
+  constructor(message = 'GitHub rejected the request') { super(String(message).replace(/[\u0000-\u001F\u007F]/g, ' ').slice(0, 300) || 'GitHub rejected the request', 422, 'validation'); }
 }
 export class GitHubAuthenticationError extends GitHubApiError {
   constructor(message = 'GitHub authentication failed. Check your token in Settings.') { super(message, 401, 'authentication'); }
@@ -22,7 +22,70 @@ export class GitHubOrganizationApprovalError extends GitHubApiError {
   constructor(message = 'This organization must approve Clockoli before its installations are available.') { super(message, 403, 'org_approval_required'); }
 }
 export class GitHubRateLimitError extends GitHubApiError {
-  constructor(message = 'GitHub API rate limit exceeded. Wait a few minutes and try again.', status = 403) { super(message, status, 'rate_limit'); }
+  constructor(message = 'GitHub API rate limit exceeded. Wait a few minutes and try again.', status = 403, retryAt = null) {
+    super(message, status, 'rate_limit'); this.retryAt = retryAt;
+  }
+}
+
+// Shared by the migration's root client and its personal-branch clients.
+// Only an explicit GitHub rate-limit response closes this gate.
+export function createGitHubRateLimitGate({ now = () => Date.now(), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
+  onWait = () => {}, onResume = () => {}, onReady = () => {} } = {}) {
+  let blockedUntil = 0;
+  let pending = null;
+  // Serialize persisted deadlines and resume: an older resume must never write
+  // null after a newer deadline has been saved.
+  let writes = Promise.resolve();
+  return Object.freeze({
+    ready: async () => { if (pending) await pending; await onReady(); },
+    pause(error, { wait = true } = {}) {
+      const current = now();
+      const reset = Date.parse(error?.retryAt);
+      const deadline = Number.isFinite(reset) && reset > current ? reset : current + 60_000;
+      if (deadline - current > 2 * 60 * 60 * 1000) throw error;
+      if (deadline > blockedUntil) {
+        blockedUntil = deadline;
+        writes = writes.then(() => onWait(new Date(deadline).toISOString()));
+      }
+      const recorded = writes;
+      if (!pending) {
+        pending = (async () => {
+          try {
+            for (;;) {
+              await writes;
+              if (blockedUntil > now()) {
+                await sleep(Math.min(blockedUntil - now(), 20_000));
+                continue;
+              }
+              // A concurrent pause may extend the gate while onResume is in flight.
+              // Its write queues behind this clear; recheck before reopening.
+              writes = writes.then(() => onResume());
+              await writes;
+              if (blockedUntil <= now()) return;
+            }
+          } finally { pending = null; }
+        })();
+      }
+      // On the terminal retry persist the alarm deadline without waiting for it.
+      if (!wait) {
+        pending.catch(() => {}); // The caller observes any persistence failure via recorded.
+        return recorded;
+      }
+      return pending;
+    },
+  });
+}
+
+const MILLISECONDS_PER_SECOND = 1000;
+
+function rateLimitRetryAt(response, now) {
+  const retryAfter = Number(response.headers?.get('retry-after'));
+  const reset = Number(response.headers?.get('x-ratelimit-reset'));
+  const timestamp = Number.isFinite(retryAfter) && retryAfter > 0
+    ? now.getTime() + retryAfter * MILLISECONDS_PER_SECOND
+    : Number.isFinite(reset) && reset > 0 ? reset * MILLISECONDS_PER_SECOND : NaN;
+  const date = new Date(timestamp);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
 function rateLimitMessage(response) {
@@ -66,6 +129,38 @@ function decodeBase64Utf8(value) {
 function encodePath(path) {
   if (typeof path !== 'string' || path.startsWith('/') || path.includes('..') || path.includes('\\')) throw new Error('Invalid GitHub content path');
   return path.split('/').map(encodeURIComponent).join('/');
+}
+
+function validGitHubLogin(login) {
+  try { validatePathSegment(login, 'user'); return true; } catch { return false; }
+}
+
+export function githubAvatarUrl(value, id) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.hostname === 'avatars.githubusercontent.com'
+      && !url.username && !url.password && url.pathname === `/u/${id}`
+      ? `https://avatars.githubusercontent.com/u/${id}?v=4` : null;
+  } catch { return null; }
+}
+
+async function mapBounded(items, limit, operation) {
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    for (;;) {
+      const index = next;
+      next += 1;
+      if (index >= items.length) return;
+      results[index] = await operation(items[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+function normalizedIssueTitle(value) {
+  return String(value ?? '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
 }
 
 
@@ -147,7 +242,7 @@ function taskSnapshot(repository, node, type, capturedAt) {
 }
 
 export class GitHubClient {
-  constructor({ token, credentialProvider = null, owner, repo, branch = 'main', expectedRepositoryId = undefined, branchMode = 'custom', fetchImpl = fetch, now = () => new Date() }) {
+  constructor({ token, credentialProvider = null, owner, repo, branch = 'main', expectedRepositoryId = undefined, branchMode = 'custom', fetchImpl = fetch, now = () => new Date(), validationCache = null, requestDiagnostics = null, rateLimitGate = null, requestTimeoutMs = 30_000 }) {
     if ((!token || typeof token !== 'string') && !credentialProvider?.getAccessToken) throw new Error('GitHub credentials are required');
     this.token = token || '';
     this.credentialProvider = credentialProvider;
@@ -164,36 +259,92 @@ export class GitHubClient {
     this.branchMode = branchMode;
     this.fetchImpl = fetchImpl.bind(globalThis);
     this.now = now;
+    this.validationCache = validationCache;
+    this.requestDiagnostics = typeof requestDiagnostics === 'function' ? requestDiagnostics : null;
+    this.rateLimitGate = rateLimitGate;
+    this.requestTimeoutMs = requestTimeoutMs;
   }
 
   get repositoryKey() { return `${this.owner}/${this.repo}@${this.branch}`; }
 
-  async requestDetailed(path, options = {}, { allowNotModified = false } = {}) {
-    const requestWithToken = token => this.fetchImpl(`https://api.github.com${path}`, {
-      ...options,
-      cache: 'no-store',
-      headers: {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${token}`,
-        'X-GitHub-Api-Version': '2022-11-28',
-        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-        ...options.headers,
-      },
-    });
+  async requestDetailed(path, options = {}, settings = {}) {
+    for (let retries = 0;; retries += 1) {
+      try { return await this.requestDetailedOnce(path, options, settings); }
+      catch (error) {
+        if (error?.code !== 'rate_limit' || !this.rateLimitGate) throw error;
+        if (retries >= 2) {
+          await this.rateLimitGate.pause(error, { wait: false });
+          throw error;
+        }
+        await this.rateLimitGate.pause(error);
+      }
+    }
+  }
+
+  async requestDetailedOnce(path, options = {}, { allowNotModified = false } = {}) {
+    const startedAt = Date.now();
+    const report = status => {
+      try {
+        this.requestDiagnostics?.({
+          method: options.method || 'GET', path: String(path).slice(0, 300), status,
+          durationMs: Math.max(0, Date.now() - startedAt),
+        });
+      } catch { /* Diagnostics must never affect GitHub operations. */ }
+    };
+    const requestWithToken = async token => {
+      await this.rateLimitGate?.ready();
+      const controller = new AbortController();
+      const parent = options.signal;
+      const abortFromParent = () => controller.abort(parent.reason);
+      if (parent?.aborted) abortFromParent();
+      else parent?.addEventListener('abort', abortFromParent, { once: true });
+      const timeout = setTimeout(() => controller.abort(new DOMException('GitHub request timed out', 'TimeoutError')), this.requestTimeoutMs);
+      try {
+        const response = await this.fetchImpl(`https://api.github.com${path}`, {
+          ...options, signal: controller.signal,
+          cache: 'no-store',
+          headers: {
+            Accept: 'application/vnd.github+json',
+            Authorization: `Bearer ${token}`,
+            'X-GitHub-Api-Version': '2022-11-28',
+            ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+            ...options.headers,
+          },
+        });
+        let body = null;
+        if (response.status !== 304) try { body = await response.json(); } catch (error) {
+          if (controller.signal.aborted) throw error;
+          /* Empty response. */
+        }
+        return { response, body };
+      } catch (error) {
+        if (controller.signal.reason?.name === 'TimeoutError') throw new GitHubApiError('GitHub did not respond in time.', 0, 'network_timeout');
+        if (parent?.aborted) throw parent.reason ?? error;
+        if (error instanceof TypeError) throw new GitHubApiError('Could not connect to GitHub.', 0, 'network_error');
+        throw error;
+      } finally {
+        clearTimeout(timeout);
+        parent?.removeEventListener('abort', abortFromParent);
+      }
+    };
     let token = this.credentialProvider ? await this.credentialProvider.getAccessToken() : this.token;
-    let response = await requestWithToken(token);
+    let response, body;
+    try { ({ response, body } = await requestWithToken(token)); }
+    catch (error) { report('network_error'); throw error; }
     if (response.status === 401 && this.credentialProvider) {
       token = await this.credentialProvider.getAccessToken({ forceRefresh: true, rejectedToken: token });
-      response = await requestWithToken(token);
+      try { ({ response, body } = await requestWithToken(token)); }
+      catch (error) { report('network_error'); throw error; }
     }
     if (allowNotModified && response.status === 304) {
+      report(response.status);
       return { body: null, status: response.status, headers: response.headers, notModified: true };
     }
-    let body = null;
-    try { body = await response.json(); } catch { /* empty response */ }
+
     if (!response.ok) {
+      report(response.status);
       if (response.status === 401) throw new GitHubAuthenticationError();
-      if (isRateLimited(response, body)) throw new GitHubRateLimitError(rateLimitMessage(response), response.status);
+      if (isRateLimited(response, body)) throw new GitHubRateLimitError(rateLimitMessage(response), response.status, rateLimitRetryAt(response, this.now()));
       if (response.status === 403) {
         const detail = String(body?.message || '').slice(0, 500);
         if (/organi[sz]ation[\s\S]{0,120}(?:approval|approve)|(?:approval|approve)[\s\S]{0,120}organi[sz]ation|third-party application access policy/i.test(detail)) {
@@ -207,10 +358,11 @@ export class GitHubClient {
         if (options.method && isBranchPolicyRejection(body)) {
           throw new GitHubApiError('GitHub branch or repository rules rejected this write.', 422, 'branch_policy_rejected');
         }
-        throw new GitHubValidationError();
+        throw new GitHubValidationError(String(body?.message || 'GitHub rejected the request'));
       }
       throw new GitHubApiError(`GitHub request failed (${response.status})`, response.status);
     }
+    report(response.status);
     return { body, status: response.status, headers: response.headers, notModified: false };
   }
   async request(path, options = {}) {
@@ -230,7 +382,125 @@ export class GitHubClient {
     return { id: user.id, login: user.login };
   }
 
+  async getUserIdentity(login) {
+    const requestedLogin = validatePathSegment(login, 'user');
+    const user = await this.request(`/users/${encodeURIComponent(requestedLogin)}`);
+    if (!Number.isSafeInteger(user?.id) || user.id <= 0 || !validGitHubLogin(user?.login)
+        || user.login.toLowerCase() !== requestedLogin.toLowerCase()) {
+      throw new GitHubApiError('GitHub returned an invalid user identity.', 502, 'invalid_github_response');
+    }
+    return { id: user.id, login: user.login };
+  }
+
+  async listRepositoryCollaboratorLogins() {
+    if (!this.owner || !this.repo) throw new Error('A GitHub repository is required for collaborator suggestions');
+    const collaborators = await this.request(`/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}/collaborators?per_page=100`);
+    if (!Array.isArray(collaborators) || collaborators.length > 100) throw new GitHubApiError('GitHub returned invalid collaborator suggestions.', 502, 'invalid_github_response');
+    const logins = collaborators.map(user => user?.login);
+    if (logins.some(login => !validGitHubLogin(login)) || new Set(logins.map(login => login.toLowerCase())).size !== logins.length) {
+      throw new GitHubApiError('GitHub returned invalid collaborator suggestions.', 502, 'invalid_github_response');
+    }
+    return logins.sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'accent' }));
+  }
+
+  async listRepositoryCollaborators() {
+    if (!this.owner || !this.repo) throw new Error('A GitHub repository is required for collaborators');
+    const collaborators = await this.request(`/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}/collaborators?per_page=100`);
+    if (!Array.isArray(collaborators) || collaborators.length > 100) throw new GitHubApiError('GitHub returned invalid collaborators.', 502, 'invalid_github_response');
+    const ids = new Set(), logins = new Set();
+    for (const user of collaborators) {
+      if (!Number.isSafeInteger(user?.id) || user.id <= 0 || !validGitHubLogin(user.login)
+          || ids.has(user.id) || logins.has(user.login.toLowerCase())) {
+        throw new GitHubApiError('GitHub returned invalid collaborators.', 502, 'invalid_github_response');
+      }
+      ids.add(user.id); logins.add(user.login.toLowerCase());
+    }
+    const profiles = collaborators.map(user => ({
+      id: user.id, login: user.login, avatarUrl: githubAvatarUrl(user.avatar_url, user.id),
+    }));
+    return { users: profiles.slice(0, 4), hasMore: profiles.length > 4,
+      ...(profiles.length > 4 ? { moreUsers: profiles.slice(4) } : {}),
+      // GitHub provides 100 collaborators per page. A full page might have more.
+      ...(profiles.length === 100 ? { truncated: true } : {}),
+      avatarUsers: profiles.map(({ login, avatarUrl }) => ({ login, avatarUrl })) };
+  }
+
+  async listRepositoryCollaboratorProfiles() {
+    if (!this.owner || !this.repo) throw new Error('A GitHub repository is required for collaborator suggestions');
+    const collaborators = await this.request(`/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}/collaborators?per_page=100`);
+    // A full first page might have a next page; never present a partial list as complete.
+    if (!Array.isArray(collaborators) || collaborators.length >= 100) {
+      throw new GitHubApiError('GitHub returned incomplete or invalid collaborator suggestions.', 502, 'invalid_github_response');
+    }
+    const ids = new Set(), logins = new Set();
+    for (const user of collaborators) {
+      if (!Number.isSafeInteger(user?.id) || user.id <= 0 || !validGitHubLogin(user.login)
+          || ids.has(user.id) || logins.has(user.login.toLowerCase())) {
+        throw new GitHubApiError('GitHub returned invalid collaborator suggestions.', 502, 'invalid_github_response');
+      }
+      ids.add(user.id); logins.add(user.login.toLowerCase());
+    }
+    const profiles = await mapBounded(collaborators, 6, async collaborator => {
+      const profile = await this.request(`/users/${encodeURIComponent(collaborator.login)}`);
+      if (profile?.id !== collaborator.id || !validGitHubLogin(profile.login)
+          || profile.login.toLowerCase() !== collaborator.login.toLowerCase()
+          || !Object.hasOwn(profile, 'name') || (profile.name !== null && typeof profile.name !== 'string')) {
+        throw new GitHubApiError('GitHub returned an invalid collaborator profile.', 502, 'invalid_github_response');
+      }
+      return {
+        id: profile.id, login: profile.login, name: profile.name?.trim() || null,
+        avatarUrl: githubAvatarUrl(profile.avatar_url, profile.id),
+      };
+    });
+    return profiles.sort((left, right) => left.login.localeCompare(right.login, undefined, { sensitivity: 'accent' }));
+  }
+
+  async listRepositoryPendingInvitations() {
+    if (!this.owner || !this.repo) throw new Error('A GitHub repository is required for invitations');
+    const users = [], ids = new Set(), logins = new Set();
+    for (let page = 1; page <= 5; page += 1) {
+      const invitations = await this.request(`/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}/invitations?per_page=100${page > 1 ? `&page=${page}` : ''}`);
+      if (!Array.isArray(invitations) || invitations.length > 100) throw new GitHubApiError('GitHub returned invalid invitations.', 502, 'invalid_github_response');
+      for (const invitation of invitations) {
+        const user = invitation?.invitee;
+        if (user === null) continue; // Email invitations have no GitHub account avatar.
+        if (!Number.isSafeInteger(user?.id) || user.id <= 0 || !validGitHubLogin(user.login)
+            || ids.has(user.id) || logins.has(user.login.toLowerCase())) {
+          throw new GitHubApiError('GitHub returned invalid invitations.', 502, 'invalid_github_response');
+        }
+        ids.add(user.id); logins.add(user.login.toLowerCase());
+        users.push({ id: user.id, login: user.login, avatarUrl: githubAvatarUrl(user.avatar_url, user.id) });
+      }
+      if (users.length > 4 || invitations.length < 100) {
+        return { users: users.slice(0, 4), hasMore: users.length > 4,
+          ...(users.length > 4 ? { moreUsers: users.slice(4) } : {}),
+          ...(invitations.length === 100 ? { truncated: true } : {}) };
+      }
+    }
+    return { users: users.slice(0, 4), hasMore: users.length > 4,
+      ...(users.length > 4 ? { moreUsers: users.slice(4) } : {}),
+      incomplete: true };
+  }
+
   async getAuthenticatedUser() { return (await this.getAuthenticatedIdentity()).login; }
+
+  async resolveRepositoryIssue({ repository, number, title } = {}) {
+    if (!this.owner) throw new Error('A GitHub repository owner is required for issue resolution');
+    const repo = validateRepo(repository);
+    if (!Number.isSafeInteger(number) || number < 1) throw new Error('Invalid GitHub issue number');
+    const expectedTitle = normalizedIssueTitle(title);
+    if (!expectedTitle) return null;
+    try {
+      const issue = await this.request(`/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(repo)}/issues/${number}`);
+      if (issue?.pull_request || issue?.number !== number || typeof issue?.html_url !== 'string'
+          || normalizedIssueTitle(issue.title) !== expectedTitle) return null;
+      const canonical = normalizeIssue(issue.html_url);
+      return { url: canonical, title: normalizedIssueTitle(issue.title) };
+    } catch (error) {
+      if (error?.status === 404) return null;
+      throw error;
+    }
+  }
 
   async validateRepository() {
     const repo = await this.request(`/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`);
@@ -251,7 +521,7 @@ export class GitHubClient {
       token: this.token, credentialProvider: this.credentialProvider,
       owner: this.owner, repo: this.repo, branch,
       expectedRepositoryId: this.expectedRepositoryId,
-      branchMode, fetchImpl: this.fetchImpl,
+      branchMode, fetchImpl: this.fetchImpl, rateLimitGate: this.rateLimitGate, requestTimeoutMs: this.requestTimeoutMs,
     });
   }
 
@@ -317,7 +587,25 @@ export class GitHubClient {
     }
   }
 
+  async listBranchesWithSha(prefix, { maxBranches = 1000, signal } = {}) {
+    const normalized = String(prefix || '');
+    validateBranch(`${normalized}probe`);
+    const base = `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`;
+    const body = await this.request(`${base}/git/matching-refs/heads/${encodePath(normalized)}`, { signal });
+    if (!Array.isArray(body) || body.length > maxBranches) throw new GitHubApiError('Clockoli user branch discovery exceeded its bounded result budget.', 422, 'branch_discovery_budget');
+    const fullPrefix = `refs/heads/${normalized}`;
+    return body.filter(item => String(item?.ref || '').startsWith(fullPrefix)).map(item => {
+      const branch = validateBranch(item.ref.slice('refs/heads/'.length));
+      const headSha = item?.object?.sha;
+      if (item?.object?.type !== 'commit' || typeof headSha !== 'string' || !/^[0-9a-f]{40}$/i.test(headSha)) {
+        throw new GitHubApiError('GitHub returned an invalid personal branch reference.', 502, 'invalid_github_response');
+      }
+      return { branch, headSha };
+    }).sort((a, b) => a.branch.localeCompare(b.branch));
+  }
+
   async listBranches(prefix, { maxBranches = 1000, signal } = {}) {
+    // Keep the existing name-only API independent of the SHA-aware variant.
     const normalized = String(prefix || '');
     validateBranch(`${normalized}probe`);
     const base = `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`;
@@ -362,10 +650,31 @@ export class GitHubClient {
     return repository;
   }
 
-  async getText(path, { signal } = {}) {
-    const body = await this.request(`${this.contentUrl(path)}?ref=${encodeURIComponent(this.branch)}`, { signal });
-    if (Array.isArray(body) || body.type !== 'file') throw new GitHubApiError('Expected a file', 422);
+  async getText(path, { signal, ref = this.branch } = {}) {
+    if (typeof ref !== 'string' || (!/^[0-9a-f]{40}$/i.test(ref) && validateBranch(ref) !== ref)) {
+      throw new Error('Invalid GitHub content ref');
+    }
+    const body = await this.request(`${this.contentUrl(path)}?ref=${encodeURIComponent(ref)}`, { signal });
+    if (Array.isArray(body) || body?.type !== 'file') throw new GitHubApiError('Expected a file', 422);
+    if (typeof body.content !== 'string' || (body.encoding === 'none' && body.size > 0)) {
+      throw new GitHubApiError('GitHub did not inline the file content.', 422, 'inline_content_unavailable');
+    }
     return { path, sha: body.sha, text: decodeBase64Utf8(body.content) };
+  }
+
+  // Pin the complete read to the SHA discovered from matching refs. Only large
+  // files need the Git tree/blob fallback (Contents API does not inline them).
+  async getTextAtCommit(path, headSha, { signal } = {}) {
+    if (typeof headSha !== 'string' || !/^[0-9a-f]{40}$/i.test(headSha)) throw new Error('Invalid Git commit SHA');
+    try { return await this.getText(path, { signal, ref: headSha }); }
+    catch (error) { if (error?.code !== 'inline_content_unavailable') throw error; }
+    const base = `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`;
+    const commit = await this.request(`${base}/git/commits/${headSha}`, { signal });
+    const tree = await this.request(`${base}/git/trees/${encodeURIComponent(commit.tree?.sha)}?recursive=1`, { signal });
+    if (tree.truncated || !Array.isArray(tree.tree)) throw new GitHubApiError('Repository tree is too large to read task indexes', 422);
+    const file = tree.tree.find(item => item.path === path && item.type === 'blob');
+    if (!file?.sha) throw new GitHubNotFoundError();
+    return this.getBlobText(path, file.sha, { signal });
   }
 
   async listRepositoryEntries({ signal } = {}) {
@@ -385,9 +694,10 @@ export class GitHubClient {
     return (await this.listRepositoryEntries(options)).filter(item => item.type === 'blob').map(item => item.path).sort();
   }
 
-  async listTextFilesSnapshot(prefix = '', { etag = '', signal } = {}) {
+  async listTextFilesSnapshot(prefix = '', { etag = '', signal, includeActive = '' } = {}) {
     if (typeof prefix !== 'string' || prefix.startsWith('/') || prefix.includes('..') || prefix.includes('\\')) throw new Error('Invalid GitHub content prefix');
     if (prefix) encodePath(prefix.endsWith('/') ? prefix.slice(0, -1) : prefix);
+    if (includeActive) encodePath(includeActive);
     const base = `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}`;
     const refResponse = await this.requestDetailed(`${base}/git/ref/heads/${encodeURIComponent(this.branch)}`, {
       signal,
@@ -398,7 +708,7 @@ export class GitHubClient {
     const commit = await this.request(`${base}/git/commits/${encodeURIComponent(refResponse.body?.object?.sha)}`, { signal });
     const tree = await this.request(`${base}/git/trees/${encodeURIComponent(commit.tree?.sha)}?recursive=1`, { signal });
     if (tree.truncated) throw new GitHubApiError('Repository tree is too large to generate reports', 422);
-    const files = (tree.tree ?? []).filter(item => item.type === 'blob' && item.path.startsWith(prefix) && item.path.endsWith('.jsonl'))
+    const files = (tree.tree ?? []).filter(item => item.type === 'blob' && ((item.path.startsWith(prefix) && item.path.endsWith('.jsonl')) || (includeActive && item.path === includeActive)))
       .map(({ path, sha, size }) => ({ path, sha, ...(Number.isSafeInteger(size) && size >= 0 ? { size } : {}) })).sort((a, b) => a.path.localeCompare(b.path));
     return { notModified: false, etag: snapshotEtag, headSha: refResponse.body?.object?.sha || '', files };
   }
@@ -465,12 +775,22 @@ export class GitHubClient {
     if (this.expectedRepositoryId === null) {
       throw new GitHubApiError('The configured GitHub repository identity has not been verified.', 409, 'repository_identity_unverified');
     }
-    const repository = await this.validateRepository();
-    if (repository.id !== this.expectedRepositoryId) {
-      throw new GitHubApiError('The configured GitHub repository identity changed.', 404, 'repository_identity_changed');
+    const token = this.token || await this.credentialProvider.getAccessToken();
+    const cacheKey = `${token}\u0000${this.repositoryKey}\u0000${this.expectedRepositoryId}\u0000${this.branchMode}`;
+    const cached = this.validationCache?.get(cacheKey);
+    if (cached && cached.expiresAt > this.now().getTime()) return;
+    try {
+      const repository = await this.validateRepository();
+      if (repository.id !== this.expectedRepositoryId) {
+        throw new GitHubApiError('The configured GitHub repository identity changed.', 404, 'repository_identity_changed');
+      }
+      this.assertCanonicalCoordinates(repository);
+      await this.assertConfiguredBranch(repository);
+      this.validationCache?.set(cacheKey, { expiresAt: this.now().getTime() + (5 * 60 * 1000) });
+    } catch (error) {
+      this.validationCache?.delete(cacheKey);
+      throw error;
     }
-    this.assertCanonicalCoordinates(repository);
-    await this.assertConfiguredBranch(repository);
   }
 
   async putInitialText(path, text, message) {
@@ -544,13 +864,17 @@ export class GitHubClient {
       if ((current.get(item.path) ?? null) !== (item.sha ?? null)) throw new GitHubConflictError();
     }
     const blobShas = {}, tree = [];
-    for (const change of changes) {
+    const blobs = await mapBounded(changes, 6, async change => {
       let sha = null;
       if (change.text !== null) {
         const blob = await this.request(`${base}/git/blobs`, { method: 'POST', body: JSON.stringify({ content: change.text, encoding: 'utf-8' }) });
-        sha = blob.sha; blobShas[change.path] = sha;
+        sha = blob.sha;
       }
-      tree.push({ path: change.path, mode: '100644', type: 'blob', sha });
+      return { path: change.path, sha };
+    });
+    for (const blob of blobs) {
+      if (blob.sha !== null) blobShas[blob.path] = blob.sha;
+      tree.push({ path: blob.path, mode: '100644', type: 'blob', sha: blob.sha });
     }
     const nextTree = await this.request(`${base}/git/trees`, { method: 'POST', body: JSON.stringify({ base_tree: treeSha, tree }) });
     const nextCommit = await this.request(`${base}/git/commits`, { method: 'POST', body: JSON.stringify({ message, tree: nextTree.sha, parents: [parentSha] }) });
