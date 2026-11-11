@@ -142,7 +142,12 @@ jobs:
   private-regressions:
     name: private-regressions
     needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >-
+      github.repository == 'Clockoli/wip' &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'pull_request' && github.base_ref == 'main' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.user.login != 'dependabot[bot]'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -153,9 +158,9 @@ jobs:
       - name: Check out the private test suite
         uses: actions/checkout@v4
         with:
-          repository: Clockoli/tests-private
+          repository: Clockoli/tests
           path: test-private
-          token: ${{ secrets.PRIVATE_TESTS_READ_TOKEN }}
+          ssh-key: ${{ secrets.PRIVATE_TESTS_DEPLOY_KEY }}
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:

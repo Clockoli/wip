@@ -82,7 +82,7 @@ git diff --check
 git status --short
 ```
 
-The public commands must pass without a private checkout. Run `npm run test:private` from the Clockoli checkout when `Clockoli/tests-private` is cloned into the ignored `test-private/` directory; if the directory is absent, skip only that command. Run the focused public or private test first, then the corresponding broader suite. Do not describe a public CI pass as private regression coverage; external pull requests must not require private credentials. A real release requires a successful private check for its exact tagged commit.
+The public commands must pass without a private checkout. Run `npm run test:private` from the Clockoli checkout when `Clockoli/tests` is cloned into the ignored `test-private/` directory; if the directory is absent, skip only that command. Run the focused public or private test first, then the corresponding broader suite. Do not describe a public CI pass as private regression coverage; external pull requests must not require private credentials. A real release requires a successful private check for its exact tagged commit.
 
 Also perform the relevant browser verification for UI, content-script, service-worker, permissions, storage, or cross-context messaging changes. Reload the unpacked extension after source changes and inspect both the page UI and extension service-worker console for errors.
 

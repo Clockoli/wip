@@ -17,19 +17,27 @@ test('public test commands remain runnable without private repository access', (
     ['basic-browser.functional.spec.js']);
 });
 
-test('public CI runs private regressions only for trusted main without exposing the suite in logs', () => {
+test('public CI runs private regressions for trusted main and same-repository PRs only', () => {
   const ci = read('.github/workflows/ci.yml');
   assert.match(ci, /pull_request:/);
   assert.doesNotMatch(ci, /pull_request_target:/);
   const [publicJobs, privateJob] = ci.split(/\n  private-regressions:\n/);
   assert.ok(privateJob, 'a separate private test job is required');
-  assert.doesNotMatch(publicJobs, /tests-private|test-private|secrets\./);
+  assert.doesNotMatch(publicJobs, /test-private|secrets\./);
   assert.match(publicJobs, /npm test/);
   assert.match(publicJobs, /npm run check/);
   assert.match(privateJob, /needs: test/);
-  assert.match(privateJob, /if:.*github\.event_name == 'push'.*github\.ref == 'refs\/heads\/main'/);
-  assert.match(privateJob, /repository: Clockoli\/tests-private/);
-  assert.match(privateJob, /token: \$\{\{ secrets\.PRIVATE_TESTS_READ_TOKEN \}\}/);
+  const condition = privateJob.match(/    if: >-\n([\s\S]*?)\n    runs-on:/)?.[1].trim().replace(/\s+/g, ' ');
+  assert.equal(condition,
+    "github.repository == 'Clockoli/wip' && " +
+    "((github.event_name == 'push' && github.ref == 'refs/heads/main') || " +
+    "(github.event_name == 'pull_request' && github.base_ref == 'main' && " +
+    "github.event.pull_request.head.repo.full_name == github.repository && " +
+    "github.event.pull_request.user.login != 'dependabot[bot]'))");
+  assert.match(privateJob, /repository: Clockoli\/tests(?:\s|$)/);
+  assert.doesNotMatch(ci, /Clockoli\/tests-private/);
+  assert.match(privateJob, /ssh-key: \$\{\{ secrets\.PRIVATE_TESTS_DEPLOY_KEY \}\}/);
+  assert.doesNotMatch(privateJob, /token: \$\{\{ secrets\.PRIVATE_TESTS_READ_TOKEN \}\}/);
   assert.match(privateJob, /persist-credentials: false/);
   assert.match(privateJob, /npm run test:private/);
   assert.match(privateJob, /RUNNER_TEMP\/private-regressions\.log/);
