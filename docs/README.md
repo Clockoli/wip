@@ -1,53 +1,52 @@
 # Clockoli documentation
 
-Clockoli tracks time against any task URL and writes the records to private GitHub repositories you control. New here? [Install Clockoli](install.md), then follow [Getting started](getting-started.md).
+Clockoli tracks time against task URLs and stores the records in private GitHub repositories you control.
 
-## Getting started
+**New to Clockoli?** [Install the extension](install.md), [connect GitHub](getting-started.md), and [track your first task](tracking.md).
 
-- [Why Clockoli](why-clockoli.md)
-- [Install Clockoli](install.md)
-- [Getting started](getting-started.md)
-- [Key concepts](concepts.md)
+## Get started
 
-## Track time
+- [Why Clockoli](why-clockoli.md) — benefits and tradeoffs
+- [Install Clockoli](install.md) — supported browsers and installation options
+- [Getting started](getting-started.md) — connect GitHub and a time repository
+- [Key concepts](concepts.md) — tasks, entries, repositories, and projects
 
-- [Track a task](tracking.md)
-- [Activity](activity.md)
-- [Add and edit time](editing-time.md)
-- [Top tasks](top-tasks.md)
+## Track and manage time
 
-## Reports and billing
+- [Track a task](tracking.md) — start, stop, switch, and describe work
+- [Activity](activity.md) — Timeline, Calendar, and List
+- [Add and edit time](editing-time.md) — corrections, multiple days, and bulk entry
+- [Top tasks](top-tasks.md) — find and restart recent tasks
 
-- [Reports](reports.md)
-- [Billable rates](billable-rates.md)
-- [Invoicing](invoicing.md)
+## Report and bill
 
-## Repositories and teams
+- [Reports](reports.md) — filters, charts, and exports
+- [Billable rates](billable-rates.md) — rates per client
+- [Invoicing](invoicing.md) — invoice setup and PDF output
 
-- [Time repositories](time-data-repository.md)
-- [Projects and routing](projects-and-routing.md)
-- [Work as a team](teams.md)
+## Work with repositories and teams
 
-## Settings and data
-
-- [Settings](settings.md)
-- [Sync and offline work](sync.md)
-- [Data, privacy, and security](data-and-privacy.md)
-- [Data format v1](data-format-v1.md)
-
-## Integrations
-
-- [Add-ons and Clockify migration](add-ons.md)
+- [Time repositories](time-data-repository.md) — storage setup and access
+- [Projects and routing](projects-and-routing.md) — choose where new time goes
+- [Work as a team](teams.md) — invite collaborators and share reports
+- [Settings](settings.md) — preferences, backups, and account controls
+- [Clockify migration](add-ons.md) — import existing time
 
 ## Help
 
-- [Troubleshooting](troubleshooting.md)
-- [Licensing and source releases](licensing.md)
+- [Troubleshooting](troubleshooting.md) — common problems and fixes
+- [Sync and offline work](sync.md) — what happens when GitHub is unavailable
+- [Data, privacy, and security](data-and-privacy.md) — what is shared and what stays local
 
-## Product scope
+## Technical reference
 
-The current beta supports Chrome and other Chromium browsers 102 or newer from the Chrome Web Store, Firefox 140 or newer, and Safari 18 or newer on macOS. Firefox and Safari builds ship as release files and are not yet listed in their browser stores. Completed entries can be added with **Add time** or **Bulk time adding** on Activity. Clockoli does not provide reminders, a mobile app, a side-by-side conflict editor, or automatic updates for unpacked or file installations.
+These documents explain persistent contracts and implementation details. You do not need them to use Clockoli.
 
-## Maintainer reference
+- [Data format v1](data-format-v1.md) — normative record and storage schema
+- [Time repository layout](time-data-repository.md#branch-and-storage-layout) — Git branches and files
+- [Data and security architecture](data-and-privacy.md) — permissions, trust boundaries, and local storage
+- [Specification compliance](spec-compliance.md) — implementation invariants and test coverage
+- [Browser release contracts](browser-releases.md) — compatibility and packaging
+- [Licensing and source releases](licensing.md) — GPL and corresponding source
 
-Contributor setup, development invariants, testing, browser verification, and release packaging are in [Contributing to Clockoli](../CONTRIBUTING.md). Maintainers also use the [specification compliance](spec-compliance.md) map of requirements to tests and the [browser release contracts](browser-releases.md).
+For contributing, testing, and releasing, see [CONTRIBUTING.md](../CONTRIBUTING.md). When updating documentation, follow the [writing guidelines](writing-guidelines.md).
