@@ -1,6 +1,6 @@
 # Advanced sync recovery
 
-This reference describes how Clockoli checks queued additions against GitHub and how to recover from an overlapping timer or incomplete save. Most users should start with [Troubleshooting](troubleshooting.md#synchronization-and-conflicts).
+Understand how Clockoli checks queued time entries and helps recover changes that conflict with GitHub.
 
 **Do not clear extension data or discard pending changes until you have verified that the time is saved elsewhere.** Local changes may not yet exist in GitHub.
 

@@ -1,6 +1,6 @@
 # Reports
 
-Use Reports to filter tracked time, view charts, export timesheets, and create invoices. Reports combines the selected time repositories and the teammates' branches you can read.
+Filter tracked time, explore charts, export timesheets, and create invoices across the repositories you can read.
 
 ![Reports with filters, charts, totals, and export actions](images/reports.png)
 

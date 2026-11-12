@@ -1,6 +1,6 @@
 # Troubleshooting
 
-If Clockoli cannot load or save your time, **do not clear extension data or uninstall it while changes are waiting to sync**. Those changes may exist only in your browser.
+Fix common installation, GitHub access, tracking, sync, and billing problems without risking unsynced time.
 
 ## Installation
 

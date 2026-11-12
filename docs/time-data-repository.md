@@ -1,6 +1,6 @@
 # Time repositories
 
-A **time repository** is a private GitHub repository where Clockoli stores your timers and completed entries. It can be different from the **source repository** whose issues or pull requests you track.
+A **time repository** is a private GitHub repository where Clockoli saves running timers and completed time.
 
 You can connect several time repositories and choose a default. [Projects and routing](projects-and-routing.md) decides where each new task is saved.
 

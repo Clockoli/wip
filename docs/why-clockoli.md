@@ -1,6 +1,6 @@
 # Why Clockoli
 
-Clockoli is a time tracker that stores your records in private GitHub repositories you control. It runs as a browser extension, without a Clockoli account or application server.
+Clockoli stores your time in private GitHub repositories you control, without a Clockoli account or application server.
 
 This approach favors **control and portability** over some of the convenience of a hosted service.
 

@@ -1,6 +1,6 @@
 # Invoicing
 
-Create an invoice from a filtered report, then **Print** it or **Save as PDF**. Invoices are generated locally in your browser, not stored in your time repository.
+Create invoices from filtered reports, then print them or save them as PDFs. Invoice details stay in your browser.
 
 ## Set up clients and rates
 
