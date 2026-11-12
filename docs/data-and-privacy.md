@@ -2,6 +2,8 @@
 
 Clockoli separates durable shared time data from browser-local secrets and preferences.
 
+![Where your data is kept: task URLs, times, descriptions and who tracked them go to your time repository; GitHub sign-in, rates, clients, invoice details, settings and pending changes stay only in this browser; Frankfurter receives only currency codes and dates when a billable report mixes currencies](images/where-data-lives.png)
+
 ## Architecture at a glance
 
 ```text

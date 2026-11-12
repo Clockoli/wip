@@ -2,6 +2,8 @@
 
 The few terms Clockoli uses everywhere: what a task is, where time is stored, and how work is routed and shared.
 
+![How Clockoli works: you track time on any web page, the extension in your browser saves it and commits it to your own GitHub time repository, one branch per person, with no Clockoli server in between](images/how-clockoli-works.png)
+
 ## Task
 
 A task is the work you track, identified by its HTTP(S) URL: a GitHub issue or pull request, a ticket, a document, a dashboard, or any other page. The URL is the identity; two timers on the same canonical URL are the same task.

@@ -10,6 +10,8 @@ Start, Stop, task switches, single completed **Add time**, **Bulk time adding**,
 
 ## When changes reach GitHub
 
+![From Stop to GitHub: the change is saved in your browser at once, and about 15 seconds after your last change it is sent to your time repository as one commit; offline changes wait and other browsers pick them up later](images/sync-flow.png)
+
 Queued writes are pushed automatically after **15 seconds without any new local changes**, with no manual Sync action. A new edit resets the countdown, including successive edits coalesced into an existing queued operation. The deadline is reconstructed from the persisted IndexedDB queue when the service worker restarts.
 
 Chrome may terminate the background worker: a durable one-shot alarm and the periodic one-minute alarm provide recovery, but installed Chrome extensions limit alarms to a minimum of about 30 seconds and may delay them further. Thus 15 seconds is the target when the worker remains active, not an exact deadline.

@@ -84,6 +84,8 @@ Each connected repository has a card in **Time repositories** with **Check acces
 
 ## Branch and storage layout
 
+![Files in a time repository: the main branch holds only the shared marker, and each person's branch, such as clockoli/users/1001, holds their user marker, task index, running timer and monthly time files](images/repository-layout.png)
+
 The default branch contains the shared repository marker:
 
 ```text

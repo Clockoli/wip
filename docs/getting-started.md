@@ -23,6 +23,8 @@ The welcome screen opens automatically after installation. Until you connect a t
 3. If copying failed, **GitHub does not open automatically**. Select **Copy**, then **Open GitHub to enter code**. If clipboard access is blocked, select the displayed code and copy it with ⌘C (macOS) or Ctrl+C (Windows/Linux).
 4. Return to Clockoli. It shows **Waiting for GitHub authorization** and checks automatically; no manual confirmation is needed. If you closed or missed the GitHub tab, select **Reopen GitHub**. If the tab could not open automatically, select **Open GitHub to enter code** instead.
 
+![The one-time GitHub sign-in code, already copied to the clipboard, with a countdown to opening GitHub and an Open GitHub now button](images/setup-device-code.png)
+
 Sign-in uses GitHub's [device flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow), so you never create or paste a personal access token. Signing in and giving the Clockoli GitHub App access to a repository are separate steps.
 
 ## Step 2: Connect a time repository

@@ -14,6 +14,8 @@ On a return visit, Reports shows the last locally saved result for the same loca
 
 Open the date-range button beneath Reporting period to choose a preset or custom dates. The button shows the selected date range, including when a preset is selected.
 
+![The reporting period picker: presets such as Last week on the left, Start and End dates and a month calendar with the selected week on the right, and a switch between local time and UTC](images/report-period.png)
+
 - Today and Yesterday
 - Last 7 days and Last 30 days
 - This week and Last week

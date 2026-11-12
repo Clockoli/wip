@@ -32,6 +32,8 @@ Each connected repository has a card with its status, a **Default** badge for th
 
 Choose whether Activity, Reports, Top tasks, and the content inside the toolbar panel use a centered column (default) or the available screen width. Settings always keeps its default centered column (up to 1280px), and its tracking bar does not switch to Full layout there. The panel shell always spans the page width; it remains at most 70% of the viewport height (and at most 720px) in either width mode, scrolling internally when needed. This device-local preference is not included in repository data or settings exports.
 
+![Interface width set to Within a centered column, and Toolbar button set to Open Activity in a new tab](images/interface-settings.png)
+
 ## Toolbar button
 
 Choose what clicking the browser toolbar icon does:
@@ -60,6 +62,8 @@ Merge tasks replaces one task identity with another in one time repository, for 
 3. In **Replace with**, select the replacement. It must be an already-tracked HTTP(S) URL in that selection.
 4. Repeat to build the **Merge list**, review it, and select **Merge**.
 
+![Merge tasks: Period, Time repository and People filters above two task lists, Task to replace and Replace with, and the Merge list with its Merge button](images/merge-tasks.png)
+
 The merge rewrites matching records in the selected period and preserves their prior identities in record history. The full merge list is saved in one atomic commit. Merge tasks is an explicit GitHub operation, not part of the background sync queue.
 
 ## Add-ons
@@ -74,6 +78,8 @@ Open **More settings** for clients, client-specific rates, invoicing, backups, a
 
 Create and save each client before adding rates. One business may invoice multiple clients; clients can be used for reporting without filling in invoice details.
 
+![Clients (invoice recipients) with one client, Acme Corp, and its email, address, tax ID and default currency fields](images/clients.png)
+
 ### Billable rates
 
 Select a client to manage its private GitHub-user rates and effective dates. Choose a connected time repository to suggest its collaborators in the GitHub user field; manual logins remain available. There are no global rates. See [Billable rates](billable-rates.md).
@@ -83,6 +89,8 @@ Select a client to manage its private GitHub-user rates and effective dates. Cho
 **Your business details**, multiple bank accounts with an optional default, numbering, payment terms, tax, and notes. Client details are managed in **Clients (invoice recipients)** above. Choose the bank account for each invoice in Reports, or omit bank details. See [Invoicing](invoicing.md).
 
 ### Backup & restore
+
+![Backup & restore with the Export settings and Import settings buttons and a What is included? list](images/backup.png)
 
 **Export settings** downloads a readable JSON backup of your local settings; **Import settings** restores one. Export a new backup after changing local settings. It can contain sensitive rate and customer information, so protect the downloaded file. It includes:
 

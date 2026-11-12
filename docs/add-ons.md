@@ -10,6 +10,8 @@ Clockoli ships first-party, **packaged-only** add-ons. They are versioned and sh
 
 A user must explicitly enable an add-on in Clockoli Settings. Before enablement, Settings discloses the add-on's requested host permissions and capabilities. Enablement requests the descriptor's exact origins through Chrome; a denied request does not enable the add-on, and disabling removes its optional origin before persisting the disabled state. Disabling an add-on stops integration but never deletes imported records.
 
+![The Add-ons section in Settings: Clockify migration, disabled, with its requested host, its one capability and an Enable Clockify migration button](images/add-ons.png)
+
 ### What an add-on can do
 
 An add-on descriptor declares its `id`, `version`, `title`, `description`, `requested origins`, and `capabilities`. The supported capability is `import_completed_records`. Remote code, arbitrary messages, and arbitrary GitHub calls are forbidden.
