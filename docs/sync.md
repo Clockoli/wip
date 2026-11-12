@@ -32,7 +32,7 @@ For a Stop or switch, completion reconciliation proceeds in this order:
 
 ## Receiving changes from other browsers
 
-Independently, a silent background pull checks connected personal branches at startup and about once per minute. Remote active and recent time records are cached locally without opening the panel, showing loading indicators, or rerendering an active editor. Local work waiting to sync is never replaced by an incoming snapshot. An unchanged branch or a failed pull leaves the visible UI alone; the next normal state read observes the newest successfully cached data. Larger history views and other participants' records are still loaded on demand.
+Independently, a silent background pull checks connected personal branches at startup and about once per minute. Remote active and recent time records are cached locally without opening Activity, showing loading indicators, or rerendering an active editor. Local work waiting to sync is never replaced by an incoming snapshot. An unchanged branch or a failed pull leaves the visible UI alone; the next normal state read observes the newest successfully cached data. Larger history views and other participants' records are still loaded on demand.
 
 ## Offline and reloads
 

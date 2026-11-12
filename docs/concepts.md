@@ -35,7 +35,7 @@ A **client** is who you bill. Assigning clients to projects lets an [invoice](in
 
 ## Task source
 
-In Reports, the **task source** is where a task lives: `owner/repository` for a GitHub issue or pull request, or the hostname for any other URL. It is separate from the time repository that stores the entry.
+The **task source**, shown as **Source** in Reports, is where a task lives: `owner/repository` for a GitHub issue or pull request, or the hostname for any other URL. It is separate from the time repository that stores the entry.
 
 ## Saved locally, synced later
 

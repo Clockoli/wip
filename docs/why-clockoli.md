@@ -94,10 +94,10 @@ Clockoli keeps the useful contextual behavior—a stopwatch inside GitHub and me
 
 That gives you:
 
-- the same task identity in the toolbar panel, Top tasks, Activity, Reports, and storage;
+- the same task identity in the toolbar button, the GitHub stopwatch, Top tasks, Activity, Reports, and storage;
 - arbitrary URLs without a separate manual project hierarchy;
 - one durable URL identity for GitHub issues, pull requests, and other HTTP(S) tasks;
-- separate Task source grouping by GitHub repository or generic hostname and Time repository provenance.
+- separate Source grouping by GitHub repository or generic hostname and Time repository provenance.
 
 Generic URLs do not need provider metadata. Clockoli tracks, groups, searches, and reports them by URL and optional title.
 

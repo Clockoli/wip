@@ -1,6 +1,6 @@
 # Track a task
 
-Track tasks by URL in Activity. Both the browser toolbar icon and the Clockoli icon in GitHub open Activity in a separate tab.
+Track tasks by URL. The toolbar icon and the Clockoli icon on GitHub open Activity in its own tab, or a quick popup if you choose.
 
 ## What counts as a task
 
@@ -34,6 +34,10 @@ If GitHub rate-limits a tracking-status refresh, the locally stored timer remain
 
 The accessible **Timeline**, **Calendar**, and **List** icon switcher sits beside the theme control in Activity. The timeline's block Start and Stop actions remain available. See [Activity](activity.md) for the views themselves.
 
+## Use the quick popup instead
+
+In [Settings](settings.md#toolbar-button), set **Toolbar button** to **Open quick popup** to track without leaving the page. Both the toolbar icon and the GitHub icon then open a small popup with **Start tracking this page** (or **Switch to this page** when the running timer is for a different task), **Stop and save**, the running description, four recent entries, and **Open Activity in a new tab**. On GitHub this needs Chrome 127 or later; older versions open Activity.
+
 ## Tracking strip layout
 
 When a timer is running, Activity stacks **Tracking now**, the task title, and its editable description on the left. The description fills the space to the metrics column, including when empty. **Started** and **Duration** sit on the right, with **Stop and save** below them at the same width as the metrics above. On narrow screens, these controls stack beneath the description, with the time controls and Stop button aligned to the right.
@@ -42,7 +46,7 @@ Top tasks, Reports, and Settings keep their compact tracking card, which still s
 
 ## Open Activity from GitHub
 
-Clockoli adds a stopwatch icon before your GitHub avatar. Click it to open or focus the standalone Activity tab, with the current issue, pull request, or GitHub page shown in the **From current page** banner. The GitHub page remains intact. Clockoli does not insert a tracking panel on top of it.
+Clockoli adds a stopwatch icon before your GitHub avatar. By default, click it to open or focus the standalone Activity tab, with the current issue, pull request, or GitHub page shown in the **From current page** banner. The GitHub page remains intact. Clockoli does not insert a tracking panel on top of it.
 
 The icon stays available during GitHub's client-side navigation. It animates when the task open in that tab is currently being tracked.
 
@@ -91,4 +95,4 @@ Activity can display locally cached entries immediately while refreshing data. C
 
 ## Navigation
 
-The dedicated Activity tab provides **Top tasks**, **Activity**, **Reports**, and **Settings** navigation. Both Clockoli icons open or focus Activity.
+The dedicated Activity tab provides **Top tasks**, **Activity**, **Reports**, and **Settings** navigation. Both Clockoli icons open or focus Activity, or the quick popup if you chose it.

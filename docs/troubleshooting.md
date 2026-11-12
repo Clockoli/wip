@@ -22,7 +22,7 @@ Unpacked extensions have no automatic update channel.
 - Confirm Clockoli is enabled in `chrome://extensions`.
 - Refresh the GitHub tab after installation or update.
 - The injected control appears only on `https://github.com`.
-- On any other HTTP(S) site, use the pinned toolbar popup.
+- On any other HTTP(S) site, select the Clockoli toolbar icon; pin it to keep it visible.
 - Internal browser pages such as `chrome://` pages cannot be tracked.
 
 ## GitHub connection
@@ -42,7 +42,7 @@ GitHub user authorization and GitHub App installation are separate.
 
 ### My repository does not appear in suggestions
 
-Suggestions show only repositories the Clockoli GitHub App can already access, and only after you type at least two characters. Enter the GitHub URL or `owner/name` in **Repository URL or owner/name** instead, then select **Check** (or press Enter). Use the same **Check** button to retry.
+Suggestions show only repositories the Clockoli GitHub App can already access, and only after you type at least two characters. Enter the GitHub URL or `owner/name` in **Invitation link, repository URL, or owner/name** instead, then select **Check** (or press Enter). Use the same **Check** button to retry.
 
 A missing private repository is not necessarily nonexistent: GitHub hides it when your account or the App lacks access. Before creating a replacement, check that:
 
@@ -76,7 +76,7 @@ If Clockoli offers **Set up storage branch**, **Join repository**, or **Initiali
 
 ### Check an edited repository target before connecting
 
-Editing **Repository URL or owner/name** invalidates the previous selection and confirmation. Select **Check** (or press Enter) to inspect the edited target; leaving the field does not trigger a check. Resolve any displayed availability reason, then review and confirm the newly selected repository. Background discovery does not confirm writes for you.
+Editing **Invitation link, repository URL, or owner/name** invalidates the previous selection and confirmation. Select **Check** (or press Enter) to inspect the edited target; leaving the field does not trigger a check. Resolve any displayed availability reason, then review and confirm the newly selected repository. Background discovery does not confirm writes for you.
 
 ### Finish setup is unavailable
 
@@ -131,23 +131,19 @@ Start is unavailable when:
 - the active tab is not HTTP(S);
 - the requested Start cannot be safely ordered behind active or conflicted work.
 
-Open the panel for details. Choose **Switch to this task** when another task is running. If the panel says a stopped entry is still waiting to sync, restore GitHub access and wait for the automatic retry, or resolve the conflict it shows.
+Open Activity for details. Choose **Switch to this task** when another task is running. If Activity says a stopped entry is still waiting to sync, restore GitHub access and wait for the automatic retry, or resolve the conflict it shows.
 
-### The panel says “Tracking another task”
+### Another task is already running
 
-The active timer's canonical URL differs from the page currently open. Select the active URL to return to it, or choose **Switch to this task**. Clockoli queues completion in the active timer's time repository before starting in the destination selected for the current URL.
+The active timer's canonical URL differs from the page you opened. Choose **Switch to this task** in the **From current page** banner, or **Switch to this page** in the quick popup. Clockoli queues completion in the active timer's time repository before starting in the destination selected for the current URL.
 
-### Start works on GitHub but not another site
+### The stopwatch is only on GitHub
 
-The GitHub stopwatch is an injected convenience. For another site, pin and open Clockoli from the browser toolbar. The active page must use `http:` or `https:`.
+The GitHub stopwatch is a shortcut that opens Clockoli. On another site, select the Clockoli toolbar icon and choose **Track this task** in the **From current page** banner. The page must use `http:` or `https:`.
 
 ### A GitHub notification link created unexpected task behavior
 
 Clockoli canonicalizes GitHub issue/PR URLs by removing query strings and fragments. The stored task should be the base issue or pull-request URL. Generic non-GitHub query strings are preserved because they may identify different work.
-
-### Start says the requested task URL does not match the current page
-
-Clockoli checks the current tab URL, including after GitHub navigates between issues or pull requests without reloading the page. If the page changed again while you clicked Start, open the intended task and retry. After updating an unpacked extension, reload both Clockoli and the open GitHub tab to use the new code.
 
 ### A long timer asks for confirmation
 
@@ -168,7 +164,7 @@ Activity shows **Not tracking** after a locally accepted Stop, even while its Gi
 - Keep the extension installed and do not clear its data.
 - Restore network/repository access.
 - Wait: queued writes are pushed after 15 seconds without new changes, and Clockoli also retries at startup and approximately once per minute. There is no manual Sync button.
-- If the panel shows **Retry** or another recovery action, follow it.
+- If Activity shows **Retry** or another recovery action, follow it.
 - If a conflict appears, review it in Activity from any view; never discard an unsaved completion until you have verified the time is recorded elsewhere.
 
 See [Sync and offline work](sync.md) for the full model.
@@ -188,7 +184,7 @@ Check:
 - whether the repository was renamed or transferred;
 - whether another person manually changed the relevant active/monthly file.
 
-Clockoli classifies authentication, access, destination, rate-limit, network, validation, and conflict failures differently. Follow the action shown in the panel rather than repeatedly reconnecting for a transient error.
+Clockoli classifies authentication, access, destination, rate-limit, network, validation, and conflict failures differently. Follow the action Clockoli shows rather than repeatedly reconnecting for a transient error.
 
 ### Clockoli preserved a newer timer
 
@@ -202,7 +198,7 @@ Clockoli could not prove that the timer was completed. It reports the missing-ac
 
 ### Scrolling does not change a time value
 
-This is intentional. Wheel and trackpad gestures scroll the panel normally and never mutate Start or Stop. Type the hour or minute directly in the always-visible fields of the unified inline draft. Clockoli does not show `−`/`+` step controls. Choose **Save time** to persist the draft.
+This is intentional. Wheel and trackpad gestures scroll the page normally and never mutate Start or Stop. Type the hour or minute directly in the always-visible fields of the unified inline draft. Clockoli does not show `−`/`+` step controls. Choose **Save time** to persist the draft.
 
 ### Editing one row changed a neighboring row
 
@@ -211,7 +207,7 @@ Clockoli maintains the chronological boundary between adjacent records:
 - moving Start into the previous interval moves the previous Stop;
 - moving Stop into the next interval moves the next Start.
 
-The panel updates both rows immediately and saves them as one atomic operation. Choose **Cancel** before saving if that is not the intended correction.
+Activity updates both rows immediately and saves them as one atomic operation. Choose **Cancel** before saving if that is not the intended correction.
 
 ### “Overlaps another entry” remains visible
 
@@ -225,7 +221,7 @@ Activity does not show a warning just because a remote timer differs from local 
 
 ### Inline edit or Delete reports a stale or changed record
 
-The monthly file changed after the panel loaded. Reload recent entries, review the latest record, and repeat the intended action. Clockoli refuses to retarget an edit or delete by array position alone.
+The monthly file changed after Activity loaded. Refresh Activity, review the latest record, and repeat the intended action. Clockoli refuses to retarget an edit or delete by array position alone.
 
 ### A manually edited file cannot be read
 
@@ -257,13 +253,13 @@ Title enrichment can be unavailable because of repository visibility, permission
 
 - Confirm the inclusive Start/End date range.
 - Reports includes a record according to its Start date.
-- Clear People, Project, Task source, or Time repository facets that exclude the data.
+- Clear the **People**, **Projects**, **Sources**, or **Time repositories** filters that exclude the data.
 - Confirm the intended time repositories are selected and team members have valid personal branches.
 - Check whether each selected repository can list and read those branches.
 
 ### A report says some time repositories could not be loaded
 
-Clockoli keeps records from destinations that loaded successfully and marks the result partial. Review the per-repository status and restore access or retry. Conflicting copies of the same record ID are omitted and also make the result partial. CSV, JSON, and print/PDF exports remain disabled until the selected result is complete and conflict-free.
+Clockoli keeps records from destinations that loaded successfully and marks the result partial. Review the per-repository status and restore access or retry. Conflicting copies of the same record ID are omitted and also make the result partial. The CSV, JSON, PDF, and Print exports remain disabled until the selected result is complete and conflict-free.
 
 ### Reports says to choose a shorter period
 
@@ -273,11 +269,13 @@ Clockoli enforces bounded file, byte, and record budgets so one report cannot ma
 
 Open Settings and:
 
-- select the client whose rate card should be used in Reports;
+- in **Billable rates**, select the client the work is billed to;
 - assign hourly rates to the required GitHub users within that client;
 - check that each rate covers the relevant entry dates;
 - save the client's rates;
 - export an updated local settings backup.
+
+In Reports, check **Calculate amounts using**: **Each project's client** applies the rates of each project's client, while a named client applies that client's rates to all visible work.
 
 Rates are local to the current browser. They are not read from the shared repository or synchronized from a colleague's browser.
 
@@ -353,7 +351,7 @@ Include:
 - Clockoli commit or package identity;
 - browser name and version;
 - the visible error text and recovery action;
-- whether the surface was the GitHub panel, toolbar panel, Top tasks, Activity, Reports, or Settings;
+- where it happened: the GitHub stopwatch, the quick popup, Top tasks, Activity, Reports, or Settings;
 - whether a timer or pending write existed;
 - redacted repository owner/name if needed;
 - relevant Git path and commit SHA when safe.

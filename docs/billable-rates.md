@@ -6,7 +6,7 @@ There are no global, default, or shared rate cards. Clients, rate cards, and inv
 
 ## Create a client and rate card
 
-1. In **Settings → More settings → Clients**, create and **Save** a client. You can use a client solely to evaluate team work; invoice details are optional.
+1. In **Settings → Clients (invoice recipients)**, create and **Save** a client. You can use a client solely to evaluate team work; invoice details are optional.
 2. Open **Billable rates**, choose that client and a time repository for GitHub user suggestions, then add the hourly rates of GitHub users whose time you want to evaluate. The repository selector starts with your default time repository; with several connected repositories you can change it. Focus **GitHub user** to load repository collaborators and choose a login from the dropdown. You can still type a login manually, including when the collaborator list is unavailable or has more than 100 entries. The repository selection only supplies suggestions; it does not change where the rate is stored or limit which time it can evaluate.
 3. Enter the rate and currency (such as `100.00 USD` or `€55.50`), optionally set effective dates, then **Save billable rates**.
 4. Repeat for each client. One person can have different rates for different clients.

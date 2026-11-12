@@ -44,7 +44,7 @@ The summary shows:
 - people count;
 - source count.
 
-Filter by Client, People, Projects, Task sources, and Time repositories. Client filters use project-client assignments from this browser's local settings. Select **All clients** or **Unassigned** if needed. For a GitHub issue or pull request, the **Task source** is `owner/repository`; for another URL it is the hostname. The **Time repository** is the destination that stores the record.
+Filter by Client, People, Projects, Sources, and Time repositories. Client filters use project-client assignments from this browser's local settings. Select **All clients** or **Unassigned** if needed. For a GitHub issue or pull request, the **Source** is `owner/repository`; for another URL it is the hostname. The **Time repository** is the destination that stores the record.
 
 ## Charts
 
@@ -53,9 +53,9 @@ Compact controls beside the graph's axes clarify what each dropdown changes: **Y
 Choose one vertical metric:
 
 - Total time
-- Avg time per distinct task
+- Avg time: total time divided by the number of distinct tasks
 - Billable amount
-- Task count, deduplicated by canonical URL
+- Task count: the number of distinct task URLs
 
 Choose independent horizontal and stack dimensions:
 
@@ -63,9 +63,9 @@ Choose independent horizontal and stack dimensions:
 - Week
 - Month
 - Person
-- Task source
+- Source
 - Time repository
-- Task
+- Task URL / title
 
 The analytics are calculated for the chart; the data table's rows are rendered only when expanded, which keeps large reports responsive.
 
@@ -73,9 +73,10 @@ Billable amounts need [client-specific billable rates](billable-rates.md). Choos
 
 ## Export a timesheet
 
-- CSV timesheet
-- JSON timesheet
-- Native browser print or save-to-PDF
+- **CSV**: a CSV timesheet
+- **JSON**: a JSON timesheet
+- **PDF**: downloads the timesheet as a PDF file
+- **Print**: opens the browser's print dialog
 
 CSV and JSON include task URL and title, Start, End, duration, person, and description. They do not include the time repository or additional GitHub issue/PR metadata. When local rates are configured, each exported row also includes its effective hourly rate, per-entry billable amount, and that rate's currency.
 
@@ -87,7 +88,7 @@ To bill a client, use **Create invoice**; see [Invoicing](invoicing.md).
 
 Each destination is loaded independently. If one fails, Clockoli keeps records from the repositories that loaded, marks the result partial, and identifies the unavailable destinations. Conflicting copies of the same record ID are omitted and also make the result partial.
 
-While the selected data is partial, Clockoli disables CSV, JSON, and print/PDF timesheet exports. Invoice creation may still be available for the filtered records: confirm that every intended repository loaded before printing an invoice.
+While the selected data is partial, Clockoli disables the CSV, JSON, PDF, and Print timesheet exports. Invoice creation may still be available for the filtered records: confirm that every intended repository loaded before printing an invoice.
 
 If local operations are waiting to sync, Reports warns that its displayed totals are **GitHub-only**: local changes are not included, even if the report has no entries or filters hide them. Routine pending work does not display a queue count or Activity review link. If a conflict needs review, Reports shows the queue count and conflict, and the Activity navigation tab marks it across standalone pages. Follow **Review in Activity** to inspect the original and proposed entries and jump directly to an older affected week in List, Timeline, or Calendar. Before exporting or printing, Reports rechecks local changes and refuses the action if synchronization is pending or cannot be verified. Timesheet exports and invoice creation, printing, and PDF saving are unavailable while local operations remain pending; load Reports again after they sync. A remote-only partial read still permits invoice creation for the filtered records as described above.
 

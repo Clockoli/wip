@@ -1,10 +1,10 @@
 # Settings
 
-Every Settings section, in the order Settings shows it: account, repositories, display, routing, merging, add-ons, billing, backups, and advanced.
+Settings sections in order: account, repositories, display, toolbar button, routing, merge tasks, add-ons, clients, rates, invoicing, backups, and advanced.
 
 ![The top of Settings: the GitHub account card and the connected time repository](images/settings.png)
 
-The welcome screen opens after first installation. Until you connect a time repository, it shows just the GitHub sign-in and repository setup steps; the usual navigation and preferences are hidden. Once setup is complete, reopen Settings from the gear button in the Clockoli panel, the **Settings** navigation link, or the extension details page.
+The welcome screen opens after first installation. Until you connect a time repository, it shows just the GitHub sign-in and repository setup steps; the usual navigation and preferences are hidden. Once setup is complete, open Settings from the **Settings** tab at the top of Activity, Top tasks, and Reports, or from the extension details page.
 
 **Save projects and routing**, **Save billable rates**, and **Save invoicing settings** each show success or an error beside their own button. After a settings change, a reminder suggests exporting an updated backup; it appears once per page load and, after exporting, does not show again until you reopen or reload Settings.
 
@@ -30,7 +30,7 @@ Each connected repository has a card with its status, a **Default** badge for th
 
 ## Interface width
 
-Choose whether Activity, Reports, Top tasks, and the content inside the toolbar panel use a centered column (default) or the available screen width. Settings always keeps its default centered column (up to 1280px), and its tracking bar does not switch to Full layout there. The panel shell always spans the page width; it remains at most 70% of the viewport height (and at most 720px) in either width mode, scrolling internally when needed. This device-local preference is not included in repository data or settings exports.
+Choose whether Activity, Reports, and Top tasks use a centered column (default) or the available screen width. Settings always keeps its centered column (up to 1280px), and its tracking bar does not switch to full width there. This device-local preference is not included in repository data or settings exports.
 
 ![Interface width set to Within a centered column, and Toolbar button set to Open Activity in a new tab](images/interface-settings.png)
 
@@ -39,9 +39,9 @@ Choose whether Activity, Reports, Top tasks, and the content inside the toolbar 
 Choose what clicking the browser toolbar icon does:
 
 - **Open Activity in a new tab** (default): reuse the Activity tab and pass the clicked page's task context to it.
-- **Open quick popup**: show a lightweight tracker with start/stop, the running timer, an editable running description (saved with Stop and save, or earlier with Enter or blur; Shift+Enter adds a line), four recent entries, and an **Open Activity** button for the full view. The popup has no menus, Timeline, Calendar, or List controls. The popup closes automatically when focus moves elsewhere.
+- **Open quick popup**: show a lightweight tracker with start/stop, the running timer, an editable running description (saved with Stop and save, or earlier with Enter or blur; Shift+Enter adds a line), four recent entries, and an **Open Activity in a new tab** button for the full view. The popup has no menus, Timeline, Calendar, or List controls. The popup closes automatically when focus moves elsewhere.
 
-The choice applies immediately and survives browser and extension worker restarts. It stays on this browser and is not included in GitHub data or exported settings. Before setup is complete, opening Clockoli takes you to Settings.
+The choice applies immediately and survives browser and extension worker restarts. It stays on this browser and is not included in GitHub data or exported settings. Before setup is complete, opening Clockoli takes you to Settings; the quick popup offers **Set up Clockoli** instead.
 
 The Clockoli button shown on GitHub pages uses the same choice. When set to quick popup, it opens the browser action popup where supported (Chrome 127+); if the browser cannot open it, Activity is the fallback. In the quick popup, the **Open Activity in a new tab** button stays visible while entries scroll.
 
@@ -72,7 +72,7 @@ Enable packaged integrations, such as Clockify migration, after reviewing their 
 
 ## More settings
 
-Open **More settings** for clients, client-specific rates, invoicing, backups, and advanced options.
+Clients, client-specific rates, invoicing, backups, and advanced options follow on the same page. Before you connect GitHub, they are collapsed under **More settings**.
 
 ### Clients (invoice recipients)
 

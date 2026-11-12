@@ -57,4 +57,4 @@ The Team section initially displays four accounts in each category; expand **Mor
 
 ## Report across the team
 
-[Reports](reports.md) combines the selected visible repositories and every valid personal branch in them. On GitHub issue and pull-request pages, the stopwatch dialog can show **Tracked on this issue/PR** totals for all participants. Hourly rates stay in each browser, so teammates sharing a repository can use different rate cards.
+[Reports](reports.md) combines the selected visible repositories and every valid personal branch in them. On GitHub issue and pull-request pages, each participant in GitHub's participant list shows the time they tracked on that task. Hourly rates stay in each browser, so teammates sharing a repository can use different rate cards.

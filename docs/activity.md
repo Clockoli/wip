@@ -2,13 +2,13 @@
 
 Review a week of tracked time in Timeline, Calendar, or List, move and resize entries, and search your whole history.
 
-Activity shows your completed and running time one Monday–Sunday week at a time in **Timeline**, **Calendar**, and **List**. Both the browser toolbar icon and the Clockoli icon on GitHub open this standalone page.
+Activity shows your completed and running time one Monday–Sunday week at a time in **Timeline**, **Calendar**, and **List**. By default, both the browser toolbar icon and the Clockoli icon on GitHub open this standalone page.
 
 ![Activity in Timeline view: the week's totals, the running timer, and the day's entries grouped by project](images/timeline.png)
 
 ## Open Activity
 
-Click the Clockoli toolbar icon from any page, or the Clockoli stopwatch icon before your avatar on GitHub. Activity opens in a browser tab, or the existing Activity tab is focused. On an HTTP(S) page, its validated URL and title appear in the **From current page** banner. No tracking panel appears over the source page.
+Click the Clockoli toolbar icon from any page, or the Clockoli stopwatch icon before your avatar on GitHub. Activity opens in a browser tab, or the existing Activity tab is focused. On an HTTP(S) page, its validated URL and title appear in the **From current page** banner. No tracking panel appears over the source page. If **Toolbar button** in [Settings](settings.md#toolbar-button) is set to **Open quick popup**, both icons open the popup instead, and its **Open Activity in a new tab** button leads here.
 
 Activity loads the current user's completed entries from the selected time repositories. Each edit or delete is sent back to the record's original time repository.
 
@@ -18,7 +18,7 @@ Activity shows one Monday–Sunday week. In Timeline and Calendar, week arrows s
 
 Switching between Timeline, Calendar, and List resets the displayed week to the current week; navigating within one view retains its selected week. Activity remembers your selected view and restores it when reopened. Live timer updates do not navigate away from an explicitly selected historical week.
 
-Browsing loads records for the displayed week, including work started earlier that continues into it, instead of silently showing only the panel's recent-record window. Weekly reads scan earlier monthly files within bounded file, byte, and record budgets; exceeding a budget reports an error instead of silently showing an incomplete total. A failed week read restores the previous week and its recoverable records. Opening Activity starts a full current-week read.
+Browsing loads records for the displayed week, including work started earlier that continues into it, instead of silently showing only the recent entries. Weekly reads scan earlier monthly files within bounded file, byte, and record budgets; exceeding a budget reports an error instead of silently showing an incomplete total. A failed week read restores the previous week and its recoverable records. Opening Activity starts a full current-week read.
 
 ## Weekly summary
 

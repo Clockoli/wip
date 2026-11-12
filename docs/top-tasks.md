@@ -2,7 +2,7 @@
 
 See the tasks you tracked recently with their total time, and pick any of them up again with one click.
 
-Open **Top tasks** from the toolbar panel navigation or the GitHub split-menu arrow.
+Open **Top tasks** from the tabs at the top of Activity, Reports, and Settings.
 
 ## What the list shows
 

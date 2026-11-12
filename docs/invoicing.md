@@ -6,7 +6,7 @@ Invoices are generated in the browser from your time records and local settings.
 
 ## Set up invoicing
 
-Open **Settings** → **More settings** → **Clients (invoice recipients)** to save each client, then use **Billable rates** to configure that client's rates. Keep **Add client**: one business or freelancer can invoice several clients. The separate **Invoicing** section holds **Your business details**, bank details, invoice numbering, payment terms, and tax defaults used for invoice previews. Select **Save invoicing settings**; success or an error appears beside the button. Invoicing needs [billable rates](billable-rates.md) **on the selected client** for the people you bill. Rates from other clients are never substituted.
+In **Settings**, use **Clients (invoice recipients)** to save each client, then use **Billable rates** to configure that client's rates. Keep **Add client**: one business or freelancer can invoice several clients. The separate **Invoicing** section holds **Your business details**, bank details, invoice numbering, payment terms, and tax defaults used for invoice previews. Select **Save invoicing settings**; success or an error appears beside the button. Invoicing needs [billable rates](billable-rates.md) **on the selected client** for the people you bill. Rates from other clients are never substituted.
 
 ![The Invoicing section in Settings: your business details, a bank account, and invoice numbering, payment terms and tax defaults](images/invoicing-settings.png)
 
@@ -22,13 +22,13 @@ Add up to 20 bank accounts under **Invoicing**. Give each an account label and p
 
 Payment terms (days) in Settings determines the due date from the issue date; zero means due on receipt.
 
-Payment terms can range from 0 to 365 days. The Notes field supports line breaks.
+Payment terms can range from 0 to 365 days. The **Footer notes** field supports line breaks.
 
 ## Create an invoice
 
 1. Open **Reports** and filter it: the selected period, people, projects, and sources define what is billed.
 2. Choose **Create invoice**.
-3. Choose a client, bank details (if needed), and currency, review the preview, then choose **Print** or **Save as PDF**.
+3. Choose a client, bank details (if needed), currency, and whether to group lines by task or by day and task, review the preview, then choose **Print** or **Save as PDF**.
 
 ![The Create invoice dialog with its client, bank details and currency choices above the invoice preview](images/invoice.png)
 
@@ -36,7 +36,7 @@ Each invoice uses one target currency. When effective-dated rates change within 
 
 ![An invoice preview: your business details, the client, the billing period, one line per task and rate with hours and amount, the total, payment terms and bank details](images/invoice-preview.png)
 
-The invoice dialog names the billing period from the Reports From/To range. Presets select This month, Last month, Last 7 days, or Last 30 days using the selected reporting date basis (local or UTC).
+The invoice dialog shows the billing period from the Reports Start and End dates. To bill another period, change the period in Reports first.
 
 Picking a client narrows the invoice to that client's work without changing the report filters, and selects the client's local rate card. Clockoli warns when an invoice also includes projects owned by another client.
 

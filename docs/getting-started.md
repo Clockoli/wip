@@ -12,7 +12,7 @@ You need:
 
 The repository that stores your time is your **time repository**. It is separate from the repositories, documents, and tickets you track, and Clockoli never needs write access to those. See [Key concepts](concepts.md).
 
-The welcome screen opens automatically after installation. Until you connect a time repository, Clockoli shows only the two setup steps: other navigation and preferences are hidden to help you get started. Clicking the Clockoli toolbar icon or trying to open Activity before finishing setup brings you back to Settings rather than showing an empty tracking page. If the GitHub App isn't an option, expand **Why GitHub?** and select **Use a personal access token instead**. After setup, reopen Settings using the gear button in the Clockoli panel or the extension's details page. **More settings** holds Billable rates, Backup & restore (including **Import settings**), and **Advanced**. If GitHub App sign-in is unavailable in a development build, the regular Settings page remains accessible for the PAT alternative.
+The welcome screen opens automatically after installation. Until you connect a time repository, Clockoli shows only the two setup steps: other navigation and preferences are hidden to help you get started. Clicking the Clockoli toolbar icon or trying to open Activity before finishing setup brings you back to Settings rather than showing an empty tracking page; the quick popup, if chosen, offers **Set up Clockoli** instead. If the GitHub App isn't an option, expand **Why GitHub?** and select **Use a personal access token instead**. After setup, open Settings from the **Settings** tab at the top of Activity, Top tasks, and Reports, or from the extension's details page. Until you connect, **More settings** holds Clients, Billable rates, Invoicing, Backup & restore (including **Import settings**), and **Advanced**. If GitHub App sign-in is unavailable in a development build, the regular Settings page remains accessible for the PAT alternative.
 
 ## Step 1: Sign in with GitHub
 
@@ -76,16 +76,18 @@ A task is any HTTP(S) page; its URL is the task's identity and the title is opti
 ### On any website
 
 1. Open the page you want to track.
-2. Select the Clockoli toolbar icon.
-3. In the panel, choose **Track this task**.
+2. Select the Clockoli toolbar icon. Activity opens in its own tab, or the open Activity tab comes to the front.
+3. In the **From current page** banner, choose **Track this task**.
 4. Work normally.
-5. Open Clockoli again, add a description if useful, and choose **Stop and save**.
+5. When you finish, return to Activity, add a description if useful, and choose **Stop and save**.
 
-The panel uses the current tab's URL and title. Internal browser pages such as `chrome://extensions` are not HTTP(S) pages and cannot be tasks; on them, the toolbar opens **Activity** instead.
+Clockoli uses the current tab's URL and title. Internal browser pages such as `chrome://extensions` are not HTTP(S) pages and cannot be tasks; from them, Activity opens without the banner.
+
+If you prefer a small popup over a new tab, set **Toolbar button** in [Settings](settings.md#toolbar-button) to **Open quick popup**. The popup offers **Start tracking this page** and **Stop and save**.
 
 ### On GitHub
 
-Clockoli adds a split stopwatch control before your GitHub avatar. The stopwatch opens the tracking panel for the current issue or pull request; the arrow opens **Top tasks**, **Activity**, and **Reports**. GitHub titles are used when GitHub provides them.
+Clockoli adds a stopwatch button before your GitHub avatar. It opens Activity with the current issue or pull request in the **From current page** banner, or the quick popup if you chose it under **Toolbar button**. GitHub titles are used when GitHub provides them.
 
 Clockoli runs one timer at a time: starting another task saves the running one first. See [Track a task](tracking.md).
 
@@ -97,7 +99,7 @@ PAT compatibility mode supports one time repository only. Create a fine-grained 
 
 ## Next steps
 
-- [Track a task](tracking.md): the panel, the GitHub stopwatch, switching tasks, and descriptions.
+- [Track a task](tracking.md): the toolbar button, the GitHub stopwatch, switching tasks, and descriptions.
 - [Add and edit time](editing-time.md): fix forgotten timers and add missed work.
 - [Reports](reports.md) and [Invoicing](invoicing.md): turn tracked time into timesheets and invoices.
 - [Projects and routing](projects-and-routing.md): send different work to different time repositories.
