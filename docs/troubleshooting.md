@@ -1,359 +1,150 @@
 # Troubleshooting
 
-Fixes for common problems with installation, GitHub connection, tracking, sync, editing, reports, billing, and Clockify migration.
+If Clockoli cannot load or save your time, **do not clear extension data or uninstall it while changes are waiting to sync**. Those changes may exist only in your browser.
 
 ## Installation
 
-### I cannot select the ZIP in Chrome
+### The extension or GitHub stopwatch is missing
 
-Extract the ZIP first. In `chrome://extensions`, choose **Load unpacked** and select the extracted directory that contains `manifest.json`.
+Check that Clockoli is enabled, then refresh the GitHub page. The in-page stopwatch appears on `github.com`; on other HTTP(S) sites, use the browser toolbar icon. Internal browser pages such as `chrome://` cannot be tracked.
 
-### My unpacked extension did not update
+For an unpacked extension, update the files, open `chrome://extensions`, select **Reload**, and refresh existing GitHub tabs. To install from a ZIP, extract it first and select the folder containing `manifest.json`.
 
-Unpacked extensions have no automatic update channel.
-
-1. Pull or replace the extension files.
-2. Open `chrome://extensions`.
-3. Select **Reload** on Clockoli.
-4. Refresh open GitHub tabs.
-
-### The GitHub stopwatch is missing
-
-- Confirm Clockoli is enabled in `chrome://extensions`.
-- Refresh the GitHub tab after installation or update.
-- The injected control appears only on `https://github.com`.
-- On any other HTTP(S) site, select the Clockoli toolbar icon; pin it to keep it visible.
-- Internal browser pages such as `chrome://` pages cannot be tracked.
+See [Install Clockoli](install.md) for Firefox and Safari instructions.
 
 ## GitHub connection
 
-### GitHub access expired or could not be renewed
+### GitHub sign-in expired
 
-Clockoli normally renews its GitHub App access token automatically when it makes a GitHub request. If GitHub rejects that renewal, Settings shows **GitHub sign-in required** and the **Sign in again with GitHub** action instead of a raw renewal error. Complete the new one-time Device activation code; signing in to the GitHub website alone does not renew Clockoli's authorization. If another Clockoli tab completes authorization, Settings checks the changed credentials and closes the sign-in state after GitHub access succeeds. While a new authorization awaits repository validation, Settings shows that step instead of asking you to sign in again. Do not clear local data or sign out to retry: reconnection preserves configured time repositories and pending work. Use the same GitHub account; a replacement authorization for a different account cannot silently take over the existing repositories. If GitHub rejects the new code as well, check that the Clockoli GitHub App is available and try again with a fresh code.
+In Settings, select **Sign in again with GitHub** and complete the new one-time code. Signing in to the GitHub website alone does not renew Clockoli's authorization.
 
-### Device activation completed, but setup did not advance
+Use the **same GitHub account**. Do not clear browser data or sign out to fix a temporary authorization failure; that can put queued work at risk.
 
-GitHub user authorization and GitHub App installation are separate.
+### My repository is missing or cannot be checked
 
-1. Return to Clockoli Settings.
-2. Clockoli checks for authorization automatically. If it still shows **Waiting for GitHub authorization**, verify that you approved Clockoli on GitHub, then return to Settings. Use **Reopen GitHub** if you need to revisit the authorization page.
-3. After sign-in, type a repository name in **Connect time repositories** to choose an App-granted suggestion, or paste a GitHub URL or `owner/name` and select **Check** (or press Enter).
-4. Grant App access only if Clockoli reports that the target is missing or needs **Contents: Read and write**. Check a ready repository, then choose **Connect repository** and confirm separately. A replacement authorization is also confirmed automatically after Clockoli read-validates every configured destination; failures appear once at account level.
+Enter its full GitHub URL or `owner/name` and select **Check**. Autocomplete shows only repositories already granted to the Clockoli App, after you type at least two characters.
 
-### My repository does not appear in suggestions
+Check that the repository is private, not archived, and writable by your account. The Clockoli App also needs **Contents: Read and write** access. Organization approval or branch rules may prevent access.
 
-Suggestions show only repositories the Clockoli GitHub App can already access, and only after you type at least two characters. Enter the GitHub URL or `owner/name` in **Invitation link, repository URL, or owner/name** instead, then select **Check** (or press Enter). Use the same **Check** button to retry.
+If Clockoli offers **Grant access**, select it, choose **Only select repositories** on GitHub, grant the intended repository, and return to Settings. Select **Check** again if the new permission has not appeared.
 
-A missing private repository is not necessarily nonexistent: GitHub hides it when your account or the App lacks access. Before creating a replacement, check that:
-
-- the name is spelled correctly;
-- the repository is private;
-- it is not archived or disabled;
-- your user has write access;
-- the Clockoli App installation includes it, with **Contents: Read and write**;
-- an organization approval is not still pending.
-
-Network errors are reported separately from missing App access, and Clockoli never silently substitutes another repository.
-
-### Clockoli asks me to grant access
-
-The checked repository is missing from the Clockoli GitHub App installation, or the App lacks Contents-write permission.
-
-1. Select **Grant access**. If Clockoli knows the owner's existing App installation, this opens its settings; there is no need to install the App again.
-2. Choose **Only select repositories** and add the intended repository. Ask its owner or organization administrator if you cannot change the grant.
-3. Return to Settings. Clockoli checks the remembered repository after about one second, even if you closed the access dialog or reloaded Settings.
-4. If GitHub has not exposed the grant yet, finish it on GitHub and return again, or select **Check** to retry manually.
-
-### I do not have a time repository yet
-
-Use **Create a new time repository** at the beginning of the repository section. After creating it on GitHub, copy its URL into the **New repository URL** dialog in Settings and select **Check repository**. Creating it does not grant App access, and checking does not connect or initialize it; review and confirm the offered action separately.
-
-### A checked repository is ready but not connected
-
-Discovery and inspection never write to GitHub or connect new repositories locally. After a ready check, choose **Connect repository** and confirm; Clockoli revalidates and registers it locally without changing repository files.
-
-If Clockoli offers **Set up storage branch**, **Join repository**, or **Initialize repository** instead, read the privacy disclosure and **Repository writes**, then explicitly confirm the offered action. Even **Set up storage branch** may create or verify your personal storage branch. Invalid branch ownership or task-index data must be repaired before use.
-
-### Check an edited repository target before connecting
-
-Editing **Invitation link, repository URL, or owner/name** invalidates the previous selection and confirmation. Select **Check** (or press Enter) to inspect the edited target; leaving the field does not trigger a check. Resolve any displayed availability reason, then review and confirm the newly selected repository. Background discovery does not confirm writes for you.
-
-### Finish setup is unavailable
-
-**Finish setup** stays unavailable while authorization or the default repository is unresolved.
-
-- Choose a usable connected repository in the separate **Default time repository** selector.
-- If an account-level message says a new GitHub authorization is blocked, follow it. New or replacement authorization is accepted automatically only for the same GitHub identity after every configured repository passes read-only validation and no active or queued work could be stranded. There is no per-repository confirmation action.
-
-Finishing stops background checks and clears the remembered target without writing to GitHub.
-
-### Repository validation fails
-
-Clockoli rejects unsafe destinations. Common causes are:
-
-- public repository;
-- missing user write permission;
-- missing App Contents-write permission;
-- incompatible `.clockoli`, `active`, or `times` content;
-- a marker created by an unsupported format;
-- branch rules or a ruleset that rejects direct writes;
-- repository renamed/transferred or branch removed while setup was open.
-
-Use a dedicated private repository with direct authenticated writes. Do not delete an existing marker or reserved content merely to bypass validation; inspect the reported incompatibility first.
-
-### Organization approval is pending
-
-An organization owner may need to approve the GitHub App installation or repository grant. Clockoli cannot bypass that policy. After approval, return to Settings; Clockoli rechecks a remembered target when its grant becomes available. Use the field's **Check** button to retry explicitly if needed.
+A repository labeled **Ready — not connected** still requires **Connect repository**. Other offered actions, such as **Initialize repository** or **Join repository**, require your confirmation and may write setup files. See [Time repositories](time-data-repository.md#connect-a-repository).
 
 ### I cannot initialize an organization repository
 
-Organization-owned repository initialization requires GitHub repository-admin permission, rechecked from fresh repository permissions before the confirmed write. A previously available initialization action does not preserve permission after it is revoked. If you are an ordinary teammate, ask a repository administrator to initialize the dedicated repository and send the generated setup instructions. Then choose it from autocomplete or enter its URL or `owner/name` and select **Check** (or press Enter). Review the offered action and explicitly confirm **Join repository**; joining works only when the repository already has a valid Clockoli marker.
+Ask an administrator to initialize it and give you write access. Then use **Join a team**, check the repository, and confirm the offered join action. Organization initialization requires GitHub repository-admin permission.
 
-### Fine-grained PAT setup fails
+### Finish setup is disabled
 
-Confirm that the token:
+Complete any pending GitHub authorization and select a usable connected default time repository. If authorization replacement is blocked, follow the account-level error before trying again.
 
-- belongs to the same GitHub account you intend to use;
-- is restricted to the configured private data repository;
-- has **Contents: Read and write**;
-- can read the exact owner/repository and branch;
-- is permitted by organization SSO and policy.
+### PAT setup fails
 
-Do not paste the token into issues, screenshots, logs, or documentation.
+Use a fine-grained token for the correct private repository with **Contents: Read and write**. Check the repository and branch name, account, and organization policy. Never share a token in an issue or screenshot.
 
 ## Tracking
 
-### Start is disabled
+### I cannot start a timer
 
-Start is unavailable when:
+Finish setup first. The page must use HTTP(S), and another unresolved tracking operation can block a new Start. If a task is already running, select **Switch to this task**.
 
-- setup is incomplete;
-- the active tab is not HTTP(S);
-- the requested Start cannot be safely ordered behind active or conflicted work.
+### A timer ran for too long
 
-Open Activity for details. Choose **Switch to this task** when another task is running. If Activity says a stopped entry is still waiting to sync, restore GitHub access and wait for the automatic retry, or resolve the conflict it shows.
+Clockoli asks for confirmation before saving time over 12 hours. Check the duration, correct the start if needed, then save.
 
-### Another task is already running
+### A task is missing or has no title
 
-The active timer's canonical URL differs from the page you opened. Choose **Switch to this task** in the **From current page** banner, or **Switch to this page** in the quick popup. Clockoli queues completion in the active timer's time repository before starting in the destination selected for the current URL.
-
-### The stopwatch is only on GitHub
-
-The GitHub stopwatch is a shortcut that opens Clockoli. On another site, select the Clockoli toolbar icon and choose **Track this task** in the **From current page** banner. The page must use `http:` or `https:`.
-
-### A GitHub notification link created unexpected task behavior
-
-Clockoli canonicalizes GitHub issue/PR URLs by removing query strings and fragments. The stored task should be the base issue or pull-request URL. Generic non-GitHub query strings are preserved because they may identify different work.
-
-### A long timer asks for confirmation
-
-Clockoli warns before saving an entry longer than 12 hours. This catches forgotten timers but does not reject them. Verify the duration, choose to save, or edit the time first.
+In **Top tasks**, check the period and search. Titles are optional; GitHub metadata may be unavailable even when the URL can still be tracked.
 
 ## Synchronization and conflicts
 
 ### Activity cannot reach GitHub
 
-Check your connection to GitHub and choose **Retry** in Activity when access returns. GitHub API requests have a 30-second timeout per attempt; a timeout is reported separately from a refused network connection. A read failure does not clear locally accepted timers or queued work. Other Activity load errors show technical details instead of assuming the network is offline.
+Check connectivity and GitHub access, then select **Retry**. The local timer and queued edits remain available while GitHub reads fail. Rate limits and request timeouts are reported separately.
 
-### A stopped entry is still waiting to sync
+### A stopped entry is waiting to sync
 
-Clockoli has preserved the Stop operation in extension-local storage but could not finish the GitHub write yet. You can start another timer locally while the previous Stop waits in the queue; dependent GitHub writes follow it in order.
+Clockoli has saved the Stop locally, but GitHub has not accepted it yet.
 
-Activity shows **Not tracking** after a locally accepted Stop, even while its GitHub write is queued. Only an actionable conflict changes this to **Stop needs attention** and offers review in Activity. The Stop has already been accepted locally: do not press Stop again or delete the extension to clear it.
+1. Keep the extension installed and its browser data intact.
+2. Restore connectivity or repository access.
+3. Allow the automatic background retry. There is no manual Sync button.
+4. If Activity reports a conflict, select **Review sync issues**.
 
-- Keep the extension installed and do not clear its data.
-- Restore network/repository access.
-- Wait: queued writes are pushed after 15 seconds without new changes, and Clockoli also retries at startup and approximately once per minute. There is no manual Sync button.
-- If Activity shows **Retry** or another recovery action, follow it.
-- If a conflict appears, review it in Activity from any view; never discard an unsaved completion until you have verified the time is recorded elsewhere.
+A cross-repository task switch may wait for the earlier Stop to finish before the new Start reaches GitHub.
 
-See [Sync and offline work](sync.md) for the full model.
+### Sync keeps failing or an entry overlaps another
 
-A conflicted source completion can pause a dependent cross-repository Start until the conflict is resolved. Do not clear local data while either operation is queued.
+Open **Activity → Review sync issues**. Check the saved GitHub entry or active timer against the pending change. Use the offered **Retry** or edit action; discard only after confirming that you no longer need the queued time.
 
-### Sync keeps failing
+Common causes include changed GitHub permissions, branch rules, a renamed repository, a file changed on another device, or overlapping time.
 
-Check:
+Overlaps are real intersections in time; intervals that only touch at one endpoint are allowed. A running timer can overlap a completed entry even when the two track the same task.
 
-- network access to GitHub;
-- GitHub API/rate-limit status;
-- current user authorization;
-- GitHub App repository grant;
-- repository visibility and archived/disabled state;
-- user write permission and branch rules;
-- whether the repository was renamed or transferred;
-- whether another person manually changed the relevant active/monthly file.
-
-Clockoli classifies authentication, access, destination, rate-limit, network, validation, and conflict failures differently. Follow the action Clockoli shows rather than repeatedly reconnecting for a transient error.
-
-### Clockoli preserved a newer timer
-
-Another browser or device changed the remote active timer before this completion finished. Clockoli does not delete a newer timer from a stale Stop. Inspect the pending conflict and repository history before choosing a recovery action.
-
-### The active timer is missing and no completion exists
-
-Clockoli could not prove that the timer was completed. It reports the missing-active state rather than inventing a record. Inspect `active/`, the represented monthly file, and Git history before resolving the pending operation.
+For complex pending Start/Stop conflicts and exact recovery actions, see [Advanced sync recovery](sync-recovery.md). For the general model, see [Sync and offline work](sync.md).
 
 ## Editing time
 
-### Scrolling does not change a time value
+### Changing one row changed a neighboring row
 
-This is intentional. Wheel and trackpad gestures scroll the page normally and never mutate Start or Stop. Type the hour or minute directly in the always-visible fields of the unified inline draft. Clockoli does not show `−`/`+` step controls. Choose **Save time** to persist the draft.
+In Activity List, moving a Start into the previous entry or an End into the next entry can move that neighboring boundary too. Review the preview before selecting **Save time**, or select **Cancel**.
 
-### Editing one row changed a neighboring row
+### An edit or deletion says the record changed
 
-Clockoli maintains the chronological boundary between adjacent records:
+Refresh Activity and review the latest entry. Clockoli refuses to apply an edit or delete to a stale GitHub record.
 
-- moving Start into the previous interval moves the previous Stop;
-- moving Stop into the next interval moves the next Start.
+### Timeline or Calendar cannot display a week
 
-Activity updates both rows immediately and saves them as one atomic operation. Choose **Cancel** before saving if that is not the intended correction.
+Existing overlapping entries may make the view unreadable. Select **Go to List**, correct the intervals, and refresh. Do not assume the entries are missing.
 
-### “Overlaps another entry” remains visible
+### A manually changed GitHub file cannot be read
 
-The represented intervals still intersect after correction. Endpoint-touching records are allowed, but time shared by two intervals is highlighted. Adjust the boundaries in the unified inline draft.
-
-### Timeline says a completed entry overlaps the running timer
-
-This can happen even when both records track the same task: they are separate time intervals. The error shows the running timer's **Start** in its recorded timezone and as an exact UTC timestamp. An edit whose completed **End** is later than that Start is rejected before it is queued or saved; an End exactly at Start is allowed. A running timer is not a completed entry in List, so List alone may not reveal the overlap. If Activity says **Not tracking** while this error appears, check **Activity → List** for pending local changes or a queued conflict and follow the offered recovery action. A locally accepted Stop may still be waiting to remove the remote active timer; queued writes retry automatically when access is restored. Do not clear local data or discard a pending write to make the edit pass; first verify what the remote active record and pending operation represent. After synchronization, refresh Activity and retry. Existing overlaps are not silently shortened or deleted.
-
-Activity does not show a warning just because a remote timer differs from local tracking. A completed row's **Start tracking** / **Stop tracking** control refers to the task URL, not to the row's historical interval: multiple rows for the same task can all offer Stop while one local timer for that task is running. If a write produces a conflict, review its pending operation and verify the completed time before taking any destructive recovery action.
-
-### Inline edit or Delete reports a stale or changed record
-
-The monthly file changed after Activity loaded. Refresh Activity, review the latest record, and repeat the intended action. Clockoli refuses to retarget an edit or delete by array position alone.
-
-### A manually edited file cannot be read
-
-Clockoli parses the entire monthly file and does not silently skip malformed lines. Check that:
-
-- each non-empty line is one valid JSON work record with `schema_version` equal to `1`;
-- record IDs are unique and unchanged;
-- work-item URLs are canonical HTTP(S) URLs without embedded credentials;
-- timestamps are UTC ISO 8601 values ending in `Z`, with a valid IANA `timezone`;
-- `local_date` falls in the monthly path's `times/YYYY-MM/` partition;
-- no record is duplicated across branches or monthly files;
-- `.clockoli/tasks.json` matches the completed records.
-
-See [Validation and manual editing](time-data-repository.md#validation-and-manual-editing) and the [data format reference](data-format-v1.md). Use Git history to compare with the last valid version.
-
-## Tasks
-
-### A tracked task is not listed
-
-Check the selected period and URL/title filter. **Top tasks** is current-user-only and reads entries whose Start date is in the selected period. Clear the filter when looking for a task whose optional GitHub title is unavailable.
-
-### A GitHub task has no title
-
-Title enrichment can be unavailable because of repository visibility, permission, API budget, or a temporary request failure. The stored URL and existing title remain usable.
+Check that its JSONL records are valid, IDs are unique, timestamps and monthly paths agree, and `.clockoli/tasks.json` matches the completed records. Use [Data format v1](data-format-v1.md) and Git history to repair it.
 
 ## Reports and billing
 
-### A report is empty
+### A report is empty or incomplete
 
-- Confirm the inclusive Start/End date range.
-- Reports includes a record according to its Start date.
-- Clear the **People**, **Projects**, **Sources**, or **Time repositories** filters that exclude the data.
-- Confirm the intended time repositories are selected and team members have valid personal branches.
-- Check whether each selected repository can list and read those branches.
+Check the date range, People, Projects, Sources, and Time repositories filters. Reports includes entries by their **Start date**. If a repository could not be read, the result is partial and exports are disabled. Try a shorter period if Clockoli reports a read limit.
 
-### A report says some time repositories could not be loaded
+### Billable amount is missing
 
-Clockoli keeps records from destinations that loaded successfully and marks the result partial. Review the per-repository status and restore access or retry. Conflicting copies of the same record ID are omitted and also make the result partial. The CSV, JSON, PDF, and Print exports remain disabled until the selected result is complete and conflict-free.
+In **Settings → Billable rates**, select the correct client, add rates for the relevant GitHub users, and check each rate's effective dates. In Reports, check **Calculate amounts using**. Rates belong to clients and are stored only in this browser.
 
-### Reports says to choose a shorter period
+### Exports or invoice output are disabled
 
-Clockoli enforces bounded file, byte, and record budgets so one report cannot make unbounded authenticated requests. Choose a shorter period and load again.
-
-### Billable amount is zero or incomplete
-
-Open Settings and:
-
-- in **Billable rates**, select the client the work is billed to;
-- assign hourly rates to the required GitHub users within that client;
-- check that each rate covers the relevant entry dates;
-- save the client's rates;
-- export an updated local settings backup.
-
-In Reports, check **Calculate amounts using**: **Each project's client** applies the rates of each project's client, while a named client applies that client's rates to all visible work.
-
-Rates are local to the current browser. They are not read from the shared repository or synchronized from a colleague's browser.
-
-### CSV/JSON and the screen differ
-
-Downloads use the currently loaded report, date range, facets, and local rates. Reload after changing settings or repository data, then download again.
+Reload Reports after data or settings change, and resolve pending writes or incomplete repository reads. Clockoli blocks final output when it cannot verify that the selected data is complete.
 
 ## Clockify migration
 
-### Migration controls are missing from the Detailed Report
+### Import controls are missing
 
-Enable the Clockify add-on in Clockoli Settings and grant its optional `https://app.clockify.me/*` permission. Open Clockify's Detailed Report page in an authenticated tab and reload it after changing add-on permissions or reloading the extension. The banner should offer **CSV migration** and **Page to page migration**. See [Clockify migration](add-ons.md#clockify-migration) for the capture and mapping steps.
+Enable Clockify migration under **Settings → Add-ons**, approve the optional permission, and refresh an open authenticated Clockify **Detailed Report** tab.
 
-### The CSV capture cannot finish
+### CSV capture cannot finish
 
-Clockoli uses Clockify's native **Save as CSV** export after scanning report years. If Clockify offers email delivery instead of a CSV download, Clockoli re-requests the same annual report and tries again. If the email-only screen appears three times for that year, CSV migration stops with `CSV_EMAIL_EXPORT_UNAVAILABLE` and suggests **Page to page migration**, which captures displayed pages without requesting a CSV download. Previously captured years are not imported from an incomplete capture. If the email prompt cannot be closed or a retry cannot be recorded, Clockoli stops rather than retrying without a bound. If the banner cannot find Export or its CSV option, check that the Detailed Report finished loading and retry from that tab. No separate file upload is available.
+Clockify may offer email delivery instead of a direct CSV export. After repeated email-only responses, Clockoli suggests **Page to page migration**. Start that option from the Detailed Report tab rather than trying to upload a separate CSV.
 
-### The preview is missing or an import was not completed
+### The preview expired or an import was interrupted
 
-Wait for the year capture to finish, then review each person and entry count.
+Previews expire after an hour. Re-capture the report if a preview was never confirmed. If an import was already started, reopen its preview to review saved progress and per-person outcomes before attempting another import.
 
-- Map each included Clockify person to a verified GitHub account, even if that account is not yet a collaborator on the default time repository. Leave **Skip this person** selected for everyone you do not want to import.
-- Confirm the mappings and select **Import completed time**.
-- A preview expires after one hour, so recapture from Clockify if it is unavailable.
-- Review the per-person outcome: **Already present** means no new write was needed; a failure or conflict is not an import. Follow the displayed recovery message and retry only after resolving it.
+**Already present** means no duplicate write was needed. An import paused by a GitHub rate limit retries automatically. If your GitHub identity or repository changed, restore the original connection or use **Edit GitHub mappings** from the saved job when offered. Do not clear extension data while an import is pending.
 
-Reopening a completed preview can show its retained outcome without rerunning the import. Invitations to the default repository are optional and require a separate confirmation after successful migration.
+See [Clockify migration](add-ons.md#clockify-migration).
 
-### An import is still running
+## Settings and data safety
 
-After confirmation, Clockoli saves the source report and mappings as a local pending job before removing the one-hour preview. Confirmation returns as soon as the job is saved, so tracking and synchronization remain available while the import runs separately. It checkpoints each person's outcome, then atomically replaces the job with the final result.
+### A settings import did not reconnect GitHub
 
-If the extension worker stops, an extension alarm resumes unchecked people; a person interrupted during an uncertain GitHub write is re-read from the destination before importing again. You can close and reopen the preview to see saved progress. This local job contains the report's time records and mappings, but no credentials; do not clear extension data while an import is pending. Keep the extension installed and enabled for its alarms to run. Do not recapture and re-import a pending job; review its retained outcome when it completes.
+This is expected. Backups exclude tokens, running timers, pending writes, and tracked time. Import restores supported preferences and routes only for repositories already connected in this browser. Reconnect GitHub separately if needed.
 
-### The import paused
+### I want to disconnect or clear data
 
-If GitHub returns a rate limit during repository preflight or an active import, the migration saves the retry deadline, pauses GitHub requests, and retries after the reset (or a one-minute fallback when no valid reset is provided). Repeated throttling leaves the current person unchecked and retries on a later alarm rather than recording a failed import.
+**Disconnect repository** removes the local connection, not its GitHub records. **Sign out on this browser** does not revoke the GitHub authorization. **Clear all local Clockoli data** removes unsynced work as well as local settings and credentials; use it only after confirming everything has synchronized.
 
-If you change the connected repository, GitHub identity, or authorization, the job remains paused; a routine GitHub App token refresh under the same authorization does not pause it. When the original connection cannot be restored, or a mapped GitHub login cannot be verified:
+## Report a bug
 
-1. Wait for any request still in flight to settle.
-2. Reopen the preview and choose **Edit GitHub mappings**. Clockoli atomically restores the saved report to a new, time-limited preview.
-3. Review all mappings before importing again: records already written to GitHub remain there.
+Include the browser and Clockoli version, where the problem happened, the exact error, and whether any time was still pending. You may include a redacted repository path or Git commit SHA.
 
-### DevTools shows 404 for monthly files
-
-A `404 Not Found` for a monthly `times/YYYY-MM/<login>.jsonl` file is not a rate limit: it can mean that person has no Clockoli records for that month yet. DevTools' **Name** column hides the `YYYY-MM` directory, so requests for different months may look identical; inspect each request's full URL to distinguish them. Clockoli checks the branch file tree before reading affected months and skips Contents requests for months that are absent. Existing files are still read and checked before a conflict-safe write.
-
-## Configuration and data safety
-
-### I cannot change repository or authentication mode
-
-Clockoli blocks transitions that could strand active or pending work. Stop active timers and synchronize or resolve every pending entry first.
-
-### Signing out did not revoke GitHub access
-
-**Sign out on this browser** removes local sign-in. **Revoke GitHub sign-in** opens GitHub's authorization settings, where you can remove Clockoli's sign-in approval. Changing the GitHub App installation and deleting repository data are separate GitHub/administrative actions.
-
-**Clear all local Clockoli data** removes local settings, credentials and unsynced local state. Stop running timers and finish synchronization before clearing. Repository data and GitHub sign-in approval are not deleted.
-
-### Settings import did not reconnect GitHub
-
-This is intentional. A settings JSON backup excludes credentials. It can carry destination references, the exported default destination, and project routes, but import restores project routes only for destinations already configured in this browser. References remain unverified, and the imported default does not replace this browser's current default. Add any missing repository first. Import does not inspect repositories or reconnect GitHub. Before connecting, open **More settings** → **Backup & restore** to reach **Import settings**.
-
-### A task went to the wrong time repository
-
-Projects are checked top to bottom with case-insensitive URL-substring matching; the first match wins. Unmatched URLs use the explicit default. Reorder or correct the rules for future Starts. A running timer or queued write remains pinned to the destination chosen when Clockoli accepted it. See [Projects and routing](projects-and-routing.md).
-
-## Collecting a useful bug report
-
-Include:
-
-- Clockoli commit or package identity;
-- browser name and version;
-- the visible error text and recovery action;
-- where it happened: the GitHub stopwatch, the quick popup, Top tasks, Activity, Reports, or Settings;
-- whether a timer or pending write existed;
-- redacted repository owner/name if needed;
-- relevant Git path and commit SHA when safe.
-
-Never include Device Flow codes, access tokens, refresh tokens, PATs, authorization headers, or exported local rate settings unless you deliberately intend to share them.
+**Never include** access tokens, device codes, authorization headers, or private settings backups.

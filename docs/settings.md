@@ -1,124 +1,118 @@
 # Settings
 
-Settings sections in order: account, repositories, display, toolbar button, routing, merge tasks, add-ons, clients, rates, invoicing, backups, and advanced.
+Settings controls your GitHub connection, time repositories, interface, project routing, billing preferences, and local backups.
 
-![The top of Settings: the GitHub account card and the connected time repository](images/settings.png)
+![Settings showing the GitHub account and connected repository](images/settings.png)
 
-The welcome screen opens after first installation. Until you connect a time repository, it shows just the GitHub sign-in and repository setup steps; the usual navigation and preferences are hidden. Once setup is complete, open Settings from the **Settings** tab at the top of Activity, Top tasks, and Reports, or from the extension details page.
-
-**Save projects and routing**, **Save billable rates**, and **Save invoicing settings** each show success or an error beside their own button. After a settings change, a reminder suggests exporting an updated backup; it appears once per page load and, after exporting, does not show again until you reopen or reload Settings.
+The welcome screen appears until you connect your first time repository. Once setup is complete, open **Settings** from Clockoli's page navigation.
 
 ## GitHub account
 
-The connection card handles GitHub sign-in and the first time repository; see [Getting started](getting-started.md#step-1-sign-in-with-github). Before setup is complete, Settings focuses on this card. When connected, its single status badge appears opposite the **GitHub account** heading, above the account name.
+Use this section to sign in, renew your connection, or **Sign out on this browser**.
 
-If a running timer prevents changing GitHub authentication, a compact warning appears inside the **GitHub account** card, after the account summary and before the account action buttons—not again in **Time repositories**. Stop the timer before retrying; your current connection and time repositories remain in place.
+Signing out removes local credentials but does not revoke GitHub authorization, uninstall the Clockoli App, or delete time in your repository. If a running timer or queued write would be put at risk, Clockoli blocks unsafe account changes.
 
-**Sign out on this browser** removes local sign-in while preserving local tracking data and the repository configuration. It does not revoke GitHub sign-in, change the GitHub App installation, or delete repository data.
+For initial setup, see [Getting started](getting-started.md).
 
 ## Time repositories
 
-Each connected repository has a card with its status, a **Default** badge for the default destination, an **Invite teammate** button where supported, and a **Team** section showing GitHub collaborators, pending invitations, and verified Clockoli storage readiness. Inviting checks GitHub administrator and App permissions before opening user search. The card also has these actions:
+Each connected repository offers **Check access**, **Open repository**, **Manage GitHub access**, **Make default**, and **Disconnect repository**.
 
-- **Check access** rechecks the repository's access and storage.
-- **Open repository** opens it on GitHub.
-- **Manage GitHub access** opens the App installation or repository access settings.
-- **Make default** makes it the destination for tasks that match no project.
-- **Disconnect repository** removes this repository's connection from Clockoli in the current browser. Tracked time and the GitHub repository are not deleted, and other team members are unaffected. You can reconnect later. Clockoli asks for confirmation and blocks disconnection if it would strand active or pending work.
+Disconnecting affects this browser only. It does not delete GitHub data or change another teammate's access. You cannot disconnect while it would strand running or unsynced work.
 
-**Add time repository** opens the connection form and scrolls **Connect time repositories** to the top of the page. It adds another destination regardless of who owns it; adding never deletes records in existing repositories. See [Time repositories](time-data-repository.md) for requirements and [Work as a team](teams.md) for invitations and avatars.
+Select **Add time repository** to connect another destination. Repository cards also show collaborator and invitation controls when you have the required permissions.
+
+See [Time repositories](time-data-repository.md) and [Work as a team](teams.md).
 
 ## Interface width
 
-Choose whether Activity, Reports, and Top tasks use a centered column (default) or the available screen width. Settings always keeps its centered column (up to 1280px), and its tracking bar does not switch to full width there. This device-local preference is not included in repository data or settings exports.
+Choose a centered layout or use the available screen width for Activity, Reports, and Top tasks. This preference stays in the current browser and is not included in settings backups.
 
-![Interface width set to Within a centered column, and Toolbar button set to Open Activity in a new tab](images/interface-settings.png)
+![Interface width and toolbar behavior settings](images/interface-settings.png)
 
 ## Toolbar button
 
-Choose what clicking the browser toolbar icon does:
+Choose what happens when you select the extension's toolbar icon or the Clockoli stopwatch on GitHub:
 
-- **Open Activity in a new tab** (default): reuse the Activity tab and pass the clicked page's task context to it.
-- **Open quick popup**: show a lightweight tracker with start/stop, the running timer, an editable running description (saved with Stop and save, or earlier with Enter or blur; Shift+Enter adds a line), four recent entries, and an **Open Activity in a new tab** button for the full view. The popup has no menus, Timeline, Calendar, or List controls. The popup closes automatically when focus moves elsewhere.
+- **Open Activity in a new tab** (default): opens or focuses Activity and passes the current page's task URL.
+- **Open quick popup**: shows a small tracker with the current timer, description, recent entries, **Stop and save**, and **Open Activity in a new tab**.
 
-The choice applies immediately and survives browser and extension worker restarts. It stays on this browser and is not included in GitHub data or exported settings. Before setup is complete, opening Clockoli takes you to Settings; the quick popup offers **Set up Clockoli** instead.
+The popup has no Timeline, Calendar, or List controls. **Open Activity in a new tab** remains visible even when entries scroll. On GitHub, opening a popup requires Chrome 127+; other supported versions fall back to Activity.
 
-The Clockoli button shown on GitHub pages uses the same choice. When set to quick popup, it opens the browser action popup where supported (Chrome 127+); if the browser cannot open it, Activity is the fallback. In the quick popup, the **Open Activity in a new tab** button stays visible while entries scroll.
+The choice stays in this browser. Until initial setup is complete, Clockoli sends you back to Settings or offers **Set up Clockoli**.
 
 ## Projects and routing
 
-Ordered URL rules choose the time repository for each new Start. See [Projects and routing](projects-and-routing.md).
+Choose a default time repository and optional client for unmatched URLs, and create ordered project rules for other destinations. See [Projects and routing](projects-and-routing.md).
 
 ### Activity display
 
-**Recent entries shown in the main panel (days)** accepts 1 to 31 days; the default is 7. This changes display only; it does not limit tracking, Top tasks, Activity, or Reports. It is saved with **Save projects and routing**.
+**Recent entries shown in the main panel (days)** accepts 1–31 days (default 7). It only affects the recent-entry display, not the full Activity, Top tasks, or Reports history. Save it with **Save projects and routing**.
 
 ## Merge tasks
 
-Merge tasks replaces one task identity with another in one time repository, for example an imported Clockify task with its real GitHub issue URL.
+Use **Merge tasks** to combine records tracked under two task identities, such as a Clockify import and its GitHub issue.
 
-1. Choose the **Period** (Last 30 days, Last 3 months, or **All time**), the **Time repository**, and the people whose records to include. Use **All time** if the imported entry falls outside the default last 30 days. The People control shows selected accounts with their repository collaborator avatars when available, or initials otherwise; open it to filter or change the selection.
-2. In **Task to replace**, search by title or identity and select the task. An imported `owner/project/task-slug` identity can be selected.
-3. In **Replace with**, select the replacement. It must be an already-tracked HTTP(S) URL in that selection.
-4. Repeat to build the **Merge list**, review it, and select **Merge**.
+1. Choose the **Period**, **Time repository**, and **People**. Select **All time** if older entries are involved.
+2. Choose a **Task to replace**.
+3. Choose an existing HTTP(S) task in **Replace with**.
+4. Review the **Merge list** and select **Merge**.
 
-![Merge tasks: Period, Time repository and People filters above two task lists, Task to replace and Replace with, and the Merge list with its Merge button](images/merge-tasks.png)
+![Merge tasks with a task to replace and replacement](images/merge-tasks.png)
 
-The merge rewrites matching records in the selected period and preserves their prior identities in record history. The full merge list is saved in one atomic commit. Merge tasks is an explicit GitHub operation, not part of the background sync queue.
+Merge updates the selected records in one Git operation. It is not part of the ordinary background sync queue.
 
 ## Add-ons
 
-Enable packaged integrations, such as Clockify migration, after reviewing their requested access. See [Add-ons and Clockify migration](add-ons.md).
+Enable packaged integrations, including [Clockify migration](add-ons.md), and review their optional permissions before enabling them.
 
 ## More settings
 
-Clients, client-specific rates, invoicing, backups, and advanced options follow on the same page. Before you connect GitHub, they are collapsed under **More settings**.
+During onboarding, these sections appear under **More settings**. After setup, they are available on the Settings page.
 
 ### Clients (invoice recipients)
 
-Create and save each client before adding rates. One business may invoice multiple clients; clients can be used for reporting without filling in invoice details.
+Create clients for reports, rate cards, and invoices. Billing contact details are optional if you only need reports.
 
-![Clients (invoice recipients) with one client, Acme Corp, and its email, address, tax ID and default currency fields](images/clients.png)
+![Client fields](images/clients.png)
 
 ### Billable rates
 
-Select a client to manage its private GitHub-user rates and effective dates. Choose a connected time repository to suggest its collaborators in the GitHub user field; manual logins remain available. There are no global rates. See [Billable rates](billable-rates.md).
+Each rate belongs to a client and can have effective dates. Rates stay local to this browser. See [Billable rates](billable-rates.md).
 
 ### Invoicing
 
-**Your business details**, multiple bank accounts with an optional default, numbering, payment terms, tax, and notes. Client details are managed in **Clients (invoice recipients)** above. Choose the bank account for each invoice in Reports, or omit bank details. See [Invoicing](invoicing.md).
+Configure your business details, payment accounts, invoice numbering, due dates, taxes, and notes. See [Invoicing](invoicing.md).
 
 ### Backup & restore
 
-![Backup & restore with the Export settings and Import settings buttons and a collapsed What is included? section](images/backup.png)
+![Settings backup and restore controls](images/backup.png)
 
-**Export settings** downloads a readable JSON backup of your local settings; **Import settings** restores one. Export a new backup after changing local settings. It can contain sensitive rate and customer information, so protect the downloaded file. It includes:
+**Export settings** downloads a JSON backup of local preferences, project routing, client records, billable rates, invoicing details, and credential-free repository references.
 
-- recent-entry and reporting preferences;
-- project rules and client assignments;
-- each client's hourly rates and currencies;
-- invoicing details such as your business, clients, bank accounts, and payment terms;
-- credential-free repository references and, for routed installations, the default destination.
+Backups **exclude** GitHub credentials, active timers, pending writes, time records, and caches. Activity view, interface width, and toolbar behavior are also browser-specific rather than included in the backup.
 
-Backups contain client-specific rate cards but exclude credentials, device codes, active timers, pending writes, and tracked time. The Activity view, interface width, and toolbar click preferences stay on this browser and are not included. See [Settings backup exclusions](data-and-privacy.md#settings-backup-exclusions).
+**Import settings** validates the file and restores supported settings. Repository routes can be restored only for destinations already connected in this browser; import does not connect GitHub, verify access, add repositories, or replace the current default automatically.
 
-Import validates the entire file and restores routes to destinations already configured in this browser. It reports missing repositories and their routes as not restored; other eligible routes can still be restored. A reference in the backup does not verify current access, and the imported default does not replace this browser's current default. Import does not test access, add a repository, or reconnect GitHub, so add any missing repository first. Before connecting, **Import settings** is reachable through **More settings** → **Backup & restore**.
+Backups may contain confidential client, rate, and bank details. Store them securely, and export a new backup when you change those settings.
+
+See [Settings backup exclusions](data-and-privacy.md#settings-backup-exclusions).
 
 ### Advanced
 
 #### Diagnostics
 
-**Show queue diagnostics in the tracking panel** shows a local, sanitized operation log for troubleshooting save problems. Diagnostics are hidden by default and start collapsed when shown.
+**Show queue diagnostics in the tracking panel** displays a local operation log for investigating sync issues. Leave it disabled unless you are troubleshooting.
 
 #### Use a personal access token
 
-A single-repository alternative when the GitHub App cannot be installed. See [Advanced PAT setup](getting-started.md#use-a-personal-access-token-instead).
+A single-repository alternative if the GitHub App cannot be used. See [PAT setup](getting-started.md#use-a-personal-access-token-instead).
 
 #### Recovery and access
 
-- **Clear all local Clockoli data** removes local settings, credentials, and unsynced local state from this browser. Stop any running timer and let pending changes synchronize before clearing. Repository data and GitHub sign-in approval are not deleted.
-- **Revoke GitHub sign-in** opens GitHub's authorization settings, where you can remove Clockoli's sign-in approval. It does not uninstall the App or delete repository data.
+- **Clear all local Clockoli data** removes local settings, credentials, and **unsynced work** from this browser. Stop timers and verify synchronization first.
+- **Revoke GitHub sign-in** opens GitHub settings to revoke Clockoli's user authorization. It does not uninstall the GitHub App or delete repository records.
 
 ## Appearance
 
-Use the appearance control beside the Clockoli logo on Clockoli pages to switch between light and dark themes. The moon switches to dark; the sun switches to light. The choice is saved locally and shared with other extension pages and the toolbar popup. Before choosing, Clockoli follows the browser's color scheme. Appearance preferences are not written to GitHub.
+Use the sun/moon control on Clockoli pages to switch between light and dark themes. The choice stays local and is shared across the extension's pages and popup.
