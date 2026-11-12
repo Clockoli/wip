@@ -11,6 +11,8 @@ There are no global, default, or shared rate cards. Clients, rate cards, and inv
 3. Enter the rate and currency (such as `100.00 USD` or `€55.50`), optionally set effective dates, then **Save billable rates**.
 4. Repeat for each client. One person can have different rates for different clients.
 
+![Billable rates in Settings for the client Acme Corp: an hourly rate and currency for each GitHub user, with optional start and end dates](images/billable-rates.png)
+
 Dates are inclusive and stored with each rate period; rates use integer minor currency units. A missing employee or uncovered period is **Unrated**: Clockoli does not substitute a rate from another client.
 
 ## Reports

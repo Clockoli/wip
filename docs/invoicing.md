@@ -8,6 +8,8 @@ Invoices are generated in the browser from your time records and local settings.
 
 Open **Settings** → **More settings** → **Clients (invoice recipients)** to save each client, then use **Billable rates** to configure that client's rates. Keep **Add client**: one business or freelancer can invoice several clients. The separate **Invoicing** section holds **Your business details**, bank details, invoice numbering, payment terms, and tax defaults used for invoice previews. Select **Save invoicing settings**; success or an error appears beside the button. Invoicing needs [billable rates](billable-rates.md) **on the selected client** for the people you bill. Rates from other clients are never substituted.
 
+![The Invoicing section in Settings: your business details, a bank account, and invoice numbering, payment terms and tax defaults](images/invoicing-settings.png)
+
 Client details can be left empty when a client is used only for reports. Clients can own [projects](projects-and-routing.md).
 
 Saving does not replace unexpected characters in names, addresses, bank details, or notes. If pasted text contains a tab or another unsupported control character, the error names the section and field (and bank account number where applicable), the character, and its position. Correct the draft and save again; ordinary spaces and line breaks in multiline fields are allowed.
@@ -27,6 +29,8 @@ Payment terms can range from 0 to 365 days. The Notes field supports line breaks
 1. Open **Reports** and filter it: the selected period, people, projects, and sources define what is billed.
 2. Choose **Create invoice**.
 3. Choose a client, bank details (if needed), and currency, review the preview, then choose **Print** or **Save as PDF**.
+
+![The Create invoice dialog with its client, bank details and currency choices above the invoice preview](images/invoice.png)
 
 Each invoice uses one target currency. When effective-dated rates change within the period, Clockoli keeps the corresponding invoice lines separate; when the covered records use multiple currencies, it converts each entry using the exchange rate for that entry's date. Unrated time remains visible as not billed.
 

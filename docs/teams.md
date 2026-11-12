@@ -41,6 +41,8 @@ Each connected repository has a **Team** section. The list initially shows up to
 - **GitHub access granted** — GitHub permits access, but Clockoli storage readiness has not been verified.
 - **Clockoli storage ready** — a registered stable GitHub ID has a matching personal branch with valid ownership metadata and a valid task index. This confirms storage preparation, not extension installation or recent activity.
 
+![A connected time repository card in Settings with its Team section: three collaborators with Clockoli storage ready and one pending GitHub invitation](images/team.png)
+
 This distinction matters: GitHub repository access is not the same as joining Clockoli. If a storage check is inconclusive, Clockoli keeps the GitHub-access state instead of claiming the user has joined. Email-only invitations have no GitHub account avatar and are not shown; the pending lookup scans up to five pages. A failed collaborator read shows “Collaborators unavailable”.
 
 ## Remove access

@@ -22,6 +22,8 @@ The toolbar icon works from any HTTP(S) page. The Clockoli icon added to GitHub 
 3. In the **From current page** banner, choose **Track this task** (or **Switch to this task** when another timer is running).
 4. When you finish, choose **Stop and save** in Activity.
 
+![Activity after a toolbar click on a support ticket: the From current page banner offers Switch to this task above the running timer](images/activity-from-current-page.png)
+
 The toolbar icon and the GitHub icon hand off only the validated source-page URL and title. It uses one-use privileged IndexedDB (cleared when Activity reads it), not query parameters. Opening Activity directly does not reuse an old task. Dismiss the source URL with **×** without affecting your timer.
 
 Activity shows the same weekly statistics, running status, quick-start tasks and calendar/timeline controls regardless of how it was opened. The original GitHub page is unaffected.
