@@ -16,6 +16,8 @@ The welcome screen opens automatically after installation. Until you connect a t
 
 ## Step 1: Sign in with GitHub
 
+![The Clockoli welcome screen with a Connect GitHub button and a Why GitHub? link](images/setup-sign-in.png)
+
 1. Select **Connect GitHub** on the welcome screen. You can expand **Why GitHub?** to read about access and privacy. If the browser asks for permission to contact GitHub, allow it. Clockoli shows the one-time code immediately and **tries to copy it to the clipboard**. It tells you whether copying succeeded.
 2. If copying succeeded, a five-second countdown appears before GitHub opens automatically. You can select **Open GitHub now** to skip the pause. On GitHub, paste the code with **⌘V on macOS or Ctrl+V on Windows/Linux**. Confirm that you are on **github.com** and authorizing **Clockoli**, then approve.
 3. If copying failed, **GitHub does not open automatically**. Select **Copy**, then **Open GitHub to enter code**. If clipboard access is blocked, select the displayed code and copy it with ⌘C (macOS) or Ctrl+C (Windows/Linux).
@@ -26,6 +28,8 @@ Sign-in uses GitHub's [device flow](https://docs.github.com/en/apps/oauth-apps/b
 ## Step 2: Connect a time repository
 
 Choose **Create my own repository** to start with a new private repository, or **Join a team** if someone has shared one with you. Both are first-class onboarding choices.
+
+![Step 2 of 2 in Settings: Connected to GitHub as alice, with the Create my own repository and Join a team choices](images/setup-repository.png)
 
 If you arrived through `https://clockoli.com/join/?repo=owner%2Frepository` (or an older `#repo=` link), leave that tab open while installing Clockoli. The extension detects the invitation, remembers the repository through sign-in and selects **Join a team**. When several invitation tabs are open, choose which repository to join. The URL itself grants no GitHub permissions and never causes a write without your confirmation. If the tab is unavailable, choose **Join a team** and paste the full Clockoli invitation link manually.
 

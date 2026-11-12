@@ -4,6 +4,8 @@ Filter tracked time by period, person, project, and source, chart it, and export
 
 Reports combines tracked time from selected or all time repositories, including teammates' personal branches you can read. Open it from Clockoli's page navigation.
 
+![Reports for one week: CSV, JSON, Print and Create invoice actions, the total and billable amount, filters, and hours per day stacked by person](images/reports.png)
+
 Reports includes records whose Start date falls in the selected inclusive range.
 
 On a return visit, Reports shows the last locally saved result for the same local/UTC basis and restores its date range while refreshing it from GitHub. A compact progress indicator appears at the right side of the top navigation; the previous report remains visible. Cached totals may be out of date; exports and invoices stay unavailable until a successful fresh read. If refresh fails, the previous result remains visible for reference, with export and invoicing still blocked. Changing the period or basis loads the requested data rather than presenting a different period as current.

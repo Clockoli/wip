@@ -2,6 +2,8 @@
 
 Every Settings section, in the order Settings shows it: account, repositories, display, routing, merging, add-ons, billing, backups, and advanced.
 
+![The top of Settings: the GitHub account card and the connected time repository](images/settings.png)
+
 The welcome screen opens after first installation. Until you connect a time repository, it shows just the GitHub sign-in and repository setup steps; the usual navigation and preferences are hidden. Once setup is complete, reopen Settings from the gear button in the Clockoli panel, the **Settings** navigation link, or the extension details page.
 
 **Save projects and routing**, **Save billable rates**, and **Save invoicing settings** each show success or an error beside their own button. After a settings change, a reminder suggests exporting an updated backup; it appears once per page load and, after exporting, does not show again until you reopen or reload Settings.

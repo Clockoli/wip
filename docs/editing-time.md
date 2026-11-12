@@ -8,6 +8,8 @@ Every change is saved locally first and synchronized with GitHub in the backgrou
 
 The **Add time** button in the upper right of **Top tasks** and **Activity** adds one entry or entries for multiple selected days.
 
+![The Add new time dialog: task search, Start and optional End date and time, and a description](images/add-time.png)
+
 1. Search tracked tasks with HTTP(S) URL identities from joined people in the connected time repositories by title or URL, or paste a new HTTP(S) task URL.
 2. Choose the Start date and time, and optionally an End date and time. Each has its own native date picker and keyboard-editable `HH:MM` time field. Clicking a time field selects its current value, and entering `1000` formats it as `10:00`. The End date can be selected before entering the optional End time; without an End time, the form starts a timer instead.
 3. Add an optional description. The form previews the duration for a completed interval; choose **Add time** to record it, or leave End empty and choose **Start timer**. The **Multiple days** checkbox retains its separate calendar-based flow and **Add** button.
