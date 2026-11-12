@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="442" height="435" viewBox="0 0 442 435" role="img" aria-label="Cute broccoli clock icon">
+  <defs>
+    <linearGradient id="crownGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8acc57"/>
+      <stop offset="0.5" stop-color="#74c348"/>
+      <stop offset="1" stop-color="#66b83f"/>
+    </linearGradient>
+    <linearGradient id="stemGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a9d95f"/>
+      <stop offset="1" stop-color="#cbe98b"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="180%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="3.2" result="blur"/>
+      <feOffset dy="4" result="offset"/>
+      <feColorMatrix in="offset" type="matrix" values="0 0 0 0 0.15  0 0 0 0 0.20  0 0 0 0 0.12  0 0 0 0.18 0"/>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="softHighlight" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#shadow)">
+    <!-- stem / face -->
+    <path
+      d="M136 257
+         C142 269 148 281 149 301
+         L149 350
+         C149 368 161 379 178 380
+         L244 380
+         C262 380 274 370 275 352
+         L275 303
+         C276 283 282 271 289 259
+         C274 251 256 247 236 246
+         L188 246
+         C168 247 151 250 136 257Z"
+      fill="url(#stemGrad)"
+      stroke="#075f39"
+      stroke-width="8"
+      stroke-linejoin="round"/>
+
+    <!-- subtle stem highlight -->
+    <ellipse cx="212" cy="325" rx="55" ry="38" fill="#ffffff" opacity="0.08" filter="url(#softHighlight)"/>
+
+    <!-- broccoli crown -->
+    <path
+      d="M136 263
+         C126 271 111 275 98 270
+         C81 264 72 246 74 226
+         C76 204 87 187 103 180
+         C101 162 109 146 123 135
+         C132 128 142 124 154 124
+         C165 102 186 89 210 89
+         C237 89 259 102 271 123
+         C290 121 307 129 318 142
+         C327 152 331 165 329 178
+         C344 184 352 200 353 219
+         C354 241 344 260 327 269
+         C313 277 297 274 287 266
+         C280 272 270 276 259 275
+         C248 274 240 268 235 258
+         C230 266 222 270 211 270
+         C201 270 192 266 186 257
+         C181 266 171 271 160 271
+         C150 271 142 268 136 263Z"
+      fill="url(#crownGrad)"
+      stroke="#075f39"
+      stroke-width="8"
+      stroke-linecap="round"
+      stroke-linejoin="round"/>
+
+    <!-- mild crown sheen -->
+    <ellipse cx="211" cy="140" rx="82" ry="46" fill="#ffffff" opacity="0.055" filter="url(#softHighlight)"/>
+
+    <!-- clock ticks -->
+    <g stroke="#064f31" stroke-width="8" stroke-linecap="round">
+      <line x1="212" y1="116" x2="212" y2="131"/>
+      <line x1="109" y1="212" x2="123" y2="212"/>
+      <line x1="301" y1="212" x2="315" y2="212"/>
+      <line x1="144" y1="147" x2="155" y2="157"/>
+    </g>
+
+    <!-- clock hands -->
+    <g fill="none" stroke="#ffffff" stroke-width="11" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M211 220 L164 178"/>
+      <path d="M211 220 L280 150"/>
+    </g>
+    <circle cx="211" cy="220" r="15" fill="#ffffff"/>
+    <circle cx="211" cy="220" r="7" fill="#72be45"/>
+
+    <!-- face -->
+    <g fill="#064f31">
+      <ellipse cx="184" cy="308" rx="9.5" ry="12"/>
+      <ellipse cx="238" cy="308" rx="9.5" ry="12"/>
+    </g>
+    <path d="M198 331 C202 344 221 344 225 331" fill="none" stroke="#064f31" stroke-width="7" stroke-linecap="round"/>
+  </g>
+</svg>

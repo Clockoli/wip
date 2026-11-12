@@ -1,0 +1,539 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import vm from 'node:vm';
+import { readFile } from 'node:fs/promises';
+import { assertMessageAllowed, addTimeForSender, cachedViewRequest, dayRangeForSender, issueForStart, taskUrlForParticipantLoad, taskUrlForStart, taskUrlForTimelineSwitch,
+  requestedStartDestinationId, weekRangeForSender } from '../src/background/message-policy.js';
+
+const origin = 'chrome-extension://abc/';
+const content = { url: 'https://github.com/acme/frontend/issues/123', tab: { id: 1 } };
+const extension = { url: `${origin}src/popup/popup.html` };
+
+test('cached report and task views are limited to their extension pages and exact date scopes', () => {
+  const range = { startDate: '2026-09-01', endDate: '2026-09-07', reportingUtc: false };
+  const request = { type: 'GET_CACHED_VIEW', kind: 'reports', range };
+  assert.deepEqual(cachedViewRequest(request, { url: `${origin}src/reports/reports.html` }, origin), { kind: 'reports', range });
+  for (const sender of [content, extension, { url: `${origin}src/tasks/tasks.html` }])
+    assert.throws(() => cachedViewRequest(request, sender, origin));
+  for (const invalid of [{ ...request, extra: true }, { ...request, range: { ...range, startDate: '2026-02-30' } },
+    { ...request, range: { ...range, reportingUtc: 'false' } }, { ...request, range: { ...range, endDate: '2026-08-01' } }])
+    assert.throws(() => cachedViewRequest(invalid, { url: `${origin}src/reports/reports.html` }, origin));
+  const tasks = { type: 'GET_CACHED_VIEW', kind: 'tasks', range: { startDate: range.startDate, endDate: range.endDate } };
+  assert.equal(cachedViewRequest(tasks, { url: `${origin}src/tasks/tasks.html` }, origin).kind, 'tasks');
+  assert.throws(() => cachedViewRequest({ ...tasks, range }, { url: `${origin}src/tasks/tasks.html` }, origin));
+});
+const issue = { type: 'issue', owner: 'acme', repo: 'frontend', number: 123, url: 'https://github.com/acme/frontend/issues/123' };
+
+test('Add time accepts only the two extension pages and a bounded canonical URL payload', () => {
+  const request = { taskUrl: issue.url + '?view=1', taskTitle: 'Issue', startedAt: null, endedAt: null, description: '' };
+  for (const page of ['src/tasks/tasks.html', 'src/times/times.html']) {
+    assert.equal(addTimeForSender(request, { url: origin + page }, origin).taskUrl, issue.url);
+  }
+  for (const sender of [content, extension, { url: origin + 'src/reports/reports.html' }, { url: 'https://app.clockify.me/reports/detailed', tab: { id: 2 } }]) {
+    assert.throws(() => addTimeForSender(request, sender, origin), /not allowed/i);
+  }
+  for (const invalid of [{ ...request, taskUrl: 'javascript:alert(1)' }, { ...request, description: 'a'.repeat(2001) },
+    { ...request, startedAt: 'yesterday' }, { ...request, destinationId: 'github:1' }]) {
+    assert.throws(() => addTimeForSender(invalid, { url: origin + 'src/tasks/tasks.html' }, origin), /invalid|too long/i);
+  }
+});
+
+test('Add time permits an imported identity only with a scoped destination for server-side existence verification', () => {
+  const sender = { url: origin + 'src/times/times.html' };
+  const request = { taskUrl: 'acme/project/imported-task', taskTitle: 'Imported', destinationId: 'github:2', startedAt: null, endedAt: null, description: '' };
+  assert.deepEqual(addTimeForSender(request, sender, origin), request);
+  assert.throws(() => addTimeForSender({ ...request, destinationId: undefined }, sender, origin), /destination|invalid/i);
+  assert.throws(() => addTimeForSender({ ...request, destinationId: 'github:0' }, sender, origin), /destination|invalid/i);
+  assert.throws(() => addTimeForSender({ ...request, taskUrl: issue.url }, sender, origin), /invalid/i);
+  assert.throws(() => addTimeForSender({ ...request, taskUrl: 'acme/project/not valid' }, sender, origin), /task URL|identity/i);
+});
+
+test('day-range addition is extension-page-only and validates selected noncontiguous days', () => {
+  const sender = { url: origin + 'src/times/times.html' };
+  const request = { taskUrl: issue.url + '?view=1', taskTitle: 'Day off', description: '',
+    dates: ['2026-10-30', '2026-11-02'], durationSeconds: 28800 };
+  assert.deepEqual(dayRangeForSender(request, sender, origin), { ...request, taskUrl: issue.url });
+  assert.equal(dayRangeForSender({ ...request, durationSeconds: 0 }, sender, origin).durationSeconds, 0);
+  for (const wrong of [content, extension]) assert.throws(() => dayRangeForSender(request, wrong, origin), /not allowed/i);
+  for (const invalid of [
+    { ...request, dates: [] }, { ...request, dates: ['2026-02-30'] },
+    { ...request, dates: ['2026-11-02', '2026-10-30'] },
+    { ...request, dates: ['2026-10-30', '2026-10-30'] },
+    { ...request, dates: ['2025-01-01', '2026-11-02'] },
+    { ...request, durationSeconds: -1 },
+    { ...request, durationSeconds: 86401 }, { ...request, durationSeconds: 0.5 },
+    { ...request, destinationId: 'github:2' }, { ...request, unexpected: true },
+    { ...request, startDate: '2026-10-30' },
+  ]) assert.throws(() => dayRangeForSender(invalid, sender, origin), /invalid|range|day/i);
+  const imported = { ...request, taskUrl: 'acme/project/time-off', destinationId: 'github:2' };
+  assert.deepEqual(dayRangeForSender(imported, sender, origin), imported);
+});
+
+test('day-range dispatcher rejects untrusted payloads before routing and queues the validated batch', async () => {
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  const calls = []; let active = null;
+  const context = vm.createContext({ dayRangeForSender, assertMessageAllowed,
+    chrome: { runtime: { getURL: () => origin } }, store: {},
+    resolveStartDestinationId: async (_store, url) => { calls.push(['route', url]); return 'github:1'; },
+    activeDestinationId: async () => active,
+    trackerForDestination: async () => ({ addDayRange: async range => { calls.push(['add', range]); return { added: 2, pending: true }; } }),
+    requestPendingSync: () => calls.push(['sync']),
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  const message = { type: 'ADD_DAY_RANGE', taskUrl: issue.url, taskTitle: 'Time off', description: '',
+    dates: ['2026-10-30', '2026-11-01'], durationSeconds: 28800 };
+  await assert.rejects(context.handle(message, content), /not allowed/i);
+  await assert.rejects(context.handle({ ...message, durationSeconds: 86401 }, { url: origin + 'src/times/times.html' }), /invalid/i);
+  assert.equal(calls.length, 0);
+  active = 'github:2';
+  await assert.rejects(context.handle(message, { url: origin + 'src/times/times.html' }), /another time repository/i);
+  assert.deepEqual(calls, [['route', issue.url]]);
+  calls.length = 0; active = null;
+  const result = await context.handle(message, { url: origin + 'src/times/times.html' });
+  assert.equal(result.added, 2);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['route', issue.url], ['add', {
+    taskUrl: issue.url, taskTitle: 'Time off', description: '', dates: ['2026-10-30', '2026-11-01'], durationSeconds: 28800,
+  }], ['sync']]);
+});
+
+test('Add time dispatcher validates before destination selection and schedules a queued timer sync', async () => {
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  const calls = [];
+  const context = vm.createContext({ addTimeForSender, assertMessageAllowed,
+    chrome: { runtime: { getURL: () => origin } }, store: {},
+    resolveStartDestinationId: async (_store, url) => { calls.push(['route', url]); return 'github:1'; },
+    activeDestinationId: async () => null,
+    trackerForDestination: async () => ({ addTime: async payload => { calls.push(['add', payload]); return { active: { _pending: true } }; } }),
+    requestPendingSync: () => calls.push(['sync']),
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  const message = { type: 'ADD_TIME', taskUrl: issue.url, taskTitle: 'Issue', startedAt: null, endedAt: null, description: '' };
+  await assert.rejects(context.handle(message, extension), /not allowed/i);
+  await assert.rejects(context.handle({ ...message, destinationId: 'github:2' }, { url: origin + 'src/tasks/tasks.html' }), /Invalid/i);
+  assert.equal(calls.length, 0);
+  const result = await context.handle(message, { url: origin + 'src/tasks/tasks.html' });
+  assert.equal(result.destinationId, 'github:1');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['route', issue.url], ['add', { taskUrl: issue.url, taskTitle: 'Issue', startedAt: null, endedAt: null, description: '' }], ['sync']]);
+});
+
+test('Add time routes a selected imported task only to its configured source destination', async () => {
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  const calls = [];
+  const context = vm.createContext({ addTimeForSender, assertMessageAllowed,
+    chrome: { runtime: { getURL: () => origin } }, store: {},
+    requireConfiguredDestinationId: async (_store, id) => { calls.push(['check', id]); if (id !== 'github:2') throw new Error('Not configured'); return id; },
+    resolveStartDestinationId: async () => { throw new Error('Imported tasks must not use URL routing'); },
+    activeDestinationId: async () => null,
+    trackerForDestination: async id => { calls.push(['tracker', id]); return { addTime: async payload => { calls.push(['add', payload]); return { entry: {} }; } }; },
+    requestPendingSync: () => { throw new Error('Completed records do not queue a timer'); },
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  const message = { type: 'ADD_TIME', taskUrl: 'acme/project/imported-task', taskTitle: 'Imported',
+    destinationId: 'github:2', startedAt: null, endedAt: null, description: '' };
+  await assert.rejects(context.handle({ ...message, destinationId: 'github:1' }, { url: origin + 'src/times/times.html' }), /Not configured/);
+  assert.deepEqual(calls, [['check', 'github:1']]);
+  const result = await context.handle(message, { url: origin + 'src/times/times.html' });
+  assert.equal(result.destinationId, 'github:2');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.slice(1))), [['check', 'github:2'], ['tracker', 'github:2'],
+    ['add', { taskUrl: message.taskUrl, taskTitle: 'Imported', startedAt: null, endedAt: null, description: '' }]]);
+});
+
+test('week reads accept only a Monday–Sunday range from the extension or a GitHub tab', () => {
+  const week = { startDate: '2026-10-05', endDate: '2026-10-11' };
+  assert.deepEqual(weekRangeForSender(week, content, origin), week);
+  assert.deepEqual(weekRangeForSender(week, extension, origin), week);
+  for (const payload of [{ ...week, destinationId: 'github:1' }, { ...week, endDate: '2026-10-12' }, { ...week, startDate: '2026-10-06' }, { ...week, startDate: '2026-02-30' }, null]) {
+    assert.throws(() => weekRangeForSender(payload, content, origin), /week/i);
+  }
+  for (const url of ['https://vc.ru/technology/123', 'https://example.com/task', 'http://example.com/task']) {
+    assert.deepEqual(weekRangeForSender(week, { url, tab: { id: 2 } }, origin), week);
+  }
+  assert.deepEqual(weekRangeForSender(week, { tab: { id: 2, url: 'https://vc.ru/technology/123' } }, origin), week);
+  assert.throws(() => weekRangeForSender(week, { url: 'file:///tmp/local.html', tab: { id: 2 } }, origin), /not allowed/i);
+  assert.throws(() => weekRangeForSender(week, { url: 'https://app.clockify.me/reports/detailed', tab: { id: 2 } }, origin), /not allowed/i);
+  assert.throws(() => weekRangeForSender(week, { url: 'https://github.com/acme/frontend/issues/123' }, origin), /not allowed/i);
+  assert.throws(() => assertMessageAllowed('LOAD_TIMES', content, origin), /not allowed/i);
+  assert.equal(assertMessageAllowed('SEARCH_ACTIVITY', extension, origin), 'extension');
+  assert.throws(() => assertMessageAllowed('SEARCH_ACTIVITY', content, origin), /not allowed/i);
+  assert.equal(requestedStartDestinationId('acme/project/imported', 'github:2', extension, origin), 'github:2');
+  assert.throws(() => requestedStartDestinationId('acme/project/imported', 'github:2', content, origin), /extension/i);
+  assert.throws(() => requestedStartDestinationId('https://example.com/task', 'github:2', extension, origin), /imported/i);
+  assert.throws(() => requestedStartDestinationId('acme/project/imported', 'github:0', extension, origin), /destination/i);
+});
+
+test('email-only CSV response is accepted only from the armed Clockify report tab and uses its URL year', async () => {
+  const clockify = { url: 'https://app.clockify.me/reports/detailed', tab: { id: 5 } };
+  assert.equal(assertMessageAllowed('CLOCKIFY_CSV_EMAIL_OFFER', clockify, origin), 'clockify');
+  for (const sender of [extension, content, { url: 'https://app.clockify.me/other', tab: { id: 5 } }]) {
+    assert.throws(() => assertMessageAllowed('CLOCKIFY_CSV_EMAIL_OFFER', sender, origin), /not allowed/i);
+  }
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  const seen = [];
+  const context = vm.createContext({
+    assertMessageAllowed,
+    chrome: { runtime: { getURL: () => origin }, tabs: { get: async () => ({ url: 'https://app.clockify.me/reports/detailed?start=2026-01-01T00:00:00.000Z&end=2026-12-31T23:59:59.999Z' }) } },
+    clockifyDetailedReportYear: () => 2026,
+    clockifyCaptureArm: { isArmed: async tab => tab === 5, disarm: async tab => seen.push(['disarm', tab]) },
+    clockifyHistoryScan: { recordCsvEmailOffer: async year => { seen.push(['offer', year]); return 3; }, reset: async () => seen.push(['reset']) },
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  await assert.rejects(context.handle({ type: 'CLOCKIFY_CSV_EMAIL_OFFER', year: 2025 }, clockify), /payload/i);
+  await assert.rejects(context.handle({ type: 'CLOCKIFY_CSV_EMAIL_OFFER' }, { ...clockify, tab: { id: 6 } }), /armed/i);
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.handle({ type: 'CLOCKIFY_CSV_EMAIL_OFFER' }, clockify))), { attempts: 3, cancelled: true });
+  assert.deepEqual(seen, [['offer', 2026], ['disarm', 5], ['reset']]);
+});
+
+test('invoice number reservation is extension-only and the dispatcher ignores payloads', async () => {
+  assert.equal(assertMessageAllowed('RESERVE_INVOICE_NUMBER', extension, origin), 'extension');
+  assert.throws(() => assertMessageAllowed('RESERVE_INVOICE_NUMBER', content, origin), /not allowed/i);
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  let calls = 0;
+  const context = vm.createContext({ assertMessageAllowed, chrome: { runtime: { getURL: () => origin } }, store: {
+    reserveInvoiceNumber: async (...args) => { assert.deepEqual(args, []); calls += 1; return { sequence: calls }; },
+  } });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  assert.equal((await context.handle({ type: 'RESERVE_INVOICE_NUMBER', payload: { nextNumber: 999 } }, extension)).sequence, 1);
+  await assert.rejects(context.handle({ type: 'RESERVE_INVOICE_NUMBER' }, content), /not allowed/i);
+  assert.equal(calls, 1);
+});
+
+test('billing dispatcher forwards project client links only from extension pages', async () => {
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  const calls = [], broadcasts = [];
+  const context = vm.createContext({ assertMessageAllowed, broadcastLocalPreferencesChanged: revision => broadcasts.push(revision), chrome: { runtime: { getURL: () => origin } }, store: {
+    saveBillingSettings: async (...args) => { calls.push(args); return { revision: 8 }; },
+  } });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  const message = { type: 'SAVE_BILLING_SETTINGS', payload: { invoicing: {} }, expectedRevision: 4, projectLinks: { projectClients: { 'project-1': 'client-1' }, otherProjectClient: '' } };
+  await context.handle(message, extension);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [[message.payload, message.projectLinks, message.expectedRevision]]);
+  assert.deepEqual(broadcasts, [8]);
+  await assert.rejects(context.handle(message, content), /not allowed/i);
+  assert.equal(calls.length, 1);
+  await assert.rejects(context.handle({ ...message, expectedRevision: undefined }, extension), /revision/i);
+});
+
+test('display dispatcher forwards the expected revision and returns the atomic mutation result', async () => {
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  const calls = [], broadcasts = [], result = { config: { recentDays: 14 }, generation: 3, revision: 8, preferences: { recentDays: 14, revision: 8 } };
+  const context = vm.createContext({ assertMessageAllowed, broadcastLocalPreferencesChanged: revision => broadcasts.push(revision), chrome: { runtime: { getURL: () => origin } }, store: {
+    updateDisplayPreferences: async (...args) => { calls.push(args); return result; },
+  } });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  const message = { type: 'UPDATE_DISPLAY_PREFERENCES', payload: { recentDays: 14 }, expectedRevision: 7 };
+  assert.deepEqual(await context.handle(message, extension), result);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [[message.payload, message.expectedRevision]]);
+  assert.deepEqual(broadcasts, [8]);
+  await assert.rejects(context.handle({ ...message, expectedRevision: undefined }, extension), /revision/i);
+  await assert.rejects(context.handle(message, content), /not allowed/i);
+});
+
+test('content scripts receive only page-safe state and timer actions', () => {
+  assert.doesNotThrow(() => assertMessageAllowed('GET_PAGE_STATE', content, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('LOAD_TASK_PARTICIPANTS', content, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('SET_ACTION_ICON_FRAME', content, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('EDIT_ACTIVE_START', content, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('OPEN_TASKS', content, origin));
+  assert.throws(() => assertMessageAllowed('GET_STATE', content, origin), /not allowed/i);
+  assert.throws(() => assertMessageAllowed('EDIT_ENTRY', content, origin), /not allowed/i);
+});
+
+test('Activity view messages accept only valid modes from Activity surfaces', async () => {
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  let mode = null;
+  const context = vm.createContext({ assertMessageAllowed, URL, chrome: { runtime: { getURL: path => `${origin}${path}` } }, store: {
+    getActivityViewMode: async () => mode,
+    setActivityViewMode: async value => { mode = value; return mode; },
+  } });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  const read = { type: 'GET_ACTIVITY_VIEW_MODE' }, write = { type: 'SET_ACTIVITY_VIEW_MODE', mode: 'calendar' };
+  assert.equal((await context.handle(write, extension)).mode, 'calendar');
+  assert.equal((await context.handle(read, content)).mode, 'calendar');
+  assert.equal((await context.handle(read, { url: 'https://example.com/task', tab: { id: 2 } })).mode, 'calendar');
+  for (const sender of [{ url: `${origin}src/options/options.html` }, { url: 'https://example.com/task' }, { url: 'https://app.clockify.me/reports/detailed', tab: { id: 3 } }]) {
+    await assert.rejects(context.handle(write, sender));
+  }
+  await assert.rejects(context.handle({ ...write, mode: 'invalid' }, content), /Invalid Activity view/i);
+  await assert.rejects(context.handle({ ...write, token: 'injected' }, content), /Invalid Activity view/i);
+  await assert.rejects(context.handle({ ...read, payload: {} }, extension), /Invalid Activity view/i);
+  assert.equal(mode, 'calendar');
+});
+
+test('any GitHub page can manage its URL task but cannot access privileged state', () => {
+  const dashboard = { url: 'https://github.com/issues/assigned', tab: { id: 2, url: 'https://github.com/issues/assigned' } };
+  for (const type of ['GET_PAGE_STATE', 'START', 'STOP', 'LOAD_RECENT', 'EDIT_ENTRIES', 'EDIT_ACTIVE_START', 'QUEUE_ENTRY_EDIT', 'QUEUE_ENTRIES_EDIT', 'QUEUE_ACTIVE_START_EDIT', 'OPEN_REPORTS', 'OPEN_TASKS', 'OPEN_TIMES', 'OPEN_OPTIONS']) {
+    assert.equal(assertMessageAllowed(type, dashboard, origin), 'content');
+  }
+  for (const type of ['GET_STATE', 'SAVE_CONFIG', 'LOAD_REPORT']) {
+    assert.throws(() => assertMessageAllowed(type, dashboard, origin), /not allowed/i);
+  }
+});
+
+test('content-script START issue must match its sender URL', () => {
+  assert.deepEqual(issueForStart(issue, content, origin), issue);
+  assert.throws(() => issueForStart({ ...issue, number: 999, url: 'https://github.com/acme/frontend/issues/999' }, content, origin), /match/i);
+});
+
+test('content-script START accepts a matching canonical pull request page', () => {
+  const pull = { type: 'pull_request', owner: 'acme', repo: 'frontend', number: 456, url: 'https://github.com/acme/frontend/pull/456' };
+  const sender = { url: pull.url, tab: { id: 2 } };
+  assert.deepEqual(issueForStart(pull, sender, origin), pull);
+  assert.throws(() => issueForStart({ ...pull, type: 'issue', url: 'https://github.com/acme/frontend/issues/456' }, sender, origin), /match/i);
+});
+
+test('content task switches remain bound to the current page URL', () => {
+  assert.equal(taskUrlForStart(issue.url, content, origin), issue.url);
+  assert.throws(() => taskUrlForStart('https://github.com/acme/frontend/issues/124', content, origin), /current page/i);
+});
+
+test('page-bound Start uses the current tab URL after GitHub SPA navigation', () => {
+  const sender = { url: issue.url, tab: { id: 1, url: 'https://github.com/acme/frontend/issues/124?notification_referrer_id=1' } };
+  const current = 'https://github.com/acme/frontend/issues/124';
+  assert.equal(taskUrlForStart(current, sender, origin), current);
+  assert.deepEqual(issueForStart({ ...issue, number: 124, url: current }, sender, origin).url, current);
+  assert.throws(() => taskUrlForStart(issue.url, sender, origin), /current page/i);
+  assert.throws(() => taskUrlForStart('https://github.com/acme/frontend/issues/125', sender, origin), /current page/i);
+});
+
+test('Projects issue pane Start is bound to its selected canonical issue after SPA navigation', () => {
+  const pane = 'https://github.com/orgs/acme/projects/3/views/16?pane=issue&itemId=239268027&issue=acme%7Crepo%7C6';
+  const sender = { url: 'https://github.com/orgs/acme/projects/3/views/16', tab: { id: 1, url: pane } };
+  assert.equal(taskUrlForStart('https://github.com/acme/repo/issues/6', sender, origin), 'https://github.com/acme/repo/issues/6');
+  assert.throws(() => taskUrlForStart('https://github.com/acme/repo/issues/7', sender, origin), /current page/i);
+  assert.throws(() => taskUrlForStart('https://github.com/acme/repo/pull/6', sender, origin), /current page/i);
+  assert.throws(() => taskUrlForStart(pane.replace('issue=acme%7Crepo%7C6', 'issue=other%7Crepo%7C6'), sender, origin), /current page/i);
+});
+
+test('page Start does not fall back to the original document when the tab has left the task', () => {
+  const sender = { url: issue.url, tab: { id: 1, url: 'https://github.com/acme/frontend' } };
+  assert.throws(() => taskUrlForStart(issue.url, sender, origin), /current page/i);
+});
+
+test('only extension pages can start an imported identity', () => {
+  assert.equal(taskUrlForStart('acme/project/imported-task', extension, origin), 'acme/project/imported-task');
+  assert.equal(taskUrlForTimelineSwitch('acme/project/imported-task', extension, origin), 'acme/project/imported-task');
+  assert.throws(() => taskUrlForStart('acme/project/imported-task', content, origin), /task URL/i);
+  assert.throws(() => taskUrlForTimelineSwitch('acme/project/imported-task', content, origin), /stored record/i);
+  assert.throws(() => taskUrlForStart('acme/project/bad task', extension, origin), /task URL/i);
+});
+
+test('content timeline switch accepts an imported identity only with a matching stored record', () => {
+  const identity = 'manticoresoftware/Routines/1-dev-call';
+  const sourceEntry = { id: 'record-1', destinationId: 'github:1', entryDate: '2026-10-12' };
+  const records = [{ ...sourceEntry, taskUrl: identity }];
+  assert.equal(taskUrlForTimelineSwitch(identity, content, origin, sourceEntry, records), identity);
+  for (const invalid of [
+    [], [{ ...records[0], id: 'other' }], [{ ...records[0], destinationId: 'github:2' }],
+    [{ ...records[0], entryDate: '2026-10-13' }], [{ ...records[0], taskUrl: 'acme/other/task' }],
+  ]) assert.throws(() => taskUrlForTimelineSwitch(identity, content, origin, sourceEntry, invalid), /stored record/i);
+  assert.throws(() => taskUrlForTimelineSwitch('acme/project/bad task', content, origin, sourceEntry, records), /task URL/i);
+});
+
+test('timeline task switching may select a previously tracked task from another GitHub page', () => {
+  assert.equal(
+    taskUrlForTimelineSwitch('https://github.com/manticoresoftware/site/issues/231', content, origin),
+    'https://github.com/manticoresoftware/site/issues/231',
+  );
+  assert.throws(() => taskUrlForTimelineSwitch('javascript:alert(1)', content, origin), /task URL/i);
+});
+
+test('trusted extension pages can perform popup-only operations', () => {
+  assert.doesNotThrow(() => assertMessageAllowed('GET_STATE', extension, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('GET_PAGE_STATE', extension, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('DELETE_ENTRY', extension, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('SWITCH_TASK', extension, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('RESOLVE_PENDING', extension, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('SAVE_CONFIG', extension, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('UPDATE_DISPLAY_PREFERENCES', extension, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('SET_QUEUE_DIAGNOSTICS', extension, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('LOAD_REPORT', extension, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('GET_EXCHANGE_RATES', extension, origin));
+  assert.doesNotThrow(() => assertMessageAllowed('CANCEL_REPORT', extension, origin));
+  for (const type of ['LOAD_TIMES', 'BULK_ADD_TIMES', 'GET_STOPPED_OVERLAP', 'RESOLVE_STOPPED_OVERLAP']) {
+    assert.equal(assertMessageAllowed(type, extension, origin), 'extension');
+    assert.throws(() => assertMessageAllowed(type, content, origin), /not allowed/i);
+  }
+  assert.throws(() => assertMessageAllowed('SAVE_CONFIG', content, origin), /not allowed/i);
+  assert.throws(() => assertMessageAllowed('UPDATE_DISPLAY_PREFERENCES', content, origin), /not allowed/i);
+  assert.throws(() => assertMessageAllowed('SET_QUEUE_DIAGNOSTICS', content, origin), /not allowed/i);
+  assert.throws(() => assertMessageAllowed('LOAD_REPORT', content, origin), /not allowed/i);
+  assert.throws(() => assertMessageAllowed('GET_EXCHANGE_RATES', content, origin), /not allowed/i);
+  assert.throws(() => assertMessageAllowed('CANCEL_REPORT', content, origin), /not allowed/i);
+  assert.equal(assertMessageAllowed('SWITCH_TASK', content, origin), 'content');
+  assert.doesNotThrow(() => assertMessageAllowed('RESOLVE_PENDING', content, origin));
+});
+
+
+test('trusted content-script menu can manage recent entries but cannot access privileged configuration state', () => {
+  const sender = { url: 'https://github.com/acme/app/issues/7', tab: { url: 'https://github.com/acme/app/issues/7' } };
+  for (const type of ['LOAD_RECENT', 'EDIT_ENTRIES', 'QUEUE_ENTRIES_EDIT', 'DELETE_ENTRY', 'RESOLVE_PENDING', 'OPEN_REPORTS', 'OPEN_TIMES']) assert.equal(assertMessageAllowed(type, sender, origin), 'content');
+  for (const type of ['GET_STATE', 'SAVE_CONFIG']) assert.throws(() => assertMessageAllowed(type, sender, origin), /not allowed/);
+  assert.throws(() => assertMessageAllowed('MOVE_BOUNDARY', sender, origin), /not allowed/);
+});
+
+
+test('GitHub App onboarding and credential operations are extension-page only', () => {
+  const privileged = [
+    'GET_ONBOARDING_STATE', 'START_DEVICE_FLOW', 'OPEN_DEVICE_FLOW_PAGE', 'RESUME_DEVICE_FLOW', 'POLL_DEVICE_FLOW',
+    'CANCEL_DEVICE_FLOW', 'CANCEL_GITHUB_APP_SETUP', 'DISCOVER_REPOSITORIES', 'CHECK_REPOSITORY_ACCESS',
+    'SELECT_REPOSITORY', 'SET_DEFAULT_DESTINATION', 'REMOVE_DESTINATION', 'DISCONNECT_GITHUB_APP', 'CLEAR_LOCAL_CONFIGURATION', 'CHECK_REPOSITORY_INVITE_ACCESS', 'SEARCH_INVITEE_USERS', 'INVITE_REPOSITORY_USER', 'REMOVE_REPOSITORY_USER', 'LOAD_REPOSITORY_COLLABORATORS',
+    'MERGE_TASKS',
+  ];
+  for (const type of privileged) {
+    assert.equal(assertMessageAllowed(type, extension, origin), 'extension');
+    assert.throws(() => assertMessageAllowed(type, content, origin), /not allowed/i);
+  }
+});
+
+
+test('invitation preflight and user search obtain configuration without provisioning storage', async () => {
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  const calls = [];
+  const context = vm.createContext({
+    store: {},
+    requireConfiguredDestinationId: async (_store, id) => id,
+    configuredSnapshot: async options => {
+      calls.push(['snapshot', options]);
+      return { config: { repoId: 20, installationId: 88 }, auth: { mode: 'github_app' } };
+    },
+    githubForConfig: config => {
+      calls.push(['github', config.repoId]);
+      return {};
+    },
+    RepositoryInvitationService: class {
+      constructor({ installationId }) { assert.equal(installationId, 88); }
+      async assertAdminAccess() { calls.push(['checked permissions']); }
+    },
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function repositoryInvitationService('),
+    worker.indexOf('async function contextForDestination(')), context);
+  const invitation = await context.repositoryInvitationService('github:20', { localOnly: true });
+  await invitation.assertAdminAccess();
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
+    ['snapshot', { destinationId: 'github:20', measureMigration: false, localOnly: true }],
+    ['github', 20], ['checked permissions'],
+  ]);
+
+  const handler = vm.createContext({ assertMessageAllowed,
+    chrome: { runtime: { getURL: () => origin } },
+    repositoryInvitationService: async (id, options) => {
+      assert.equal(id, 'github:20');
+      calls.push(['route', options]);
+      return { assertAdminAccess: async () => {}, search: async query => {
+        assert.equal(query, 'bob'); return [];
+      } };
+    },
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('),
+    worker.indexOf('chrome.runtime.onMessage.addListener')), handler);
+  assert.deepEqual(JSON.parse(JSON.stringify(await handler.handle(
+    { type: 'CHECK_REPOSITORY_INVITE_ACCESS', destinationId: 'github:20' }, extension))), { canInvite: true });
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.at(-1))), ['route', { localOnly: true }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(await handler.handle(
+    { type: 'SEARCH_INVITEE_USERS', payload: { destinationId: 'github:20', query: 'bob' } }, extension))),
+    { users: [] });
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.at(-1))), ['route', { localOnly: true }]);
+  await assert.rejects(handler.handle({ type: 'CHECK_REPOSITORY_INVITE_ACCESS', destinationId: 'github:20' }, content), /not allowed/i);
+});
+
+test('repository collaborator read checks sender and configured destination before GitHub access', async () => {
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  const calls = [];
+  let pendingFails = false, pendingIncomplete = false;
+  const context = vm.createContext({ assertMessageAllowed, chrome: { runtime: { getURL: () => origin } },
+    readyRepositoryMemberIds: async () => [],
+    store: {}, requireConfiguredDestinationId: async (_store, id) => {
+      calls.push(['destination', id]);
+      if (id !== 'github:20') throw new Error('The requested destination is not configured.');
+      return id;
+    }, configuredSnapshot: async ({ destinationId, localOnly }) => {
+      assert.equal(localOnly, true, 'viewing team members must not provision storage');
+      calls.push(['snapshot', destinationId]); return { config: { repoId: 20 }, auth: { mode: 'github_app' } };
+    }, githubForConfig: () => ({
+      assertDestinationReachable: async () => { calls.push(['verified']); },
+      listRepositoryCollaborators: async () => { calls.push(['listed']); return { users: [{ id: 42, login: 'bob', avatarUrl: null }], hasMore: false }; },
+      listRepositoryPendingInvitations: async () => {
+        calls.push(['pending']);
+        if (pendingFails) throw new Error('No permission');
+        return { users: [{ id: 43, login: 'alice', avatarUrl: null }], hasMore: false,
+          ...(pendingIncomplete ? { incomplete: true } : {}) };
+      },
+    }),
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  const request = { type: 'LOAD_REPOSITORY_COLLABORATORS', destinationId: 'github:20' };
+  await assert.rejects(context.handle(request, content), /not allowed/i);
+  await assert.rejects(context.handle({ ...request, destinationId: 'github:21' }, extension), /not configured/i);
+  await assert.rejects(context.handle({ ...request, extra: 'ignored' }, extension), /invalid collaborator request/i);
+  assert.deepEqual(calls, [['destination', 'github:21']]);
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.handle(request, extension))),
+    { users: [{ id: 42, login: 'bob', avatarUrl: null }], hasMore: false,
+      readyUserIds: [], pendingUsers: [{ id: 43, login: 'alice', avatarUrl: null }], pendingHasMore: false });
+  assert.deepEqual(calls.slice(1), [['destination', 'github:20'], ['snapshot', 'github:20'], ['verified'], ['listed'], ['pending']]);
+  pendingIncomplete = true;
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.handle(request, extension))),
+    { users: [{ id: 42, login: 'bob', avatarUrl: null }], hasMore: false,
+      readyUserIds: [], pendingUsers: [{ id: 43, login: 'alice', avatarUrl: null }], pendingHasMore: false, pendingUnavailable: true });
+  pendingFails = true;
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.handle(request, extension))),
+    { users: [{ id: 42, login: 'bob', avatarUrl: null }], hasMore: false, readyUserIds: [], pendingUnavailable: true });
+});
+
+test('repository access removal validates payload and sender before loading a destination or mutating', async () => {
+  const worker = await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8');
+  const calls = [];
+  const context = vm.createContext({ assertMessageAllowed, chrome: { runtime: { getURL: () => origin } },
+    repositoryInvitationService: async id => { calls.push(id); if (id !== 'github:20') throw new Error('not configured');
+      return { remove: async (...args) => { calls.push(args); return { status: 'removed', login: 'Bob' }; } }; },
+  });
+  vm.runInContext(worker.slice(worker.indexOf('async function handle('), worker.indexOf('chrome.runtime.onMessage.addListener')), context);
+  const request = { type: 'REMOVE_REPOSITORY_USER', payload: { destinationId: 'github:20', login: 'Bob', userId: 42, kind: 'collaborator' } };
+  await assert.rejects(context.handle(request, content), /not allowed/i);
+  for (const payload of [{ ...request.payload, userId: 0 }, { ...request.payload, kind: 'other' },
+    { ...request.payload, extra: true }, { ...request.payload, destinationId: 'github:21' }]) {
+    await assert.rejects(context.handle({ ...request, payload }, extension));
+  }
+  assert.deepEqual(calls, ['github:21']);
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.handle(request, extension))), { status: 'removed', login: 'Bob' });
+  assert.deepEqual(calls, ['github:21', 'github:20', ['Bob', 42, 'collaborator']]);
+});
+
+test('any GitHub page can start a URL task only for its exact sender URL', () => {
+  const sender = { url: 'https://github.com/acme/app/actions/runs/123?check_suite_focus=true', tab: { id: 9 } };
+  assert.equal(assertMessageAllowed('START', sender, origin), 'content');
+  assert.equal(taskUrlForStart(sender.url, sender, origin), sender.url);
+  assert.throws(() => taskUrlForStart('https://example.com/other', sender, origin), /match/i);
+});
+
+test('trusted popup accepts arbitrary HTTP(S) task URLs and rejects unsafe schemes', () => {
+  assert.equal(taskUrlForStart('https://example.com/docs/42', extension, origin), 'https://example.com/docs/42');
+  assert.throws(() => taskUrlForStart('javascript:alert(1)', extension, origin), /task URL/i);
+});
+
+
+test('GitHub issue query and fragment churn cannot create a second task identity', () => {
+  const sender = { url: 'https://github.com/acme/app/issues/7?notification_referrer_id=1#issuecomment-3', tab: { id: 10 } };
+  assert.equal(taskUrlForStart('https://github.com/acme/app/issues/7', sender, origin), 'https://github.com/acme/app/issues/7');
+});
+
+test('participant totals follow the current GitHub SPA tab URL instead of the original document URL', () => {
+  const sender = {
+    url: 'https://github.com/manticoresoftware/manticoresearch/issues/4883',
+    tab: { id: 10, url: 'https://github.com/manticoresoftware/manticoresearch/issues/4884' },
+  };
+  assert.equal(
+    taskUrlForParticipantLoad('https://github.com/manticoresoftware/manticoresearch/issues/4884', sender, origin),
+    'https://github.com/manticoresoftware/manticoresearch/issues/4884',
+  );
+  assert.throws(
+    () => taskUrlForParticipantLoad('https://github.com/manticoresoftware/manticoresearch/issues/4885', sender, origin),
+    /current page/i,
+  );
+});
+
+
+test('manual SYNC message is not part of the extension or content sender policy', () => {
+  const extensionOrigin = 'chrome-extension://abc/';
+  assert.throws(() => assertMessageAllowed('SYNC', { url: extensionOrigin + 'src/tasks/tasks.html' }, extensionOrigin), /not allowed/);
+  assert.throws(() => assertMessageAllowed('SYNC', { url: 'https://github.com/acme/frontend/issues/123', tab: { id: 1 } }, extensionOrigin), /not allowed/);
+});

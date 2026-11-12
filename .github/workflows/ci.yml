@@ -1,0 +1,178 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
+      - run: npm run test:browser
+      - run: npm run check
+      - name: Verify Corresponding Source archive
+        run: |
+          python3 scripts/package-source.py HEAD "$RUNNER_TEMP/Clockoli-source.zip"
+          python3 - "$RUNNER_TEMP/Clockoli-source.zip" <<'PY'
+          import json
+          import subprocess
+          import sys
+          import tempfile
+          from pathlib import Path
+          import zipfile
+          with zipfile.ZipFile(sys.argv[1]) as archive:
+              files = set(archive.namelist())
+              required = {
+                  'COPYRIGHT',
+                  'LICENSE',
+                  'THIRD_PARTY_NOTICES.md',
+                  'third_party/html2pdf.js-v0.14.0/src/index.js',
+                  'third_party/html2pdf.js-v0.14.0/node_modules/dompurify/package.json',
+                  'third_party/html2pdf.js-v0.14.0/node_modules/jspdf/package.json',
+                  'third_party/html2pdf.js-v0.14.0/node_modules/html2canvas/package.json',
+              }
+              assert required <= files, required - files
+              sources = json.loads(Path('scripts/pdf-upstream-sources.json').read_text())
+              for item in sources:
+                  prefix = ('third_party/pdf-source-repositories/' +
+                            item['name'] + '-' + item['version'] + '/')
+                  assert prefix + item['source'] in files, item['name']
+                  meta = json.loads(archive.read(prefix + 'package.json'))
+                  assert (meta['name'], meta['version']) == (item['name'], item['version'])
+              with tempfile.TemporaryDirectory() as tmp:
+                  upstream = Path(tmp) / 'upstream.js'
+                  patched = Path(tmp) / 'patched.js'
+                  upstream.write_bytes(archive.read(
+                      'third_party/html2pdf.js-v0.14.0/dist/html2pdf.bundle.min.js'))
+                  subprocess.run(['node', 'scripts/apply-html2pdf-mv3.mjs',
+                                  str(upstream), str(patched)], check=True)
+                  assert patched.read_bytes() == Path('src/vendor/html2pdf.bundle.min.js').read_bytes()
+          PY
+      - name: Verify pinned PDF dependency notices
+        run: python3 scripts/generate-pdf-notices.py "$RUNNER_TEMP/Clockoli-source.zip" --check
+      - name: Verify clean-ref Chrome release package
+        run: python3 scripts/build-release.py --release-ref HEAD "$RUNNER_TEMP/Clockoli-chrome.zip"
+      - name: Verify clean-ref Firefox release package
+        run: python3 scripts/build-release.py --target firefox --release-ref HEAD "$RUNNER_TEMP/Clockoli-firefox.xpi"
+      - run: npm run lint:firefox
+
+  # Keep the Corresponding Source rebuild independent of the UI/E2E tests.
+  # A flaky browser test must not prevent verification of release compliance.
+  pdf-rebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Generate exact Corresponding Source archive
+        run: python3 scripts/package-source.py HEAD "$RUNNER_TEMP/Clockoli-source.zip"
+      - name: Verify pinned PDF dependency notices
+        run: python3 scripts/generate-pdf-notices.py "$RUNNER_TEMP/Clockoli-source.zip" --check
+      - name: Rebuild PDF and byte-compare the distributed bundle and notices
+        run: python3 scripts/verify-pdf-rebuild.py "$RUNNER_TEMP/Clockoli-source.zip"
+
+  # The native Safari/Xcode build is slow; keep its check visible but skip
+  # the macOS runner for changes unrelated to packaging or legal resources.
+  safari-changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      safari: ${{ steps.filter.outputs.safari }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v4
+        id: filter
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          filters: |
+            safari:
+              - '.github/workflows/**'
+              - 'COPYRIGHT'
+              - 'LICENSE'
+              - 'LICENSES/**'
+              - 'THIRD_PARTY_NOTICES.md'
+              - 'manifest.json'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'packages/**/package.json'
+              - 'src/assets/**'
+              - 'src/vendor/**'
+              - 'third_party/**'
+              - 'scripts/**'
+
+  safari-license-smoke:
+    needs: safari-changes
+    if: ${{ github.event_name == 'workflow_dispatch' || needs.safari-changes.outputs.safari == 'true' }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install chromium
+      - name: Verify final converted native Safari app and extension legal resources
+        run: python3 scripts/build-safari.py --release-ref HEAD --build-number 1 "$RUNNER_TEMP/safari"
+      - name: Verify unsigned Safari package
+        run: |
+          VERSION="$(node -p "JSON.parse(require('fs').readFileSync('manifest.json', 'utf8')).version")"
+          test -f "$RUNNER_TEMP/safari/Clockoli-$VERSION-safari-unsigned.zip"
+
+  private-regressions:
+    name: private-regressions
+    needs: test
+    if: >-
+      github.repository == 'Clockoli/wip' &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'pull_request' && github.base_ref == 'main' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.user.login != 'dependabot[bot]'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check out the private test suite
+        uses: actions/checkout@v4
+        with:
+          repository: Clockoli/tests
+          path: test-private
+          token: ${{ secrets.PRIVATE_TESTS_READ_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Run private regressions without exposing test names
+        run: |
+          if npm run test:private > "$RUNNER_TEMP/private-regressions.log" 2>&1; then
+            echo 'Private regressions passed'
+          else
+            echo '::error::Private regressions failed; run npm run test:private locally for details.'
+            exit 1
+          fi

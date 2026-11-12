@@ -1,0 +1,10 @@
+.DS_Store
+*.zip
+node_modules/
+coverage/
+test-results/
+test-private/
+.worktrees/
+__pycache__/
+*.py[cod]
+.idea
