@@ -1,98 +1,56 @@
 # Track a task
 
-Track tasks by URL. The toolbar icon and the Clockoli icon on GitHub open Activity in its own tab, or a quick popup if you choose.
+Clockoli tracks work against a task's URL. Start from any HTTP(S) page, or use the Clockoli stopwatch on GitHub.
 
-## What counts as a task
-
-Clockoli treats the canonical HTTP(S) URL as the task identity. A task can be:
-
-- a GitHub issue or pull request;
-- a ticket in another system;
-- a document, dashboard, customer record, or design;
-- any other HTTP(S) page.
-
-A title is optional. GitHub titles are metadata, not part of the durable identity. For GitHub issue and pull-request URLs, Clockoli removes navigation-only query and fragment data so opening the same task through a notification link does not create another task. Tracking an issue from a GitHub Projects issue pane uses its direct `owner/repo/issues/number` URL, not the project view URL. Previously saved project-view records retain their original identity; they are not automatically merged. Query strings on other sites are preserved because they may identify different work.
-
-The toolbar icon works from any HTTP(S) page. The Clockoli icon added to GitHub works the same way. Internal browser pages such as `chrome://extensions` cannot be tasks.
-
-## Start and stop from the toolbar button
+## Start and stop a timer
 
 1. Open the page you want to track.
-2. Select the Clockoli toolbar icon. Activity opens in a separate browser tab, or focuses an already open Activity tab.
-3. In the **From current page** banner, choose **Track this task** (or **Switch to this task** when another timer is running).
-4. When you finish, choose **Stop and save** in Activity.
+2. Select the Clockoli toolbar icon. By default, it opens or focuses the **Activity** tab.
+3. In **From current page**, select **Track this task**. If another task is running, select **Switch to this task**.
+4. When you finish, optionally add a description and select **Stop and save**.
 
-![Activity after a toolbar click on a support ticket: the From current page banner offers Switch to this task above the running timer](images/activity-from-current-page.png)
+![Activity showing From current page above the running timer](images/activity-from-current-page.png)
 
-The toolbar icon and the GitHub icon hand off only the validated source-page URL and title. It uses one-use privileged IndexedDB (cleared when Activity reads it), not query parameters. Opening Activity directly does not reuse an old task. Dismiss the source URL with **×** without affecting your timer.
+A task's canonical URL identifies it; its title is optional. GitHub issue and pull-request notification parameters are removed so links to the same issue stay one task. Other websites keep their query strings because they may identify different pages. GitHub Projects issue panes use the underlying issue URL when available. Internal browser pages are not trackable tasks.
 
-Activity shows the same weekly statistics, running status, quick-start tasks and calendar/timeline controls regardless of how it was opened. The original GitHub page is unaffected.
+The toolbar button only passes the selected page's URL and title to Clockoli. It does not add tracking controls over that page. You can dismiss **From current page** without stopping a timer.
 
-Quick start also appears on Activity, Top tasks, Reports, and Settings. Each recent task shows the description from its latest time entry, if present. Starting it reuses that description and focuses the running Description with its text selected: leave it to continue the same work, press Backspace to clear it, or type to replace it. Tasks without a saved description start with an empty focused field.
+## Use the quick popup
 
-If GitHub rate-limits a tracking-status refresh, the locally stored timer remains visible. The tracking strip reports the rate limit and its retry time instead of claiming that local tracking status could not load; the warning clears after a successful GitHub refresh.
+In **Settings → Toolbar button**, select **Open quick popup**. The toolbar icon and GitHub stopwatch then open a small tracker instead of Activity, where supported.
 
-The accessible **Timeline**, **Calendar**, and **List** icon switcher sits beside the theme control in Activity. The timeline's block Start and Stop actions remain available. See [Activity](activity.md) for the views themselves.
+The popup lets you start or switch to the current page, edit the running description, **Stop and save**, restart recent tasks, and **Open Activity in a new tab**. It does not include Timeline, Calendar, or List controls.
 
-## Use the quick popup instead
-
-In [Settings](settings.md#toolbar-button), set **Toolbar button** to **Open quick popup** to track without leaving the page. Both the toolbar icon and the GitHub icon then open a small popup with **Start tracking this page** (or **Switch to this page** when the running timer is for a different task), **Stop and save**, the running description, four recent entries, and **Open Activity in a new tab**. On GitHub this needs Chrome 127 or later; older versions open Activity.
-
-## Tracking strip layout
-
-When a timer is running, Activity stacks **Tracking now**, the task title, and its editable description on the left. The description fills the space to the metrics column, including when empty. **Started** and **Duration** sit on the right, with **Stop and save** below them at the same width as the metrics above. On narrow screens, these controls stack beneath the description, with the time controls and Stop button aligned to the right.
-
-Top tasks, Reports, and Settings keep their compact tracking card, which still shows **Today**. There the running description expands across the available space between the task title and time controls; on narrow screens it occupies its own row.
-
-## Open Activity from GitHub
-
-Clockoli adds a stopwatch icon before your GitHub avatar. By default, click it to open or focus the standalone Activity tab, with the current issue, pull request, or GitHub page shown in the **From current page** banner. The GitHub page remains intact. Clockoli does not insert a tracking panel on top of it.
-
-The icon stays available during GitHub's client-side navigation. It animates when the task open in that tab is currently being tracked.
+Opening the popup from a GitHub page requires Chrome 127 or newer; other supported versions fall back to Activity. See [Settings](settings.md#toolbar-button).
 
 ## One timer at a time
 
-Clockoli maintains one global GitHub-backed active timer per user across all configured time repositories.
+Only one timer can run for your GitHub account across connected time repositories and browsers. Starting another task saves the running one first.
 
-- Start records the canonical URL, optional title, and timezone-bearing Start timestamp.
-- Stop saves an optional description with the completed record.
-- Elapsed time is calculated from the stored Start timestamp, not from an in-page tick counter.
-- A connected browser can read the active timer written by another connected browser.
+On a switch between time repositories, Clockoli preserves the original destination for the stopped timer and starts the next timer in the repository chosen by [project routing](projects-and-routing.md). Changes are saved locally and synchronized with GitHub in the background.
 
-## Switch to another task
+To restart a task, select **Start** in [Top tasks](top-tasks.md), use a List row's tracking control, or select **Track again** on a completed Timeline or Calendar entry. A completed entry cannot stop another running interval, even if both belong to the same task.
 
-When another task is running, the **From current page** banner in Activity offers **Switch to this task**. It saves the active timer and starts the selected page.
-
-For a cross-repository switch, Clockoli first durably queues the source completion, then queues the target Start behind it, and resumes that ordering after a restart. This preserves one timer even though the two repositories cannot be updated in one Git commit. The active timer and accepted queued writes retain their destination even if [routing](projects-and-routing.md) later changes.
-
-Starting a different task from [Top tasks](top-tasks.md), an Activity List row, or **Track again** in Timeline or Calendar details also stops the running timer first. A past entry of the *currently* tracked task cannot stop the active timer; only the actual running entry has **Stop and save**.
-
-## Long timers
-
-Every Stop or switch asks for confirmation when the active entry exceeds 12 hours. This catches forgotten timers; the warning does not impose a duration limit.
-
-## Change the running start
-
-The running-status strip on Activity, Top tasks, Reports, and Settings provides inline **Started**. The time is an underlined text field, not a separate pencil button: click it to select the time, type `1000` for `10:00`, then press Enter or the checkmark to save without changing the timer's date. Only the running start timestamp is sent; an overlap rejection leaves the draft and original timer in place with an error, and a green **✓ Saved** appears after local acceptance.
-
-To change the start date as well, use **Edit** on the running block in Timeline or Calendar; see [Edit a running timer's start](editing-time.md#edit-a-running-timers-start).
+Clockoli asks for confirmation before stopping a timer longer than **12 hours**, in case you forgot it was running.
 
 ## Descriptions
 
-All editable time **Description** fields in the running tracker, Activity List, Timeline, Calendar, and Add time support multiple lines:
+Descriptions are optional and can contain multiple lines, up to 2,000 characters.
 
-- **Enter** saves locally (or submits Add time);
-- **Shift+Enter** inserts a new line;
-- a visible green **✓ Saved** confirms acceptance without waiting for GitHub.
+- **Enter** saves a description without stopping the timer.
+- **Shift+Enter** inserts a new line.
+- **Escape** cancels an unsaved inline edit, where available.
 
-A description-only Enter never stops the running timer. Description editors expand when opened and as you type, showing up to eight or nine lines. Longer text has a visible **↓ More lines — scroll** hint and remains accessible within the scrollable editor. Both the local queue and GitHub JSON/JSONL preserve embedded newlines. Descriptions are optional and limited to 2,000 characters.
+Quick start on Clockoli pages offers recently tracked tasks. If the latest entry has a description, starting the task again selects that text so you can reuse or replace it.
 
-When Activity opens with a running timer, the running description receives focus once the view is ready. Type a description, press Tab to focus **Stop and save** (skipping Started), then press Enter to stop and save the timer. Shift+Tab and direct editing of Started remain available. If Stop is disabled, Tab does not force focus onto it.
+## Change the running start
 
-## Loading and errors
+To correct the time without changing the date, select the **Started** field in the running tracker. Type a time such as `1000` for `10:00`, then press Enter or select the checkmark.
 
-Activity can display locally cached entries immediately while refreshing data. Connection errors show a headline, detail, and recovery action; Retry refreshes reads without repeating tracking mutations. Queue diagnostics remain hidden unless enabled in [Advanced settings](settings.md#diagnostics); actionable conflicts remain visible.
+To change the date as well, open the running entry in Activity's Timeline or Calendar and select **Edit**. Clockoli checks for overlaps before accepting the change. See [Add and edit time](editing-time.md#edit-a-running-timers-start).
 
-## Navigation
+## When GitHub is unavailable
 
-The dedicated Activity tab provides **Top tasks**, **Activity**, **Reports**, and **Settings** navigation. Both Clockoli icons open or focus Activity, or the quick popup if you chose it.
+Clockoli saves timer changes in your browser first, then syncs them to GitHub automatically. Your local timer remains visible while GitHub is offline or rate-limited. Do not clear extension data while changes are waiting to sync.
+
+See [Sync and offline work](sync.md) and [Troubleshooting](troubleshooting.md) for recovery steps.

@@ -40,7 +40,7 @@ Rules:
 - the storage login and partition path are routing metadata, not record identity;
 - file paths and Git commit/blob SHAs must never be used as record IDs;
 - writers update a monthly file with its expected blob SHA;
-- Stop writes the completed monthly record and deletes the matching active file in one guarded Git commit;
+- Stop first appends or verifies the completed monthly record using SHA protection, then deletes only the matching active file in a separately guarded step; a durable local operation tracks progress across retries and preserves newer timers;
 - writers must reject malformed JSON, duplicate record IDs, a mismatched partition, and unsupported schema versions;
 - serializers produce deterministic pretty JSON for active files and compact one-line JSON for JSONL files;
 - object key order is not semantically significant.

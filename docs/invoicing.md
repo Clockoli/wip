@@ -1,59 +1,58 @@
 # Invoicing
 
-Turn a filtered report into a numbered, taxed invoice, then print it or save it as PDF. Invoices never leave your browser.
+Create invoices from filtered reports, then print them or save them as PDFs. Invoice details stay in your browser.
 
-Invoices are generated in the browser from your time records and local settings. No invoice, invoice number, rate, or client detail is ever written to the time repository.
+## Set up clients and rates
 
-## Set up invoicing
+1. In **Settings → Clients (invoice recipients)**, create and save a client.
+2. Under **Billable rates**, add the hourly rates for the GitHub users you want to bill. Every rate belongs to a **specific client**.
+3. In **Settings → Invoicing**, enter your business details, payment information, invoice numbering, payment terms, and tax defaults. Select **Save invoicing settings**.
 
-In **Settings**, use **Clients (invoice recipients)** to save each client, then use **Billable rates** to configure that client's rates. Keep **Add client**: one business or freelancer can invoice several clients. The separate **Invoicing** section holds **Your business details**, bank details, invoice numbering, payment terms, and tax defaults used for invoice previews. Select **Save invoicing settings**; success or an error appears beside the button. Invoicing needs [billable rates](billable-rates.md) **on the selected client** for the people you bill. Rates from other clients are never substituted.
+![Invoicing settings with business and payment information](images/invoicing-settings.png)
 
-![The Invoicing section in Settings: your business details, a bank account, and invoice numbering, payment terms and tax defaults](images/invoicing-settings.png)
+A client can be used for Reports without completing its invoice details. Rates from another client are never substituted when billing the selected client.
 
-Client details can be left empty when a client is used only for reports. Clients can own [projects](projects-and-routing.md).
+### Bank details and payment terms
 
-Saving does not replace unexpected characters in names, addresses, bank details, or notes. If pasted text contains a tab or another unsupported control character, the error names the section and field (and bank account number where applicable), the character, and its position. Correct the draft and save again; ordinary spaces and line breaks in multiline fields are allowed.
+You can save up to **20 bank accounts**. Choose a default or select a different account, or **No bank details**, for each invoice. Only the chosen account's payment instructions appear on the output.
 
-### Bank details
+Payment terms can be **0–365 days**. Zero means the invoice is due on receipt. Footer notes can contain multiple lines.
 
-Add up to 20 bank accounts under **Invoicing**. Give each an account label and payment instructions (for example, bank name, account holder, IBAN, SWIFT or routing details), then optionally choose a default. The default appears when you first open an invoice; the invoice dialog lets you choose a different saved account or **No bank details** for that invoice. Only the selected account's instructions appear in the preview and printed or saved invoice. Bank details stay in this browser and in any settings backup you download; they are not written to your time repository. Protect backups containing financial information.
-
-### Payment terms
-
-Payment terms (days) in Settings determines the due date from the issue date; zero means due on receipt.
-
-Payment terms can range from 0 to 365 days. The **Footer notes** field supports line breaks.
+If Settings rejects pasted text, correct the field named in the error; unsupported control characters are not silently removed.
 
 ## Create an invoice
 
-1. Open **Reports** and filter it: the selected period, people, projects, and sources define what is billed.
-2. Choose **Create invoice**.
-3. Choose a client, bank details (if needed), currency, and whether to group lines by task or by day and task, review the preview, then choose **Print** or **Save as PDF**.
+1. Open **Reports** and choose the period, people, projects, and other filters for the work you want to bill.
+2. Select **Create invoice**.
+3. Choose the client, bank account if needed, currency, and how to group lines (**Task** or **Day and task**).
+4. Review the preview, then select **Print** or **Save as PDF**.
 
-![The Create invoice dialog with its client, bank details and currency choices above the invoice preview](images/invoice.png)
+![Invoice creation dialog](images/invoice.png)
 
-Each invoice uses one target currency. When effective-dated rates change within the period, Clockoli keeps the corresponding invoice lines separate; when the covered records use multiple currencies, it converts each entry using the exchange rate for that entry's date. Unrated time remains visible as not billed.
+The invoice uses the period selected in Reports. Change the reporting period first if you need another billing range.
 
-![An invoice preview: your business details, the client, the billing period, task lines with hours and amount (a task appears once for each hourly rate it was billed at), the total, payment terms and bank details](images/invoice-preview.png)
+Selecting a client narrows the invoice to that client's work and uses that client's rates. Clockoli warns if your selected work includes projects belonging to a different client.
 
-The invoice dialog shows the billing period from the Reports Start and End dates. To bill another period, change the period in Reports first.
+A single invoice uses one currency. Clockoli converts records with other currencies using rates for their dates. Different effective hourly rates appear on separate lines. Unrated time remains visible but is not charged.
 
-Picking a client narrows the invoice to that client's work without changing the report filters, and selects the client's local rate card. Clockoli warns when an invoice also includes projects owned by another client.
+![Invoice preview with line items and total](images/invoice-preview.png)
 
-A partial report can still produce an invoice preview when rated entries are available. However, **Print** and **Save as PDF** remain disabled until the report is complete, so missing time repositories or omitted conflicts cannot cause an incomplete invoice to be issued.
+## Add charges or discounts
 
-## Additional lines
+Use **Additional lines** for up to **20** extra charges or discounts in the invoice currency. They are included in the subtotal and tax calculation.
 
-Add up to 20 additional lines for charges or discounts in the invoice currency. An unfinished line is kept as a draft: the invoice preview continues to show completed lines, and printing or saving remains unavailable until all additional lines are completed or removed. These amounts are included in the subtotal and taxed, without exchange-rate conversion. In an additional line's Description, **Shift+Enter** inserts a newline and **Enter** applies the text to the live invoice preview, showing **✓ Applied**; this is a preview change, not a saved invoice. Actual invoice output is created with **Print** or **Save as PDF**.
+Finish or remove every draft line before printing or saving. **Enter** applies a line description to the preview; **Shift+Enter** adds a newline. Applying a line changes the preview but does not save an invoice file.
 
-## Invoice numbers
+## Invoice numbers and saved copies
 
-Invoice numbers are reserved only on the first **Print** or **Save as PDF** action for a preview and are never committed to the time-data repository. The counter only moves forward: saving or importing settings cannot lower it below a number that has already been issued.
+Clockoli reserves an invoice number the first time you **Print** or **Save as PDF** for that preview. The counter cannot be moved backward by importing or saving settings.
 
-## Where invoices live
+Clockoli **does not archive invoices**. Keep the PDFs or printed copies yourself. It also does not send invoices, track payment status, or provide recurring invoices, retainers, reminders, or payment links.
 
-An invoice exists only as the on-screen preview and as a file you print or download. Clockoli does not archive invoices. CSV and JSON timesheets remain available on Reports when the report is complete. See [Invoice privacy](data-and-privacy.md#invoice-privacy).
+Invoice details, rates, and bank accounts stay in the current browser unless you export a settings backup. Protect that backup because it can contain sensitive financial information.
 
-## Limits
+## When output is unavailable
 
-Clockoli does not support retainers, recurring invoices, reminders, payment links, tracked-time line editing, sent or paid status, an invoice archive, or emailing invoices.
+A partial report may still show an invoice preview, but **Print** and **Save as PDF** stay disabled if repositories are missing, records conflict, or local changes are waiting to sync. Resolve the issue and reload Reports before issuing an invoice.
+
+See [Reports](reports.md), [Billable rates](billable-rates.md), and [Invoice privacy](data-and-privacy.md#invoice-privacy).

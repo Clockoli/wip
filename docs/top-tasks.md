@@ -1,33 +1,29 @@
 # Top tasks
 
-See the tasks you tracked recently with their total time, and pick any of them up again with one click.
+Find recently tracked tasks, see how much time you spent on them, and start them again.
 
-Open **Top tasks** from the tabs at the top of Activity, Reports, and Settings.
+Open **Top tasks** from Clockoli's page navigation.
 
-## What the list shows
+![Top tasks with time totals and Start and Add time controls](images/top-tasks.png)
 
-Top tasks aggregates the current user's completed and running sessions by canonical task identity across selected time repositories.
+## Browse and search
 
-![Top tasks for the last 2 weeks: each task with its total time, a play button to start it, and a plus button to add time; the running task shows Stop with its elapsed time](images/top-tasks.png)
+Choose a period: **Last 2 weeks**, **Month**, **3 months**, **6 months**, or **Year**.
 
-- Without a filter, the list and tracked-time totals show only your own work, including imported non-URL identities. Typing a title or URL finds only tasks whose identities are HTTP(S) URLs, including completed tasks tracked by people in the connected time repositories outside the selected period. A teammate-only result shows **—** instead of attributing their hours to you.
-- Periods: last 2 weeks, month, 3 months, 6 months, or year. The list includes entries whose Start date falls in the selected period.
-- Completed and running time participate in ordering.
-- The task identity appears as a compact source line, with the optional title as the prominent link below it. Untitled URL tasks show the URL as the primary link without duplication. Imported tasks without a navigable URL show a non-link identity and title.
-- URL tasks aggregate across destinations with sorted time-repository provenance. Imported non-URL identities remain separate per destination, even if their text matches; when multiple repositories are connected, their rows show the time repository so identical identities can be distinguished.
+Without a search, Top tasks shows your completed and running time, grouped by task. The period uses each entry's Start date.
 
-Cross-user suggestions require an HTTP(S) URL identity and a nonempty task title. Untitled or imported non-URL tasks remain in personal records and the unfiltered list. Search uses a local catalog built from each person's Git-backed task index. Matches return without GitHub; misses against a complete catalog updated within the last minute also return locally, while older misses refresh changed personal branches. See [Search for a task](editing-time.md#search-for-a-task) for refresh and partial-result behavior.
+Search by task title or URL to find tasks beyond the selected period, including tasks other people tracked in connected time repositories. Search suggestions require a valid HTTP(S) URL and a nonempty title. Tasks without titles remain in your own unfiltered list, and imported tasks without a URL can still appear there.
 
-## Start a task again
+A teammate-only search result may appear without your time total. Use [Reports](reports.md) to see team time.
 
-Each task, including unresolved Clockify imports with a bare `owner/project/task-slug` identity, shows accumulated time, a play-icon **Start** control (or **Stop** with the elapsed time for the running task), and a plus-icon **Add time** control. Starting another task stops the running timer first and keeps the imported identity unchanged. **Add time** opens the shared form with that row's task selected, including its time repository for imported identities; it does not stop a running timer merely by opening the form. Page-originated starts and manually entered new tasks still require HTTP(S) URLs.
+Search uses a local task catalog backed by GitHub, so matches are usually immediate. On a new device, or when the catalog is incomplete, it may need to refresh from GitHub. If a repository cannot be read, results can be marked partial. See [Search for a task](editing-time.md#search-for-a-task).
 
-Use **Add time** next to the page tabs to add a completed entry or start a timer for any task; see [Add a single entry](editing-time.md#add-a-single-entry).
+## Restart or add time
 
-## Loading and titles
+- Select **Start** to track a task again. Starting another task stops the current timer first.
+- Select **Stop** for the currently running task.
+- Select **Add time** to add a completed entry without stopping the running timer.
 
-The page reads the current user's monthly paths from the selected destinations before hydrating optional GitHub issue/PR titles. Destinations load independently, so available tasks may remain visible with partial-read status. Metadata is bounded and cached; inaccessible metadata falls back to the stored URL/title rather than hiding tracked time.
+Imported tasks that still have a non-URL identity can be restarted from their existing rows. New tasks entered manually must use HTTP(S) URLs.
 
-For a previously loaded period, the last local task list appears while a fresh read runs; the Refresh icon indicates progress. You can search or start a cached task without waiting for the list refresh. Its totals may be outdated until the read finishes; a failure leaves the previous list and an error visible. The current running timer and pending-write status are read from local tracking state, not trusted from an old task snapshot.
-
-If your own task is missing from the unfiltered list, check the selected period. Search can find older and teammate tasks, but Top tasks shows only your own time; use [Reports](reports.md) for teammates' time.
+If a task is missing, check the selected period, clear the search, or refresh. Titles may be unavailable when GitHub metadata cannot be read; the task URL still works.

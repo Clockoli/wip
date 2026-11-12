@@ -1,61 +1,53 @@
 # Install Clockoli
 
-Install Clockoli from the Chrome Web Store, from a release file for Firefox and Safari, or from a development checkout.
-
-Clockoli is a browser extension for Chrome and other Chromium browsers, Firefox, and Safari on macOS. When it is installed, follow [Getting started](getting-started.md).
+Clockoli is a browser extension. The simplest installation is through the Chrome Web Store; Firefox and Safari builds are currently available as release files.
 
 ## Supported browsers
 
-- Chrome or another Chromium browser, version 102 or newer;
-- Firefox 140 or newer;
-- Safari 18 or newer on macOS.
+- **Chrome and Chromium-based browsers:** 102 or newer, with some features requiring newer Chrome versions.
+- **Firefox:** 140 or newer (preview build).
+- **Safari on macOS:** 18 or newer (preview build).
 
-## Chrome and other Chromium browsers
+After installation, follow [Getting started](getting-started.md).
 
-Add Clockoli from the [Chrome Web Store](https://chromewebstore.google.com/detail/clockoli/omkikhlcnbjpfbiicogjekhjgmbajmnl), then pin it to the toolbar so it is available on non-GitHub pages. Store installations update automatically. Store review can make the listed version trail the latest GitHub release.
+## Chrome and Chromium
+
+[Install Clockoli from the Chrome Web Store](https://chromewebstore.google.com/detail/clockoli/omkikhlcnbjpfbiicogjekhjgmbajmnl). Pin the extension to your toolbar to track non-GitHub pages. Store installations update automatically, although store review can delay a release.
 
 ## Firefox
 
-Download `Clockoli-X.Y.Z-firefox-signed.xpi` from a [GitHub release](https://github.com/clockoli/clockoli/releases). Open `about:addons`, choose the gear menu → **Install Add-on From File**, and select it.
+Download `Clockoli-X.Y.Z-firefox-signed.xpi` from [GitHub Releases](https://github.com/clockoli/clockoli/releases). Open `about:addons`, use the gear menu's **Install Add-on From File** action, and select the XPI.
 
-The unsigned `Clockoli-X.Y.Z-firefox.xpi` is for store submission and temporary testing. To load it, open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select the XPI. Temporary installations last until Firefox restarts.
+If a signed file is unavailable, an unsigned XPI can only be installed temporarily through `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on**. It disappears when Firefox restarts.
 
 ## Safari
 
-1. Download `Clockoli-X.Y.Z-safari-extension.zip` from a [GitHub release](https://github.com/clockoli/clockoli/releases) and extract it.
-2. In Safari Settings → Advanced, turn on **Show features for web developers**.
-3. In Safari Settings → Developer, choose **Add Temporary Extension…** and select the extracted folder. It must contain `manifest.json` at its top level.
+1. Download and extract `Clockoli-X.Y.Z-safari-extension.zip` from [GitHub Releases](https://github.com/clockoli/clockoli/releases).
+2. In **Safari Settings → Advanced**, enable **Show features for web developers**.
+3. In **Safari Settings → Developer**, select **Add Temporary Extension…** and choose the extracted folder containing `manifest.json`.
 
-Safari removes temporary extensions after 24 hours or when you quit Safari ([Apple documentation](https://developer.apple.com/documentation/safariservices/running-your-safari-web-extension)). Add the folder again to keep using Clockoli. Let pending changes sync before you quit Safari.
+Safari removes temporary extensions after 24 hours or when you quit the browser. Let pending changes sync before quitting; reinstall the folder when needed.
 
-The `Clockoli-X.Y.Z-safari-unsigned.zip` app is ad-hoc signed and not notarized, so macOS can refuse to open it on another Mac. When a release includes `Clockoli-X.Y.Z-safari.zip`, it contains the signed, notarized app: move `Clockoli.app` to Applications, open it once, and enable Clockoli in Safari Settings → Extensions. That installation stays across restarts.
+If the release includes a signed and notarized `Clockoli-X.Y.Z-safari.zip`, move `Clockoli.app` to Applications, open it, and enable Clockoli in **Safari Settings → Extensions** for an installation that persists. The `-safari-unsigned.zip` app is not notarized and may be blocked on other Macs.
 
-## Development checkout (Chromium)
+## Install from source (Chromium)
 
-1. Clone or update the repository:
+To try a development checkout:
 
-   ```bash
-   git clone git@github.com:clockoli/clockoli.git
-   cd clockoli
-   git switch main
-   git pull --ff-only
-   ```
+```bash
+git clone https://github.com/clockoli/clockoli.git
+cd clockoli
+```
 
-2. Open `chrome://extensions`.
-3. Enable **Developer mode**.
-4. Select **Load unpacked**.
-5. Choose the directory containing Clockoli's `manifest.json`.
+1. Open `chrome://extensions` and enable **Developer mode**.
+2. Select **Load unpacked** and choose the directory containing `manifest.json`.
 
-To use a release `Clockoli-X.Y.Z.zip` unpacked, extract it into a permanent folder first and select that folder. Do not select the ZIP itself.
+To load a release ZIP unpacked, extract it first and select the extracted directory, not the ZIP.
 
-## Update a file installation
+## Update or move an installation
 
-Unpacked and file installations do not update automatically:
+Unpacked and manually installed extensions do not update automatically. Update their files, select **Reload** in `chrome://extensions` for unpacked Chromium builds, and refresh open GitHub tabs.
 
-1. Pull the latest trusted source, or install the newer release file.
-2. For an unpacked installation, open `chrome://extensions` and select **Reload** on the Clockoli card.
-3. Refresh any already-open GitHub tabs so they receive the current content script.
+Before switching browsers, browser profiles, or installations, stop the timer, let pending changes sync, and [export your settings](settings.md#backup--restore). Credentials and local state are not transferred automatically.
 
-## Move to another browser or installation
-
-Before you replace an installation or switch browser, let pending changes sync, stop the timer, and [export your settings](settings.md#backup--restore). Credentials and local state do not move between browsers, browser profiles, or a store and an unpacked installation.
+For contributor setup, tests, and release packaging, see [CONTRIBUTING.md](../CONTRIBUTING.md).

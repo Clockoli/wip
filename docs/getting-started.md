@@ -1,107 +1,100 @@
 # Getting started
 
-Sign in with GitHub, connect a private time repository, and track your first task. Setup takes two guided steps in Settings.
+Connect GitHub, choose where your time is stored, and track your first task.
 
 ## Before you begin
 
-You need:
+You need a [supported browser](install.md#supported-browsers), a GitHub account, and a private GitHub repository you can write to (or permission to create one).
 
-- Clockoli installed in a [supported browser](install.md#supported-browsers);
-- a GitHub account;
-- read/write access to a private GitHub repository for your time records, or permission to create one. It may belong to you, another person, or an organization.
+Clockoli calls the repository that stores your time a **time repository**. It can be different from the GitHub repositories and other websites you track. See [Key concepts](concepts.md).
 
-The repository that stores your time is your **time repository**. It is separate from the repositories, documents, and tickets you track, and Clockoli never needs write access to those. See [Key concepts](concepts.md).
-
-The welcome screen opens automatically after installation. Until you connect a time repository, Clockoli shows only the two setup steps: other navigation and preferences are hidden to help you get started. Clicking the Clockoli toolbar icon or trying to open Activity before finishing setup brings you back to Settings rather than showing an empty tracking page; the quick popup, if chosen, offers **Set up Clockoli** instead. If the GitHub App isn't an option, expand **Why GitHub?** and select **Use a personal access token instead**. After setup, open Settings from the **Settings** tab at the top of Activity, Top tasks, and Reports, or from the extension's details page. Until you connect, **More settings** holds Clients, Billable rates, Invoicing, Backup & restore (including **Import settings**), and **Advanced**. If GitHub App sign-in is unavailable in a development build, the regular Settings page remains accessible for the PAT alternative.
+The welcome screen opens after installation and guides you through two setup steps. Until setup is complete, clicking the Clockoli icon returns you to Settings instead of an empty Activity page.
 
 ## Step 1: Sign in with GitHub
 
-![The Clockoli welcome screen with a Connect GitHub button and a Why GitHub? link](images/setup-sign-in.png)
+![Clockoli welcome screen with Connect GitHub](images/setup-sign-in.png)
 
-1. Select **Connect GitHub** on the welcome screen. You can expand **Why GitHub?** to read about access and privacy. If the browser asks for permission to contact GitHub, allow it. Clockoli shows the one-time code immediately and **tries to copy it to the clipboard**. It tells you whether copying succeeded.
-2. If copying succeeded, a five-second countdown appears before GitHub opens automatically. You can select **Open GitHub now** to skip the pause. On GitHub, paste the code with **⌘V on macOS or Ctrl+V on Windows/Linux**. Confirm that you are on **github.com** and authorizing **Clockoli**, then approve.
-3. If copying failed, **GitHub does not open automatically**. Select **Copy**, then **Open GitHub to enter code**. If clipboard access is blocked, select the displayed code and copy it with ⌘C (macOS) or Ctrl+C (Windows/Linux).
-4. Return to Clockoli. It shows **Waiting for GitHub authorization** and checks automatically; no manual confirmation is needed. If you closed or missed the GitHub tab, select **Reopen GitHub**. If the tab could not open automatically, select **Open GitHub to enter code** instead.
+1. Select **Connect GitHub**. If your browser asks for permission to contact GitHub, allow it.
+2. Clockoli shows a one-time code and tries to copy it. If copying succeeds, GitHub opens after a five-second countdown. Select **Open GitHub now** to open it sooner.
+3. On **github.com**, enter or paste the code and approve Clockoli.
+4. Return to Clockoli. It detects the authorization automatically.
 
-![The one-time GitHub sign-in code, already copied to the clipboard, with a countdown to opening GitHub and an Open GitHub now button](images/setup-device-code.png)
+![The GitHub sign-in code and Open GitHub now button](images/setup-device-code.png)
 
-Sign-in uses GitHub's [device flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow), so you never create or paste a personal access token. Signing in and giving the Clockoli GitHub App access to a repository are separate steps.
+If copying fails, select **Copy**, then **Open GitHub to enter code**. If you closed GitHub's page, select **Reopen GitHub**.
+
+GitHub sign-in and giving the Clockoli GitHub App access to your time repository are **separate permissions**. You may need to grant repository access in the next step.
 
 ## Step 2: Connect a time repository
 
-Choose **Create my own repository** to start with a new private repository, or **Join a team** if someone has shared one with you. Both are first-class onboarding choices.
+![Choosing Create my own repository or Join a team](images/setup-repository.png)
 
-![Step 2 of 2 in Settings: Connected to GitHub as alice, with the Create my own repository and Join a team choices](images/setup-repository.png)
+Choose **Create my own repository** if you are setting up Clockoli for yourself, or **Join a team** if someone shared a time repository with you.
 
-If you arrived through `https://clockoli.com/join/?repo=owner%2Frepository` (or an older `#repo=` link), leave that tab open while installing Clockoli. The extension detects the invitation, remembers the repository through sign-in and selects **Join a team**. When several invitation tabs are open, choose which repository to join. The URL itself grants no GitHub permissions and never causes a write without your confirmation. If the tab is unavailable, choose **Join a team** and paste the full Clockoli invitation link manually.
+### Create your own repository
 
-1. Paste the repository's GitHub URL (for example, `https://github.com/acme/time-data`) or `owner/name` into the repository field and click **Check** (or press Enter). You can also type at least two characters of a repository name and choose one of the suggestions.
-2. If Clockoli shows **Grant access**, select it. On GitHub, choose **Only select repositories**, add the time repository, and save. Return to Settings: Clockoli checks the repository again by itself.
-3. Read the privacy disclosure and, for actions that write to GitHub, **Repository writes**, then explicitly confirm the offered action:
-   - **Connect repository** adds a repository that is already set up for Clockoli. It changes no repository files.
-   - **Initialize repository** prepares a new repository: it creates the Clockoli marker and your personal storage branch, and for an empty repository also the first commit and default branch.
-   - **Join repository** adds you to a repository a teammate already initialized and creates your personal storage branch.
-   - **Set up storage branch** creates or verifies a missing personal storage branch when you are already a member.
+1. Select **Create a new time repository**. GitHub opens a template for a private repository, usually named `clockoli-data`.
+2. Create the repository on GitHub, copy its URL, and return to Clockoli.
+3. Paste the URL in Clockoli and select **Check repository**.
 
-The first repository you connect becomes your default and completes setup. When you add more later, choose the **Default time repository** and select **Finish setup**.
+Creating a GitHub repository does **not** automatically give the Clockoli App access to it. Follow **Grant access** if prompted.
 
-### No time repository yet?
+### Join an existing repository
 
-Choose **Create my own repository**, then select **Create a new time repository**. GitHub opens with the private Clockoli template, suggested as `clockoli-data`. After creating the repository, copy its URL from the GitHub address bar, return to Settings, paste it into the **New repository URL** dialog, and select **Check repository**. Then continue with step 2 above: creating a repository does not grant the Clockoli GitHub App access to it.
+1. Accept the GitHub repository invitation, if you received one.
+2. Select **Join a team** and paste the repository URL or `owner/name`. You can also search for an accessible repository by typing at least two characters of its name.
+3. Select **Check** or press Enter.
 
-### Which repositories work
+If you received a `clockoli.com/join/?repo=...` link, keep that page open during setup. Clockoli can detect it and preselect the repository. Older `#repo=` links also work. If detection fails, paste the invitation link manually. The link does not grant GitHub access by itself.
 
-A time repository must be:
+### Review and confirm
 
-- private;
-- not archived or disabled;
-- writable by your GitHub user;
-- granted to the Clockoli GitHub App with **Contents: Read and write**;
-- compatible with direct writes under its branch rules.
+Clockoli checks that the repository is private, accessible, and suitable for storing time. If it shows **Grant access**, use GitHub's **Only select repositories** option and select the intended repository.
 
-Initializing an organization repository requires fresh GitHub repository-admin permission. An ordinary teammate can join a repository an administrator already initialized; see [Work as a team](teams.md).
+Then review the action Clockoli offers:
 
-### What Clockoli checks before writing
+| Action | What it does |
+|---|---|
+| **Connect repository** | Adds an already prepared repository to this browser without changing GitHub files. |
+| **Initialize repository** | Prepares a new repository for Clockoli. |
+| **Join repository** | Registers you in an existing Clockoli repository and sets up your personal storage branch. |
+| **Set up storage branch** | Prepares a missing personal branch. |
 
-Discovery and inspection never write to GitHub or connect new repositories locally. Nothing is written until you confirm an action, and Clockoli rechecks the repository and your permissions just before applying it. Clockoli does not replace a missing target with another available repository: if a private repository cannot be found, check its name, your GitHub access, the App grant, and any pending organization approval.
+Only the last three actions write setup data to GitHub. Clockoli asks you to confirm them explicitly. Initializing an organization repository requires repository-admin permission.
 
-Anyone with read access to the time repository can see the task URLs, titles, timestamps, and descriptions stored there. Use a separate repository for each group of people who should see different data.
+The first successful connection completes initial setup and becomes the default repository. You can connect others later under **Settings → Time repositories**. For detailed permission and repository checks, see [Time repositories](time-data-repository.md#connect-a-repository).
 
-[Time repositories](time-data-repository.md#connect-a-repository) explains every check, dialog, and setup action in detail.
+**Privacy:** Anyone who can read a time repository can see the task URLs, titles, timestamps, and descriptions stored there. Use different repositories for groups that should not share that information.
 
 ## Track your first task
 
-A task is any HTTP(S) page; its URL is the task's identity and the title is optional.
+### From any website
 
-### On any website
+1. Open an HTTP(S) page you want to track.
+2. Select the Clockoli toolbar icon. Activity opens in a new tab (or focuses an existing Activity tab).
+3. In **From current page**, select **Track this task**.
+4. When you're done, add a description if useful and select **Stop and save**.
 
-1. Open the page you want to track.
-2. Select the Clockoli toolbar icon. Activity opens in its own tab, or the open Activity tab comes to the front.
-3. In the **From current page** banner, choose **Track this task**.
-4. Work normally.
-5. When you finish, return to Activity, add a description if useful, and choose **Stop and save**.
+Clockoli uses the page URL as the task identity. Internal browser pages such as `chrome://extensions` cannot be tracked.
 
-Clockoli uses the current tab's URL and title. Internal browser pages such as `chrome://extensions` are not HTTP(S) pages and cannot be tasks; from them, Activity opens without the banner.
+### From GitHub
 
-If you prefer a small popup over a new tab, set **Toolbar button** in [Settings](settings.md#toolbar-button) to **Open quick popup**. The popup offers **Start tracking this page** and **Stop and save**.
+On GitHub, select the Clockoli stopwatch before your avatar. It opens Activity with the current page ready to track. The icon also respects your chosen toolbar behavior.
 
-### On GitHub
+To track without leaving the page, choose **Open quick popup** under **Settings → Toolbar button**. The popup lets you start or stop a task and open Activity in a tab.
 
-Clockoli adds a stopwatch button before your GitHub avatar. It opens Activity with the current issue or pull request in the **From current page** banner, or the quick popup if you chose it under **Toolbar button**. GitHub titles are used when GitHub provides them.
-
-Clockoli runs one timer at a time: starting another task saves the running one first. See [Track a task](tracking.md).
+Only one timer runs at a time. Starting a different task saves the previous one first. See [Track a task](tracking.md).
 
 ## Use a personal access token instead
 
-If your environment cannot install the Clockoli GitHub App, or you already use the compatibility flow, open **More settings** → **Advanced** → **Use a personal access token**. After connecting, **Advanced** is available directly on the page.
+If you cannot use the GitHub App, open **More settings → Advanced → Use a personal access token**. This compatibility option supports **one time repository**, not multi-repository routing.
 
-PAT compatibility mode supports one time repository only. Create a fine-grained personal access token restricted to that private repository with **Contents: Read and write**, then enter the repository owner, repository name, branch, and token. Select **Validate and use PAT**. Clockoli validates the GitHub identity, private repository, branch, and write route before saving the configuration, and never displays a stored token again.
+Create a fine-grained GitHub token limited to that private repository with **Contents: Read and write**. Enter the repository owner, name, branch, and token, then select **Validate and use PAT**. Keep the token private; Clockoli does not show a stored token again.
 
 ## Next steps
 
-- [Track a task](tracking.md): the toolbar button, the GitHub stopwatch, switching tasks, and descriptions.
-- [Add and edit time](editing-time.md): fix forgotten timers and add missed work.
-- [Reports](reports.md) and [Invoicing](invoicing.md): turn tracked time into timesheets and invoices.
-- [Projects and routing](projects-and-routing.md): send different work to different time repositories.
-- [Work as a team](teams.md): share a time repository with teammates.
-- [Settings](settings.md): every other option, including backups. Keep the **GitHub account**, **Time repositories**, and **Projects and routing** sections apart: they control sign-in, storage, and where new time goes.
+- [Activity](activity.md) — browse your Timeline, Calendar, and List.
+- [Add and edit time](editing-time.md) — fix or add completed entries.
+- [Reports](reports.md) — filter and export time.
+- [Work as a team](teams.md) — invite collaborators.
+- [Settings](settings.md) — change preferences and back up local settings.
