@@ -45,6 +45,7 @@ These documents explain persistent contracts and implementation details. You do 
 - [Data format v1](data-format-v1.md) — normative record and storage schema
 - [Time repository layout](time-data-repository.md#branch-and-storage-layout) — Git branches and files
 - [Data and security architecture](data-and-privacy.md) — permissions, trust boundaries, and local storage
+- [Advanced sync recovery](sync-recovery.md) — queued timer conflicts and recovery details
 - [Specification compliance](spec-compliance.md) — implementation invariants and test coverage
 - [Browser release contracts](browser-releases.md) — compatibility and packaging
 - [Licensing and source releases](licensing.md) — GPL and corresponding source
