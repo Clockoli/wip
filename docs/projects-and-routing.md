@@ -16,9 +16,13 @@ A running timer and every accepted queued write remain pinned to their original 
 4. Order the projects with the ↑ and ↓ buttons so more specific rules come first. **✕** removes a project.
 5. Select **Save projects and routing**. Success or an error appears beside the button.
 
+![Projects and routing in Settings: a default for unmatched tasks and two projects, each with URL substrings, a time repository and a client](images/projects-and-routing.png)
+
 A project's client is used by [Invoicing](invoicing.md): picking a client narrows an invoice to the work of that client's projects.
 
 ## Examples
+
+![Routing the example rules: the projects Acme and Internal in order, then two timers: a GitHub acme issue matches Acme and is saved in acme/time-data, and a Google Doc matches neither project and is saved in the default repository](images/routing.png)
 
 | Project | URL substrings | Time repository |
 |---|---|---|

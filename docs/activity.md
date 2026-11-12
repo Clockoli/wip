@@ -2,11 +2,13 @@
 
 Review a week of tracked time in Timeline, Calendar, or List, move and resize entries, and search your whole history.
 
-Activity shows your completed and running time one Monday–Sunday week at a time in **Timeline**, **Calendar**, and **List**. Both the browser toolbar icon and the Clockoli icon on GitHub open this standalone page.
+Activity shows your completed and running time one Monday–Sunday week at a time in **Timeline**, **Calendar**, and **List**. By default, both the browser toolbar icon and the Clockoli icon on GitHub open this standalone page.
+
+![Activity in Timeline view: the week's totals, the running timer, and the day's entries grouped by project](images/timeline.png)
 
 ## Open Activity
 
-Click the Clockoli toolbar icon from any page, or the Clockoli stopwatch icon before your avatar on GitHub. Activity opens in a browser tab, or the existing Activity tab is focused. On an HTTP(S) page, its validated URL and title appear in the **From current page** banner. No tracking panel appears over the source page.
+Click the Clockoli toolbar icon from any page, or the Clockoli stopwatch icon before your avatar on GitHub. Activity opens in a browser tab, or the existing Activity tab is focused. On an HTTP(S) page, its validated URL and title appear in the **From current page** banner. No tracking panel appears over the source page. If **Toolbar button** in [Settings](settings.md#toolbar-button) is set to **Open quick popup**, both icons open the popup instead, and its **Open Activity in a new tab** button leads here.
 
 Activity loads the current user's completed entries from the selected time repositories. Each edit or delete is sent back to the record's original time repository.
 
@@ -16,7 +18,7 @@ Activity shows one Monday–Sunday week. In Timeline and Calendar, week arrows s
 
 Switching between Timeline, Calendar, and List resets the displayed week to the current week; navigating within one view retains its selected week. Activity remembers your selected view and restores it when reopened. Live timer updates do not navigate away from an explicitly selected historical week.
 
-Browsing loads records for the displayed week, including work started earlier that continues into it, instead of silently showing only the panel's recent-record window. Weekly reads scan earlier monthly files within bounded file, byte, and record budgets; exceeding a budget reports an error instead of silently showing an incomplete total. A failed week read restores the previous week and its recoverable records. Opening Activity starts a full current-week read.
+Browsing loads records for the displayed week, including work started earlier that continues into it, instead of silently showing only the recent entries. Weekly reads scan earlier monthly files within bounded file, byte, and record budgets; exceeding a budget reports an error instead of silently showing an incomplete total. A failed week read restores the previous week and its recoverable records. Opening Activity starts a full current-week read.
 
 ## Weekly summary
 
@@ -32,6 +34,8 @@ The summary panel replaces a duplicate Total above List, Timeline, and Calendar.
 ## Timeline and Calendar
 
 Activity mounts the interactive Timeline and Calendar component. Both views show loaded entries; the active timer appears only when viewing the current week. A gutter separates the chart from the summary and tracking panels.
+
+![Activity in Calendar view: one column per day and project, with each entry's shortened task title and start–end time](images/calendar.png)
 
 - Timeline and Calendar show tracked time for each local calendar day, including zero days. Intervals spanning midnight contribute to each affected day.
 - A completed zero-duration entry remains visible as a minimum-size block with its original equal Start and End times; it does not add tracked time.
@@ -57,6 +61,8 @@ If a GitHub read fails, Activity shows a compact notice with Retry. A connection
 Hovering over or focusing a Timeline or Calendar block shows its details in a compact floating card; clicking selects it without keeping the card open after the mouse leaves. A touchscreen tap also reveals the card. Neither single nor double click starts or stops a timer; use **Track again** or **Stop and save** in the details to change tracking. The selected entry's Start and End details show only the local time (HH:MM), without a date.
 
 Activity uses a compact details card with a task icon, truncated title, local start–end range, duration, an always-available inline description editor, separate icon-only **Delete** and **Edit**, and a prominent **Track again** action for completed entries. The card stays open while moving the pointer to its actions or editing the description. It fits within the available viewport.
+
+![The details card for a Calendar entry: task title, 13:26 – 14:59 and its duration, project, a description field, and Delete, Edit and Track again](images/entry-details.png)
 
 - Completed entries offer **Edit** to open the same prefilled form as List. The field **Add description...** is always available, even for an empty description.
 - Description edits save with Enter or blur; Shift+Enter inserts a line and Escape cancels an unsaved edit.
@@ -86,6 +92,8 @@ Overlapping visible timeline blocks produce one warning naming the entries and i
 ## List
 
 List shows the selected week's completed entries in inset cards grouped by date, without a separate Tracked time heading. In Activity, each completed task has a start-tracking icon; the icon becomes stop when that task is running. Starting another task stops the current timer first. Locally stored entries use the same tracking actions as entries already on GitHub. Invalid task identities have no tracking action.
+
+![Activity in List view: a search field, week arrows, and today's entries with times, task links and descriptions](images/activity-list.png)
 
 ### Search all history
 

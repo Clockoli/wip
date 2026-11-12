@@ -29,6 +29,8 @@ In **Settings → Time repositories**, find the connected repository and select 
 
 Search a GitHub username, choose the verified account (login, public display name and avatar), and select **Send invitation to the repository**. Clockoli confirms which private time repository will grant write access and warns that collaborators can read each other's stored time. It then checks the selected GitHub user ID, repository identity, current access and pending invitations, and sends a GitHub invitation only when needed. Existing write access and pending invitations do not result in duplicates. Read-only access must be upgraded in GitHub.
 
+![Invite teammate in a repository's Team section: the GitHub account erin-dev selected and the Send invitation to the repository button, with Copy Clockoli invitation message below](images/invite-teammate.png)
+
 The invitation uses GitHub's repository permission system. A teammate must accept on GitHub and separately join Clockoli. **Copy Clockoli invitation message** copies a ready-to-send message with the repository name, `clockoli.com/join/?repo=...` setup link, and instructions to keep the join page open while installing Clockoli. Share it after sending the GitHub invitation; the message itself does not grant repository access. Older `#repo=` links are still accepted. **How invitations work** explains the process without another copy action.
 
 Inviting requires both the signed-in user's repository-admin rights and **Administration: Read and write** on the Clockoli GitHub App installation. The App owner must enable that permission and installations must accept the updated permission request. Choose **Only select repositories** and grant the App access to the intended time repository: App permissions apply to the repositories selected for that installation, not automatically to the entire GitHub account. Organization and enterprise policies can forbid outside collaborators.
@@ -40,6 +42,8 @@ Each connected repository has a **Team** section. The list initially shows up to
 - **GitHub invitation pending** — GitHub has not yet confirmed access.
 - **GitHub access granted** — GitHub permits access, but Clockoli storage readiness has not been verified.
 - **Clockoli storage ready** — a registered stable GitHub ID has a matching personal branch with valid ownership metadata and a valid task index. This confirms storage preparation, not extension installation or recent activity.
+
+![A connected time repository card in Settings with its Team section: three collaborators with Clockoli storage ready and one pending GitHub invitation](images/team.png)
 
 This distinction matters: GitHub repository access is not the same as joining Clockoli. If a storage check is inconclusive, Clockoli keeps the GitHub-access state instead of claiming the user has joined. Email-only invitations have no GitHub account avatar and are not shown; the pending lookup scans up to five pages. A failed collaborator read shows “Collaborators unavailable”.
 
@@ -53,4 +57,4 @@ The Team section initially displays four accounts in each category; expand **Mor
 
 ## Report across the team
 
-[Reports](reports.md) combines the selected visible repositories and every valid personal branch in them. On GitHub issue and pull-request pages, the stopwatch dialog can show **Tracked on this issue/PR** totals for all participants. Hourly rates stay in each browser, so teammates sharing a repository can use different rate cards.
+[Reports](reports.md) combines the selected visible repositories and every valid personal branch in them. On GitHub issue and pull-request pages, each participant in GitHub's participant list shows the time they tracked on that task. Hourly rates stay in each browser, so teammates sharing a repository can use different rate cards.

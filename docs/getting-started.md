@@ -12,20 +12,26 @@ You need:
 
 The repository that stores your time is your **time repository**. It is separate from the repositories, documents, and tickets you track, and Clockoli never needs write access to those. See [Key concepts](concepts.md).
 
-The welcome screen opens automatically after installation. Until you connect a time repository, Clockoli shows only the two setup steps: other navigation and preferences are hidden to help you get started. Clicking the Clockoli toolbar icon or trying to open Activity before finishing setup brings you back to Settings rather than showing an empty tracking page. If the GitHub App isn't an option, expand **Why GitHub?** and select **Use a personal access token instead**. After setup, reopen Settings using the gear button in the Clockoli panel or the extension's details page. **More settings** holds Billable rates, Backup & restore (including **Import settings**), and **Advanced**. If GitHub App sign-in is unavailable in a development build, the regular Settings page remains accessible for the PAT alternative.
+The welcome screen opens automatically after installation. Until you connect a time repository, Clockoli shows only the two setup steps: other navigation and preferences are hidden to help you get started. Clicking the Clockoli toolbar icon or trying to open Activity before finishing setup brings you back to Settings rather than showing an empty tracking page; the quick popup, if chosen, offers **Set up Clockoli** instead. If the GitHub App isn't an option, expand **Why GitHub?** and select **Use a personal access token instead**. After setup, open Settings from the **Settings** tab at the top of Activity, Top tasks, and Reports, or from the extension's details page. Until you connect, **More settings** holds Clients, Billable rates, Invoicing, Backup & restore (including **Import settings**), and **Advanced**. If GitHub App sign-in is unavailable in a development build, the regular Settings page remains accessible for the PAT alternative.
 
 ## Step 1: Sign in with GitHub
+
+![The Clockoli welcome screen with a Connect GitHub button and a Why GitHub? link](images/setup-sign-in.png)
 
 1. Select **Connect GitHub** on the welcome screen. You can expand **Why GitHub?** to read about access and privacy. If the browser asks for permission to contact GitHub, allow it. Clockoli shows the one-time code immediately and **tries to copy it to the clipboard**. It tells you whether copying succeeded.
 2. If copying succeeded, a five-second countdown appears before GitHub opens automatically. You can select **Open GitHub now** to skip the pause. On GitHub, paste the code with **⌘V on macOS or Ctrl+V on Windows/Linux**. Confirm that you are on **github.com** and authorizing **Clockoli**, then approve.
 3. If copying failed, **GitHub does not open automatically**. Select **Copy**, then **Open GitHub to enter code**. If clipboard access is blocked, select the displayed code and copy it with ⌘C (macOS) or Ctrl+C (Windows/Linux).
 4. Return to Clockoli. It shows **Waiting for GitHub authorization** and checks automatically; no manual confirmation is needed. If you closed or missed the GitHub tab, select **Reopen GitHub**. If the tab could not open automatically, select **Open GitHub to enter code** instead.
 
+![The one-time GitHub sign-in code, already copied to the clipboard, with a countdown to opening GitHub and an Open GitHub now button](images/setup-device-code.png)
+
 Sign-in uses GitHub's [device flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow), so you never create or paste a personal access token. Signing in and giving the Clockoli GitHub App access to a repository are separate steps.
 
 ## Step 2: Connect a time repository
 
 Choose **Create my own repository** to start with a new private repository, or **Join a team** if someone has shared one with you. Both are first-class onboarding choices.
+
+![Step 2 of 2 in Settings: Connected to GitHub as alice, with the Create my own repository and Join a team choices](images/setup-repository.png)
 
 If you arrived through `https://clockoli.com/join/?repo=owner%2Frepository` (or an older `#repo=` link), leave that tab open while installing Clockoli. The extension detects the invitation, remembers the repository through sign-in and selects **Join a team**. When several invitation tabs are open, choose which repository to join. The URL itself grants no GitHub permissions and never causes a write without your confirmation. If the tab is unavailable, choose **Join a team** and paste the full Clockoli invitation link manually.
 
@@ -70,16 +76,18 @@ A task is any HTTP(S) page; its URL is the task's identity and the title is opti
 ### On any website
 
 1. Open the page you want to track.
-2. Select the Clockoli toolbar icon.
-3. In the panel, choose **Track this task**.
+2. Select the Clockoli toolbar icon. Activity opens in its own tab, or the open Activity tab comes to the front.
+3. In the **From current page** banner, choose **Track this task**.
 4. Work normally.
-5. Open Clockoli again, add a description if useful, and choose **Stop and save**.
+5. When you finish, return to Activity, add a description if useful, and choose **Stop and save**.
 
-The panel uses the current tab's URL and title. Internal browser pages such as `chrome://extensions` are not HTTP(S) pages and cannot be tasks; on them, the toolbar opens **Activity** instead.
+Clockoli uses the current tab's URL and title. Internal browser pages such as `chrome://extensions` are not HTTP(S) pages and cannot be tasks; from them, Activity opens without the banner.
+
+If you prefer a small popup over a new tab, set **Toolbar button** in [Settings](settings.md#toolbar-button) to **Open quick popup**. The popup offers **Start tracking this page** and **Stop and save**.
 
 ### On GitHub
 
-Clockoli adds a split stopwatch control before your GitHub avatar. The stopwatch opens the tracking panel for the current issue or pull request; the arrow opens **Top tasks**, **Activity**, and **Reports**. GitHub titles are used when GitHub provides them.
+Clockoli adds a stopwatch button before your GitHub avatar. It opens Activity with the current issue or pull request in the **From current page** banner, or the quick popup if you chose it under **Toolbar button**. GitHub titles are used when GitHub provides them.
 
 Clockoli runs one timer at a time: starting another task saves the running one first. See [Track a task](tracking.md).
 
@@ -91,7 +99,7 @@ PAT compatibility mode supports one time repository only. Create a fine-grained 
 
 ## Next steps
 
-- [Track a task](tracking.md): the panel, the GitHub stopwatch, switching tasks, and descriptions.
+- [Track a task](tracking.md): the toolbar button, the GitHub stopwatch, switching tasks, and descriptions.
 - [Add and edit time](editing-time.md): fix forgotten timers and add missed work.
 - [Reports](reports.md) and [Invoicing](invoicing.md): turn tracked time into timesheets and invoices.
 - [Projects and routing](projects-and-routing.md): send different work to different time repositories.

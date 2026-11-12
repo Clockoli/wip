@@ -4,6 +4,8 @@ Filter tracked time by period, person, project, and source, chart it, and export
 
 Reports combines tracked time from selected or all time repositories, including teammates' personal branches you can read. Open it from Clockoli's page navigation.
 
+![Reports for one week: CSV, JSON, Print and Create invoice actions, the total and billable amount, filters, and hours per day stacked by person](images/reports.png)
+
 Reports includes records whose Start date falls in the selected inclusive range.
 
 On a return visit, Reports shows the last locally saved result for the same local/UTC basis and restores its date range while refreshing it from GitHub. A compact progress indicator appears at the right side of the top navigation; the previous report remains visible. Cached totals may be out of date; exports and invoices stay unavailable until a successful fresh read. If refresh fails, the previous result remains visible for reference, with export and invoicing still blocked. Changing the period or basis loads the requested data rather than presenting a different period as current.
@@ -11,6 +13,8 @@ On a return visit, Reports shows the last locally saved result for the same loca
 ## Choose a period
 
 Open the date-range button beneath Reporting period to choose a preset or custom dates. The button shows the selected date range, including when a preset is selected.
+
+![The reporting period picker: presets such as Last week on the left, Start and End dates and a month calendar with the selected week on the right, and a switch between local time and UTC](images/report-period.png)
 
 - Today and Yesterday
 - Last 7 days and Last 30 days
@@ -40,7 +44,7 @@ The summary shows:
 - people count;
 - source count.
 
-Filter by Client, People, Projects, Task sources, and Time repositories. Client filters use project-client assignments from this browser's local settings. Select **All clients** or **Unassigned** if needed. For a GitHub issue or pull request, the **Task source** is `owner/repository`; for another URL it is the hostname. The **Time repository** is the destination that stores the record.
+Filter by Client, People, Projects, Sources, and Time repositories. Client filters use project-client assignments from this browser's local settings. Select **All clients** or **Unassigned** if needed. For a GitHub issue or pull request, the **Source** is `owner/repository`; for another URL it is the hostname. The **Time repository** is the destination that stores the record.
 
 ## Charts
 
@@ -49,9 +53,9 @@ Compact controls beside the graph's axes clarify what each dropdown changes: **Y
 Choose one vertical metric:
 
 - Total time
-- Avg time per distinct task
+- Avg time: total time divided by the number of distinct tasks
 - Billable amount
-- Task count, deduplicated by canonical URL
+- Task count: the number of distinct task URLs
 
 Choose independent horizontal and stack dimensions:
 
@@ -59,9 +63,9 @@ Choose independent horizontal and stack dimensions:
 - Week
 - Month
 - Person
-- Task source
+- Source
 - Time repository
-- Task
+- Task URL / title
 
 The analytics are calculated for the chart; the data table's rows are rendered only when expanded, which keeps large reports responsive.
 
@@ -69,9 +73,10 @@ Billable amounts need [client-specific billable rates](billable-rates.md). Choos
 
 ## Export a timesheet
 
-- CSV timesheet
-- JSON timesheet
-- Native browser print or save-to-PDF
+- **CSV**: a CSV timesheet
+- **JSON**: a JSON timesheet
+- **PDF**: downloads the timesheet as a PDF file
+- **Print**: opens the browser's print dialog
 
 CSV and JSON include task URL and title, Start, End, duration, person, and description. They do not include the time repository or additional GitHub issue/PR metadata. When local rates are configured, each exported row also includes its effective hourly rate, per-entry billable amount, and that rate's currency.
 
@@ -83,7 +88,7 @@ To bill a client, use **Create invoice**; see [Invoicing](invoicing.md).
 
 Each destination is loaded independently. If one fails, Clockoli keeps records from the repositories that loaded, marks the result partial, and identifies the unavailable destinations. Conflicting copies of the same record ID are omitted and also make the result partial.
 
-While the selected data is partial, Clockoli disables CSV, JSON, and print/PDF timesheet exports. Invoice creation may still be available for the filtered records: confirm that every intended repository loaded before printing an invoice.
+While the selected data is partial, Clockoli disables the CSV, JSON, PDF, and Print timesheet exports. Invoice creation may still be available for the filtered records: confirm that every intended repository loaded before printing an invoice.
 
 If local operations are waiting to sync, Reports warns that its displayed totals are **GitHub-only**: local changes are not included, even if the report has no entries or filters hide them. Routine pending work does not display a queue count or Activity review link. If a conflict needs review, Reports shows the queue count and conflict, and the Activity navigation tab marks it across standalone pages. Follow **Review in Activity** to inspect the original and proposed entries and jump directly to an older affected week in List, Timeline, or Calendar. Before exporting or printing, Reports rechecks local changes and refuses the action if synchronization is pending or cannot be verified. Timesheet exports and invoice creation, printing, and PDF saving are unavailable while local operations remain pending; load Reports again after they sync. A remote-only partial read still permits invoice creation for the filtered records as described above.
 

@@ -2,6 +2,8 @@
 
 Clockoli separates durable shared time data from browser-local secrets and preferences.
 
+![Where your data is kept: task URLs, times, descriptions, who tracked them and GitHub issue details go to your time repository; GitHub sign-in, rates, clients, invoice details and settings stay only in this browser, as do changes until they sync; Frankfurter receives only currency codes and dates when a billable report or invoice mixes currencies](images/where-data-lives.png)
+
 ## Architecture at a glance
 
 ```text
@@ -43,12 +45,12 @@ Clockoli uses extension-origin IndexedDB for:
 - recent-entry and report caches;
 - task metadata cache;
 - recent-entry display preference;
-- per-person hourly rates and each rate's currency sign or description;
+- each client's rate card: every person's hourly rate periods, with their currency and whether the currency symbol goes before or after the amount;
 - settings-backup revision state.
 
 GitHub page JavaScript and content scripts do not receive credentials or raw local billing settings. Durable local data remains in extension-origin IndexedDB, and the extension does not request the `storage` permission.
 
-The browser's `tabs` permission lets the toolbar identify an already-open Clockoli Activity tab and focus it instead of opening duplicates. Tab URLs are checked locally for that exact extension page and are not sent to GitHub.
+The browser's `tabs` permission lets the toolbar focus an already-open Clockoli Activity tab instead of opening a duplicate, and lets Settings detect an open Clockoli team invitation page (`clockoli.com/join`). Tab URLs are checked locally and are not sent to GitHub.
 
 ## Time-repository and branch layout
 
@@ -172,7 +174,7 @@ Do not clear browser data or Clockoli local configuration while a Stop is waitin
 
 ## Aggregated reads and reports cache
 
-Top tasks, Activity, participant totals, and Reports can load selected or all configured destinations. Each destination is independent: successful records remain visible when another destination fails, with explicit partial status. Reports distinguishes **Task source** from **Time repository** and disables exports while selected data is partial. Top tasks aggregate canonical URLs while retaining destination provenance.
+Top tasks, Activity, participant totals, and Reports can load selected or all configured destinations. Each destination is independent: successful records remain visible when another destination fails, with explicit partial status. Reports distinguishes **Source** from **Time repository** and disables exports while selected data is partial. Top tasks aggregate canonical URLs while retaining destination provenance.
 
 For each repository, Reports first checks the configured branch using an ETag. An unchanged branch can reuse the extension-local snapshot. When a branch changes, Clockoli downloads only monthly blobs whose immutable Git SHA is not already cached.
 

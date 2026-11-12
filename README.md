@@ -24,7 +24,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/timeline.png" width="860" alt="The Clockoli panel: a running timer for a GitHub issue above a timeline of the day's tracked tasks">
+  <img src="docs/images/timeline.png" width="860" alt="Clockoli Activity: a running timer for a GitHub issue above a timeline of the day's tracked tasks, grouped by project">
 </p>
 
 ## Why Clockoli
@@ -88,7 +88,7 @@ Your GitHub account signs you in, a source repository may own the issue you trac
 - See live **Today** and **This week** totals, and switch to a recent task from **Top tasks**.
 
 <p align="center">
-  <img src="docs/images/top-tasks.png" width="600" alt="Top tasks: recently tracked tasks with totals and Start buttons">
+  <img src="docs/images/top-tasks.png" width="600" alt="Top tasks: recently tracked tasks with their totals and a play button to start each one">
 </p>
 
 ### Correct
@@ -97,7 +97,7 @@ Your GitHub account signs you in, a source repository may own the issue you trac
 - Delete entries, add completed entries in bulk on the Activity page, and merge task identities that refer to the same work.
 
 <p align="center">
-  <img src="docs/images/calendar.png" width="600" alt="Activity calendar: a day of tracked blocks that can be dragged and resized">
+  <img src="docs/images/calendar.png" width="600" alt="Activity calendar: a week of tracked blocks that can be dragged and resized">
 </p>
 
 ### Report and bill
@@ -129,9 +129,10 @@ Clockoli sends data only to GitHub, plus currency codes and dates to the [Frankf
 |---|---|
 | `api.github.com` | Read and write time records in the repositories you connect; read titles of issues and pull requests you track. |
 | `github.com/login` | GitHub device-flow sign-in. |
-| `github.com/*` (content script) | Show the stopwatch and tracker panel on GitHub pages. |
+| `github.com/*` (content script) | Show the stopwatch button on GitHub pages and each participant's tracked time on issues and pull requests. |
 | `api.frankfurter.dev` | Historical exchange rates for mixed-currency reports. |
-| `activeTab`, `scripting` | Read the current tab's URL and title and show the tracker panel when you click the toolbar button. |
+| `activeTab`, `scripting` | Read the current tab's URL and title when you click the toolbar button. |
+| `tabs` | Focus an open Activity tab instead of opening another, and notice an open team invitation page. |
 | `alarms` | Retry queued writes to GitHub once a minute. |
 | `favicon` (Chrome only) | Show each task's site icon. |
 | `app.clockify.me` (optional) | Requested only when you enable the Clockify import add-on. |

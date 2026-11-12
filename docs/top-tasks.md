@@ -2,11 +2,13 @@
 
 See the tasks you tracked recently with their total time, and pick any of them up again with one click.
 
-Open **Top tasks** from the toolbar panel navigation or the GitHub split-menu arrow.
+Open **Top tasks** from the tabs at the top of Activity, Reports, and Settings.
 
 ## What the list shows
 
 Top tasks aggregates the current user's completed and running sessions by canonical task identity across selected time repositories.
+
+![Top tasks for the last 2 weeks: each task with its total time, a play button to start it, and a plus button to add time; the running task shows Stop with its elapsed time](images/top-tasks.png)
 
 - Without a filter, the list and tracked-time totals show only your own work, including imported non-URL identities. Typing a title or URL finds only tasks whose identities are HTTP(S) URLs, including completed tasks tracked by people in the connected time repositories outside the selected period. A teammate-only result shows **—** instead of attributing their hours to you.
 - Periods: last 2 weeks, month, 3 months, 6 months, or year. The list includes entries whose Start date falls in the selected period.

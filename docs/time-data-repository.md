@@ -84,6 +84,8 @@ Each connected repository has a card in **Time repositories** with **Check acces
 
 ## Branch and storage layout
 
+![Files in a time repository: the main branch holds only the shared marker, and each person's branch, such as clockoli/users/1001, holds their user marker, task index, running timer and monthly time files](images/repository-layout.png)
+
 The default branch contains the shared repository marker:
 
 ```text
@@ -202,7 +204,7 @@ A ruleset requiring a pull request for every change can prevent normal timer ope
 
 Top tasks, Activity, participant totals, and Reports can read selected or all configured time repositories. Each destination is loaded independently. If one fails, Clockoli can show records from the repositories that succeeded together with a partial-data warning. Conflicting copies of the same record ID are omitted and reported. Reports disables export until the selected result is complete and conflict-free.
 
-Reports lists valid personal branches in each selected time repository, reads represented monthly JSONL files for the selected local-date range, and downloads immutable blobs as needed. It keeps **Task source** (the tracked URL's host or GitHub repository) separate from **Time repository** (the storage destination).
+Reports lists valid personal branches in each selected time repository, reads represented monthly JSONL files for the selected local-date range, and downloads immutable blobs as needed. It keeps **Source** (the tracked URL's host or GitHub repository) separate from **Time repository** (the storage destination).
 
 On GitHub issue and pull-request pages, participant all-time totals read one `.clockoli/tasks.json` file from each relevant personal branch. The sidebar does not scan monthly history. Top tasks aggregate the same canonical HTTP(S) URL across selected destinations and preserve destination provenance; imported non-URL identities remain destination-specific.
 
