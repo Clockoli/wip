@@ -35,7 +35,7 @@ The summary panel replaces a duplicate Total above List, Timeline, and Calendar.
 
 Activity mounts the interactive Timeline and Calendar component. Both views show loaded entries; the active timer appears only when viewing the current week. A gutter separates the chart from the summary and tracking panels.
 
-![Activity in Calendar view: one column per day and project, with each entry's task and start–end time](images/calendar.png)
+![Activity in Calendar view: one column per day and project, with each entry's shortened task title and start–end time](images/calendar.png)
 
 - Timeline and Calendar show tracked time for each local calendar day, including zero days. Intervals spanning midnight contribute to each affected day.
 - A completed zero-duration entry remains visible as a minimum-size block with its original equal Start and End times; it does not add tracked time.
@@ -62,7 +62,7 @@ Hovering over or focusing a Timeline or Calendar block shows its details in a co
 
 Activity uses a compact details card with a task icon, truncated title, local start–end range, duration, an always-available inline description editor, separate icon-only **Delete** and **Edit**, and a prominent **Track again** action for completed entries. The card stays open while moving the pointer to its actions or editing the description. It fits within the available viewport.
 
-![The details card for a Calendar entry: task title, 13:43 – 15:24 and its duration, project, a description field, and Delete, Edit and Track again](images/entry-details.png)
+![The details card for a Calendar entry: task title, 13:26 – 14:59 and its duration, project, a description field, and Delete, Edit and Track again](images/entry-details.png)
 
 - Completed entries offer **Edit** to open the same prefilled form as List. The field **Add description...** is always available, even for an empty description.
 - Description edits save with Enter or blur; Shift+Enter inserts a line and Escape cancels an unsaved edit.

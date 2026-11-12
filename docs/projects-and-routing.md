@@ -22,7 +22,7 @@ A project's client is used by [Invoicing](invoicing.md): picking a client narrow
 
 ## Examples
 
-![Routing the example rules: a GitHub acme issue matches Acme and goes to acme/time-data, a my-company link matches Internal, and a Google Doc matches no project and goes to the default repository](images/routing.png)
+![Routing the example rules: the projects Acme and Internal in order, then two timers: a GitHub acme issue matches Acme and is saved in acme/time-data, and a Google Doc matches neither project and is saved in the default repository](images/routing.png)
 
 | Project | URL substrings | Time repository |
 |---|---|---|

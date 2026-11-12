@@ -90,7 +90,7 @@ Select a client to manage its private GitHub-user rates and effective dates. Cho
 
 ### Backup & restore
 
-![Backup & restore with the Export settings and Import settings buttons and a What is included? list](images/backup.png)
+![Backup & restore with the Export settings and Import settings buttons and a collapsed What is included? section](images/backup.png)
 
 **Export settings** downloads a readable JSON backup of your local settings; **Import settings** restores one. Export a new backup after changing local settings. It can contain sensitive rate and customer information, so protect the downloaded file. It includes:
 

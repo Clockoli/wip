@@ -10,7 +10,7 @@ Start, Stop, task switches, single completed **Add time**, **Bulk time adding**,
 
 ## When changes reach GitHub
 
-![From Stop to GitHub: the change is saved in your browser at once, and about 15 seconds after your last change it is sent to your time repository as one commit; offline changes wait and other browsers pick them up later](images/sync-flow.png)
+![From Stop to GitHub: the change is saved in your browser at once and shows in Activity and Top tasks; about 15 seconds after your last change it is committed to your personal branch, where Reports sees it; offline changes wait and other browsers pick them up within about a minute](images/sync-flow.png)
 
 Queued writes are pushed automatically after **15 seconds without any new local changes**, with no manual Sync action. A new edit resets the countdown, including successive edits coalesced into an existing queued operation. The deadline is reconstructed from the persisted IndexedDB queue when the service worker restarts.
 

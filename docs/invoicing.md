@@ -34,7 +34,7 @@ Payment terms can range from 0 to 365 days. The **Footer notes** field supports 
 
 Each invoice uses one target currency. When effective-dated rates change within the period, Clockoli keeps the corresponding invoice lines separate; when the covered records use multiple currencies, it converts each entry using the exchange rate for that entry's date. Unrated time remains visible as not billed.
 
-![An invoice preview: your business details, the client, the billing period, one line per task and rate with hours and amount, the total, payment terms and bank details](images/invoice-preview.png)
+![An invoice preview: your business details, the client, the billing period, task lines with hours and amount (a task appears once for each hourly rate it was billed at), the total, payment terms and bank details](images/invoice-preview.png)
 
 The invoice dialog shows the billing period from the Reports Start and End dates. To bill another period, change the period in Reports first.
 

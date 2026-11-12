@@ -88,7 +88,7 @@ Your GitHub account signs you in, a source repository may own the issue you trac
 - See live **Today** and **This week** totals, and switch to a recent task from **Top tasks**.
 
 <p align="center">
-  <img src="docs/images/top-tasks.png" width="600" alt="Top tasks: recently tracked tasks with totals and Start buttons">
+  <img src="docs/images/top-tasks.png" width="600" alt="Top tasks: recently tracked tasks with their totals and a play button to start each one">
 </p>
 
 ### Correct
@@ -97,7 +97,7 @@ Your GitHub account signs you in, a source repository may own the issue you trac
 - Delete entries, add completed entries in bulk on the Activity page, and merge task identities that refer to the same work.
 
 <p align="center">
-  <img src="docs/images/calendar.png" width="600" alt="Activity calendar: a day of tracked blocks that can be dragged and resized">
+  <img src="docs/images/calendar.png" width="600" alt="Activity calendar: a week of tracked blocks that can be dragged and resized">
 </p>
 
 ### Report and bill
