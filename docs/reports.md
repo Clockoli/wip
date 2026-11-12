@@ -1,97 +1,65 @@
 # Reports
 
-Filter tracked time by period, person, project, and source, chart it, and export CSV, JSON, or PDF timesheets.
+Use Reports to filter tracked time, view charts, export timesheets, and create invoices. Reports combines the selected time repositories and the teammates' branches you can read.
 
-Reports combines tracked time from selected or all time repositories, including teammates' personal branches you can read. Open it from Clockoli's page navigation.
+![Reports with filters, charts, totals, and export actions](images/reports.png)
 
-![Reports for one week: CSV, JSON, Print and Create invoice actions, the total and billable amount, filters, and hours per day stacked by person](images/reports.png)
-
-Reports includes records whose Start date falls in the selected inclusive range.
-
-On a return visit, Reports shows the last locally saved result for the same local/UTC basis and restores its date range while refreshing it from GitHub. A compact progress indicator appears at the right side of the top navigation; the previous report remains visible. Cached totals may be out of date; exports and invoices stay unavailable until a successful fresh read. If refresh fails, the previous result remains visible for reference, with export and invoicing still blocked. Changing the period or basis loads the requested data rather than presenting a different period as current.
+Reports includes an entry when its **Start date** falls within the selected period.
 
 ## Choose a period
 
-Open the date-range button beneath Reporting period to choose a preset or custom dates. The button shows the selected date range, including when a preset is selected.
+Select the date-range button to choose **Today**, **Yesterday**, the last 7 or 30 days, this or last week, month, quarter, or year, or a custom Start and End date.
 
-![The reporting period picker: presets such as Last week on the left, Start and End dates and a month calendar with the selected week on the right, and a switch between local time and UTC](images/report-period.png)
+![Reporting period picker with presets and calendar](images/report-period.png)
 
-- Today and Yesterday
-- Last 7 days and Last 30 days
-- This week and Last week
-- This month and Last month
-- This quarter and Last quarter
-- This year and Last year
-- Custom Start and End dates
+Presets apply immediately. For a custom range, select the first and last days or enter dates directly. The range is inclusive.
 
-Presets apply immediately. In the calendar, select a Start day and then an End day; choosing an earlier second day starts a new range. You can also edit the native Start and End date fields. Month navigation leaves the selection unchanged. Arrow keys move between days, Enter or Space selects, and Escape closes the picker and returns focus to the button. Clicking outside also closes it.
+A large period can exceed Clockoli's safe GitHub read limits. If prompted, choose a shorter range.
 
-Clockoli enforces bounded file, byte, and record budgets so one report cannot make unbounded authenticated requests. If Reports asks for a shorter period, choose one and load again.
+## Local dates or UTC
 
-## Local time or UTC
+By default, Reports uses each entry's recorded local Start date. Enable **UTC** to group and filter by UTC Start date instead.
 
-The footer names the local time zone. Turn on UTC to include and group entries by their UTC Start date, using that same date for effective rates, exchange rates, exports, and invoices. With UTC off, reporting uses each entry's recorded local date. UTC reporting also reads the adjacent monthly files so records near a month boundary are included correctly.
+The chosen basis also affects rate dates, exchange-rate dates, timesheet exports, and invoices. Clockoli saves this preference locally.
 
-The switch is saved locally across reloads and is included in settings exports; settings files without it use the local basis. Reporting preferences and invoices are never written to the time-data repository.
+## Filter a report
 
-## Summary and filters
+Filter by **Client**, **People**, **Projects**, **Sources**, and **Time repositories**.
 
-The summary shows:
+A **Source** is where the tracked task lives: the GitHub `owner/repository` for an issue or pull request, or the hostname for another website. A **Time repository** is where its record is stored.
 
-- tracked time;
-- billable amount;
-- entry count;
-- people count;
-- source count.
+The summary shows total tracked time, billable amount, entries, people, and sources.
 
-Filter by Client, People, Projects, Sources, and Time repositories. Client filters use project-client assignments from this browser's local settings. Select **All clients** or **Unassigned** if needed. For a GitHub issue or pull request, the **Source** is `owner/repository`; for another URL it is the hostname. The **Time repository** is the destination that stores the record.
+## Explore charts
 
-## Charts
+The controls beside the axes show what you are measuring:
 
-Compact controls beside the graph's axes clarify what each dropdown changes: **Y: Total time** selects the metric measured vertically; **X: Day** selects the horizontal grouping. **Stack by** independently controls the colored segments.
+- **Y:** Total time, Avg time per distinct task, Billable amount, or Task count.
+- **X:** Group by day, week, month, person, source, time repository, or task.
+- **Stack by:** Split the bars using a separate grouping.
 
-Choose one vertical metric:
+Use **View analytics data table** to inspect the underlying chart values.
 
-- Total time
-- Avg time: total time divided by the number of distinct tasks
-- Billable amount
-- Task count: the number of distinct task URLs
+To calculate money, set up [billable rates](billable-rates.md). Under **Calculate amounts using**, select one client's rates for all visible work or **Each project's client** to apply rates by project. There is no global rate fallback.
 
-Choose independent horizontal and stack dimensions:
-
-- Day
-- Week
-- Month
-- Person
-- Source
-- Time repository
-- Task URL / title
-
-The analytics are calculated for the chart; the data table's rows are rendered only when expanded, which keeps large reports responsive.
-
-Billable amounts need [client-specific billable rates](billable-rates.md). Choose **Calculate amounts using** to evaluate all visible work using one selected client's rates, or use **Each project's client** to choose the rate card based on the work's project. There are no global rate fallbacks. When a report contains more than one currency, Reports offers a currency selector for billable charts and converts amounts by day.
+When amounts span several currencies, Reports lets you choose a chart currency and converts by the relevant dates. Only currency codes and dates are sent to [Frankfurter](https://frankfurter.dev/).
 
 ## Export a timesheet
 
-- **CSV**: a CSV timesheet
-- **JSON**: a JSON timesheet
-- **PDF**: downloads the timesheet as a PDF file
-- **Print**: opens the browser's print dialog
+- **CSV** or **JSON:** download individual time entries, including task, person, Start, End, duration, and description. Local rate and amount fields are included when available.
+- **PDF:** download a timesheet.
+- **Print:** open the browser's print dialog.
 
-CSV and JSON include task URL and title, Start, End, duration, person, and description. They do not include the time repository or additional GitHub issue/PR metadata. When local rates are configured, each exported row also includes its effective hourly rate, per-entry billable amount, and that rate's currency.
+Exports use the currently loaded report, filters, and local rate settings. Reload the report after changing source data or billing settings.
 
-Downloads use the currently loaded report, date range, filters, and local rates. Reload after changing settings or repository data, then download again.
+For a client invoice, select **Create invoice** and follow [Invoicing](invoicing.md).
 
-To bill a client, use **Create invoice**; see [Invoicing](invoicing.md).
+## Loading, partial data, and pending changes
 
-## Partial reports
+Reports may show a cached result while it refreshes from GitHub. Cached totals can be out of date, so exports and invoice output stay unavailable until Clockoli has verified fresh data.
 
-Each destination is loaded independently. If one fails, Clockoli keeps records from the repositories that loaded, marks the result partial, and identifies the unavailable destinations. Conflicting copies of the same record ID are omitted and also make the result partial.
+If a repository cannot be read or conflicting duplicate records are found, Reports marks the result **partial** and disables timesheet exports. You may still be able to preview an invoice, but printing or saving it requires complete data.
 
-While the selected data is partial, Clockoli disables the CSV, JSON, PDF, and Print timesheet exports. Invoice creation may still be available for the filtered records: confirm that every intended repository loaded before printing an invoice.
+Reports reads GitHub records, not changes still queued in this browser. If synchronization is pending, final exports and invoice output remain blocked until the changes are verified. Review conflicts in **Activity → Review sync issues**, then reload Reports.
 
-If local operations are waiting to sync, Reports warns that its displayed totals are **GitHub-only**: local changes are not included, even if the report has no entries or filters hide them. Routine pending work does not display a queue count or Activity review link. If a conflict needs review, Reports shows the queue count and conflict, and the Activity navigation tab marks it across standalone pages. Follow **Review in Activity** to inspect the original and proposed entries and jump directly to an older affected week in List, Timeline, or Calendar. Before exporting or printing, Reports rechecks local changes and refuses the action if synchronization is pending or cannot be verified. Timesheet exports and invoice creation, printing, and PDF saving are unavailable while local operations remain pending; load Reports again after they sync. A remote-only partial read still permits invoice creation for the filtered records as described above.
-
-## How Reports reads repositories
-
-Reports lists valid personal branches in each selected time repository, reads represented monthly JSONL files for the selected date range, and downloads immutable blobs as needed. For each repository, it first checks the configured branch using an ETag; an unchanged branch can reuse the extension-local snapshot, and a changed branch downloads only monthly blobs whose Git SHA is not already cached. The cache is an optimization, not the authoritative time store.
+For sync behavior, see [Sync and offline work](sync.md).

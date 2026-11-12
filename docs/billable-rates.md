@@ -1,30 +1,38 @@
 # Billable rates
 
-Every hourly rate belongs to a **client**. Rates stay in your browser and in settings backups you explicitly export. Nothing is saved to GitHub.
+Each hourly rate belongs to a **client**. There are no global or shared default rates.
 
-There are no global, default, or shared rate cards. Clients, rate cards, and invoicing settings exist only in your browser's extension-local storage.
+Rates, clients, and invoice settings stay in your browser and in settings backups you choose to export. They are **not written to GitHub**.
 
-## Create a client and rate card
+## Set up a client's rates
 
-1. In **Settings → Clients (invoice recipients)**, create and **Save** a client. You can use a client solely to evaluate team work; invoice details are optional.
-2. Open **Billable rates**, choose that client and a time repository for GitHub user suggestions, then add the hourly rates of GitHub users whose time you want to evaluate. The repository selector starts with your default time repository; with several connected repositories you can change it. Focus **GitHub user** to load repository collaborators and choose a login from the dropdown. You can still type a login manually, including when the collaborator list is unavailable or has more than 100 entries. The repository selection only supplies suggestions; it does not change where the rate is stored or limit which time it can evaluate.
-3. Enter the rate and currency (such as `100.00 USD` or `€55.50`), optionally set effective dates, then **Save billable rates**.
-4. Repeat for each client. One person can have different rates for different clients.
+1. In **Settings → Clients (invoice recipients)**, create and **Save** a client. Invoice contact details are optional if you only need reports.
+2. Open **Billable rates** and choose that client.
+3. Choose a connected time repository to suggest GitHub collaborators, then select or type each person's GitHub login.
+4. Enter their hourly rate, currency, and optional effective dates. Select **Save billable rates**.
+5. Repeat for other clients, if needed.
 
-![Billable rates in Settings for the client Acme Corp: an hourly rate and currency for each GitHub user, with optional start and end dates](images/billable-rates.png)
+![Billable rates for a client with users and effective dates](images/billable-rates.png)
 
-Dates are inclusive and stored with each rate period; rates use integer minor currency units. A missing employee or uncovered period is **Unrated**: Clockoli does not substitute a rate from another client.
+The repository selector only changes collaborator suggestions. It does not limit which time a client's rate can evaluate.
 
-## Reports
+Effective dates are inclusive. The same person can have different rates for different clients or different periods. If no rate covers an entry, the amount is **Unrated**; Clockoli never borrows a rate from another client.
 
-Use **Client** to filter work by the project owner's client. Use **Billable rates → Calculate amounts using** to choose either a specific client's rate card (useful for team-manager reporting across multiple projects), or **Each project's client** to evaluate entries by the client assigned to their project. All money calculations remain local.
+## Use rates in Reports
 
-Missing rates contribute no calculated amount and are shown as unrated. Report totals group different currencies separately, with optional historical exchange-rate conversion for charts. Clockoli sends only currency codes and dates to Frankfurter.
+In **Reports**, filter by Client if needed and choose **Calculate amounts using**:
 
-## Invoices
+- **Each project's client** applies the rate card of the client assigned to the entry's project.
+- A **specific client** applies that client's rates to all visible work, which can help when reporting on a team's work across projects.
 
-When creating an invoice, choose a client. The invoice is calculated **only** from that client's rates, regardless of which projects you deliberately include. A project belonging to a different client produces a warning; review your selection carefully.
+Unrated entries contribute no calculated amount. Different currencies are kept separate unless you select a conversion currency. Clockoli sends only currency codes and dates to Frankfurter when conversion is needed.
+
+## Use rates on invoices
+
+When creating an invoice, choose its client. Clockoli always applies **that client's rates**. If you included a project belonging to another client, review the warning before issuing the invoice.
 
 ## Privacy and backups
 
-No rate or calculated monetary amount is committed to GitHub or shared with teammates. Each browser can have entirely different client records and rate cards for the same time repository. Export your settings backup after changes and protect it: it contains confidential rate and client information.
+Teammates sharing a time repository do not share rates or calculated billable amounts. Each browser can have a different rate card for the same entries.
+
+After changing rates, [export your settings](settings.md#backup--restore) and protect the file. It may contain sensitive rates, client information, and bank details.
