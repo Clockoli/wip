@@ -1,58 +1,43 @@
 # Sync and offline work
 
-Clockoli saves every change in your browser first and sends it to GitHub in the background, so you can keep working offline.
+Clockoli saves accepted time changes in your browser first, then sends them to GitHub automatically. You can keep tracking during a temporary GitHub outage.
 
-You can keep tracking and editing while GitHub is slow or unreachable; nothing waits for a spinner. Conflicting changes are never silently overwritten.
+## When changes sync
 
-## What is saved locally first
+Starts, Stops, switches, added time, edits, and deletions enter a durable local queue. Clockoli normally pushes them **about 15 seconds after your last change**. Each new change restarts that quiet period. There is no manual Sync button.
 
-Start, Stop, task switches, single completed **Add time**, **Bulk time adding**, and completed-entry edits and deletes are accepted durably in extension-local state, then synchronized with GitHub asynchronously through the same queue. Merge tasks intentionally remains a separate, explicit GitHub operation.
+![Clockoli saves locally, then synchronizes with GitHub](images/sync-flow.png)
 
-## When changes reach GitHub
+Browser background workers can be suspended. Clockoli uses background alarms to retry, but an update may take longer than 15 seconds, especially if the browser is closed or GitHub is unavailable.
 
-![From Stop to GitHub: the change is saved in your browser at once and shows in Activity and Top tasks; about 15 seconds after your last change it is committed to your personal branch, where Reports sees it; offline changes wait and other browsers pick them up within about a minute](images/sync-flow.png)
+Clockoli also checks for changes from other browsers at startup and approximately once per minute. Full history and teammates' records are loaded as needed.
 
-Queued writes are pushed automatically after **15 seconds without any new local changes**, with no manual Sync action. A new edit resets the countdown, including successive edits coalesced into an existing queued operation. The deadline is reconstructed from the persisted IndexedDB queue when the service worker restarts.
+## What you see while offline
 
-Chrome may terminate the background worker: a durable one-shot alarm and the periodic one-minute alarm provide recovery, but installed Chrome extensions limit alarms to a minimum of about 30 seconds and may delay them further. Thus 15 seconds is the target when the worker remains active, not an exact deadline.
+Locally accepted edits, stopped timers, and new entries appear in Activity immediately and survive page reloads. They stay queued until GitHub accepts them.
 
-Ordinary consecutive completed-record edits are combined into one atomic Git commit per eligible batch. Each completed timer receives its own `time: <user> tracked <duration> on <owner>/<repo>#<number>` commit for GitHub issue/PR history linking. Ordering barriers such as Starts, Stops and cross-repository switches remain distinct for conflict-safe reconciliation.
+Ordinary pending changes do not show a distracting sync spinner. If something needs attention, the **Activity** tab shows an issue indicator and Activity offers **Review sync issues**.
 
-If a completed-record write conflicts, Clockoli retains it locally and can synchronize later writes only when their record IDs and original/proposed intervals are independent of every blocked write. Dependent edits, overlapping time, timer lifecycle operations, and repository-wide failures keep their ordering barriers. Every bypassed write still validates the remote monthly file, neighboring time, and task index before an atomic GitHub commit; a conflict never means the record was discarded. A queued edit referring to the wrong month may rebase only after the original stable ID is found in its canonical recorded month.
+**Do not uninstall Clockoli, clear its browser data, or sign out as a way to fix a pending write.** You could lose changes that have not reached GitHub.
 
-### How a Stop is completed
+## Reports and exports
 
-For a Stop or switch, completion reconciliation proceeds in this order:
+Reports reads committed GitHub records, not pending edits from this browser. If changes are still queued, Reports warns that its totals may be incomplete and blocks exports or invoice output when it cannot verify that the data is current.
 
-1. Clockoli records a stable pending completion in extension-local IndexedDB.
-2. It appends or verifies the intended monthly record with SHA protection.
-3. It advances the retry stage locally.
-4. It removes only the matching active file.
-5. It preserves a newer timer written by another browser or device.
+When a repository cannot be read, Reports may show a partial result, but exports remain disabled until the required data is complete.
 
-## Receiving changes from other browsers
+## Conflicts and recovery
 
-Independently, a silent background pull checks connected personal branches at startup and about once per minute. Remote active and recent time records are cached locally without opening Activity, showing loading indicators, or rerendering an active editor. Local work waiting to sync is never replaced by an incoming snapshot. An unchanged branch or a failed pull leaves the visible UI alone; the next normal state read observes the newest successfully cached data. Larger history views and other participants' records are still loaded on demand.
+Clockoli checks file versions, stable record IDs, neighboring time intervals, and the active timer to avoid overwriting other work.
 
-## Offline and reloads
+When a remote change conflicts with a queued edit, Clockoli keeps the local operation and asks you to review it. Independent writes may continue, while dependent Starts, Stops, or edits can wait.
 
-If GitHub is temporarily unreachable, accepted changes remain visible locally and retry silently without a prominent queue warning. When a conflict needs review, the Activity tab across Top tasks, Reports, Activity, and Settings shows a queue count and conflict marker. Activity then shows a sync-status banner above **List, Timeline, and Calendar**, not just within the List entries. **Review sync issues** opens a dialog with every local operation, its pending/conflict status, and the selected conflict's original, proposed, and known competing entry. Retry and discard are explicit actions; opening the dialog or using **View week** does not change the queue. Reports quietly warns that its totals use only committed records whenever local changes are pending; it shows the queue count and Activity review link only for conflicts. A failed background-state read leaves the last known tab marker in place rather than falsely reporting a clean queue.
+To recover:
 
-Activity's Timeline and Calendar merge the still-pending local IndexedDB operations over the remote history on every load, so a page reload before the GitHub push shows the newly edited interval, not the old GitHub version. A queued deletion, Stop, or move across date boundaries is reflected in its correct range. A freshly edited Timeline interval is persisted in IndexedDB before the edit is acknowledged. Remote reads that race with a newer local mutation cannot replace the accepted cache. Timeline reconciliation preserves the current time viewport even when virtualized rows are briefly empty.
+1. Open **Activity → Review sync issues**.
+2. Compare the local change with the saved GitHub entry or timer.
+3. Use the offered **Retry**, correction, or verified discard action. Confirm the time exists elsewhere before discarding it.
 
-Do not clear local Clockoli data or uninstall Clockoli while work is waiting to sync.
+A cross-repository switch saves the original timer's completion before starting the next one remotely. If the completion conflicts, the dependent Start may have to wait.
 
-## Conflict handling
-
-Clockoli checks repository identity, branch routing, file SHA, and original record content before mutation.
-
-- A stale monthly file is not silently overwritten.
-- Concurrent Stops converge only when Clockoli can prove the existing completion matches the timer.
-- A changed active timer is preserved.
-- A missing active timer with no matching completion is reported separately from a saved completion/newer-timer conflict.
-- Multi-file edits publish one Git commit after all files pass preflight.
-- Malformed remote text produces a visible error instead of being partially ignored.
-
-A conflicted source completion can pause a dependent cross-repository Start until the conflict is resolved. The sync-issues dialog is a read-only comparison of queued and known conflicting records with explicit retry/discard actions, not an editor for remote records; see [Synchronization and conflicts](troubleshooting.md#synchronization-and-conflicts) for recovery steps.
-
-Activity identifies each conflicted completed entry by task, original date and UTC interval, and the queued replacement when one exists. A description-only change is marked without exposing its text in the sync projection. A missing-original conflict identifies the queued month and the original record's month; an overlap conflict names the competing record when known. **View week** jumps to an old entry without searching through weeks. This navigation does not retry, discard, or change the queue. Retry still verifies the original ID and remote neighboring intervals before saving; if the competing entry is unknown, Clockoli does not invent one.
+For common problems, see [Troubleshooting](troubleshooting.md#synchronization-and-conflicts). For queued additions and complex overlapping timer recovery, see [Advanced sync recovery](sync-recovery.md).
