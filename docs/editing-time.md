@@ -1,137 +1,103 @@
 # Add and edit time
 
-Add time you forgot to track, correct or delete completed entries, and change when a running timer started.
+Add work you forgot to track, correct time entries, or change when a running timer started.
 
-Every change is saved locally first and synchronized with GitHub in the background, so edits appear immediately.
+New entries are saved in your browser immediately and synchronized with GitHub in the background. Edits that require a fresh overlap check may need GitHub access.
 
 ## Add a single entry
 
-The **Add time** button in the upper right of **Top tasks** and **Activity** adds one entry or entries for multiple selected days.
+Select **Add time** in Activity or Top tasks.
 
-![The Add new time dialog: task search, Start and optional End date and time, and a description](images/add-time.png)
+![Add time dialog with task search, dates, times, and a description](images/add-time.png)
 
-1. Search tracked tasks with HTTP(S) URL identities from joined people in the connected time repositories by title or URL, or paste a new HTTP(S) task URL.
-2. Choose the Start date and time, and optionally an End date and time. Each has its own native date picker and keyboard-editable `HH:MM` time field. Clicking a time field selects its current value, and entering `1000` formats it as `10:00`. The End date can be selected before entering the optional End time; without an End time, the form starts a timer instead.
-3. Add an optional description. The form previews the duration for a completed interval; choose **Add time** to record it, or leave End empty and choose **Start timer**. The **Multiple days** checkbox retains its separate calendar-based flow and **Add** button.
+1. Find a tracked task by title or URL, or paste a new HTTP(S) URL.
+2. Choose the **Start** date and time.
+3. To add completed time, enter an **End** date and time. To start a timer instead, leave End time empty.
+4. Optionally enter a description, then select **Add time** or **Start timer**.
 
-Rules for the interval:
+The Start and End dates have separate calendars; you can select the End date before entering its time. If you enter an End time earlier than Start and have not chosen an End date explicitly, Clockoli assumes the next day.
 
-- End date initially matches Start date. If End time is earlier than Start time, End date automatically advances to the next day; otherwise it follows Start date. An explicitly chosen End date is respected instead, and the final interval is validated without silently changing that choice.
-- Start displays the current local minute each time the dialog opens; End starts empty. With End empty and the displayed Start time and date untouched, **Start timer** starts at the actual submission time, including seconds. An empty Start also uses now when End is empty. An explicitly edited Start uses the selected minute (at `:00` seconds), even if it matches the displayed minute.
-- A single Add time interval may be at most 24 hours (exactly 24 is allowed); split longer work into separate entries.
-- Running timers started through Add time must be no more than 24 hours old at creation; a timer that continues beyond 24 hours is not automatically stopped.
-- Future timestamps are rejected.
+A completed entry can be at most **24 hours**. Future times are not allowed. For a new timer, an explicitly entered past Start cannot be more than 24 hours old. An existing running timer is not stopped automatically after 24 hours.
 
-Imported identities must already exist in a verified person's task index in the selected time repository; arbitrary new imported identities are rejected. URL tasks use [project routing](projects-and-routing.md); selected imported tasks remain bound to their chosen time repository. Adding time never silently stops a running timer in another repository.
+If you leave End empty and have not changed the default Start, Clockoli starts at the current moment, including seconds. Editing Start deliberately uses the selected minute.
 
 ### Multiple days (for time off)
 
-1. Choose the tracked task (for example, **Time off**) in the Task search.
-2. Select **Multiple days**. The calendar appears on the left, with **Hours per day** and **Description** on the right; on narrow screens these controls stack below the calendar. Use the month arrows and click the days you want, including nonconsecutive days; click a selected day again to remove it. No Start or End time is needed. Selected days must fit within a 500-calendar-day span and cannot be in the future.
-3. Enter **Hours per day** from 0 to 24 (for example, 8). Enter 0 explicitly to add a zero-hour record for each selected day; these records do not increase tracked-hour totals or invoices. The field cannot be left empty. Choose **Add**.
+Select **Multiple days** to add the same amount of time on several dates.
 
-![Add new time with Multiple days selected: October 12, 13 and 14 chosen in the calendar, 8 hours per day, and the description Vacation](images/add-time-days.png)
+1. Choose the task and select days in the calendar, including nonconsecutive days.
+2. Enter **Hours per day** (0–24) and an optional description.
+3. Select **Add**.
 
-Each selected day becomes a separate completed record with its own identity and date. Clockoli prefers 09:00 local time when available (for example, 8 hours runs from 09:00 to 17:00). If that time is occupied, it uses the same free-interval planner as Bulk time adding: try the next continuous free slot on the selected day, or an earlier free slot if needed. A 24-hour entry still starts at 09:00 and extends into the next day, and cannot fit alongside an existing interval. If no continuous free interval can hold the requested hours, the error names the selected date and none of the batch is accepted locally. A current-day interval must already be over. The complete batch is accepted into the durable local queue together and later checked against GitHub history, the running timer, and other writes before one atomic commit across the affected monthly files and task index. Clockoli retains a compact local index of recently accepted Multiple days intervals (even after they leave Recent) so repeating an older selection still finds the occupied hours without a GitHub request. If GitHub has additional saved time that was not in the local cache, background synchronization uses the same free-interval planner to move a Multiple days entry onto an available interval of its selected date, preserving the record IDs, selected days and durations. The revised instants are saved locally before GitHub's guarded atomic write, so a lost acknowledgement can be retried safely. Earlier Multiple days batches already blocked by an overlap get one automatic recovery attempt after upgrading; **Find free time and retry** can be used later if space becomes available. If no contiguous free interval is available, the entire batch remains locally queued as a sync conflict, with the actual error shown in Sync issues. Zero-hour records start at 09:00 but add no tracked duration.
+![Multiple days with selected dates and hours per day](images/add-time-days.png)
+
+Dates must fit within a **500-day span** and cannot be in the future. Enter `0` explicitly if you want zero-duration entries.
+
+Clockoli tries to place each interval at 09:00 local time. If that slot is occupied, it finds another continuous free interval on the same day. A 24-hour interval can extend into the following day.
+
+**The batch is all or nothing:** if a selected day cannot fit the requested hours, nothing is added. Changes accepted locally can still need adjustment or conflict review if GitHub contains time that was not in this browser's cache. See [Sync and offline work](sync.md).
 
 ### Search for a task
 
-Clockoli builds an extension-local IndexedDB catalog from each person's Git-backed task index. After a completed record (including a Stop) synchronizes, it refreshes the other personal indexes and rebuilds the catalog without writing to their branches. A catalog hit needs no GitHub request. A miss against a complete catalog refreshed in the last minute also returns locally; older misses recheck GitHub before reporting no match. The first search on a new device builds the catalog. A repository-wide REST branch listing provides each personal branch's commit SHA: unchanged branches reuse their verified index without additional GitHub requests, while changed branches read their index pinned to the discovered commit. The IndexedDB report cache survives service-worker restarts. A task index without a title snapshot does not cause a monthly-history scan during search. Search is bounded and may show partial results when a repository cannot be read; it does not silently claim that an incomplete catalog is exhaustive.
+Clockoli maintains a local catalog of tracked tasks from connected repositories. Search by title or URL normally uses that catalog without a GitHub request. A first search on a new device or an outdated catalog may refresh it.
 
-Only tasks with a valid HTTP(S) URL identity and a nonempty title appear in ordinary search suggestions, including when a cached index or pending write contains an imported identity. Untitled tasks and time records stay in their personal indexes and Activity, and a pasted HTTP(S) URL can still create a task without a title. Existing imported non-URL records remain editable and usable from their original entry or unfiltered Top tasks row; they are not offered as normal search results. While the Task field searches, it shows a spinner and **Searching tasks…**; a pasted URL remains usable if lookup fails.
+Search suggestions include valid HTTP(S) tasks with nonempty titles. Untitled URLs can still be pasted directly. Imported Clockify tasks without URLs are not suggested for new entries, but existing imported entries remain editable and can be restarted from Top tasks.
 
-After Add, the dialog closes as soon as the change has been durably accepted in local extension storage, without a GitHub-saving spinner or page reload. GitHub synchronization is silent and is scheduled after 15 seconds without local changes. Known local intervals, queued changes, and the current timer are checked for overlap immediately, including when End is empty and Add starts a timer. Add never waits for GitHub. An uncached historical entry or a concurrent write on another device can still produce a recoverable overlap conflict during the later background synchronization.
-
-### How a queued addition is checked at sync
-
-During background synchronization, completed additions validate the original start date's monthly file, the preceding day's partition and, if the interval crosses a month boundary, the end date's monthly file, plus the active timer; the monthly JSONL and task index update atomically. A queued addition remains valid for synchronization after midnight or a timezone change: its accepted entryDate and timezone are preserved. Running timers validate and guard the start and preceding day's files at sync.
-
-Remote overlap and concurrent repository changes are rejected or retained as actionable conflicts; accepted local work is never discarded silently. A conflicted running timer remains visible at the top of Activity, but its unsaved start is not a completed entry in the list. When that timer has since been stopped locally, **Review sync issues** shows two List-style records: the earlier entry and the stopped entry marked **Pending · saved in this browser**. The overlap and both records display browser-local dates and **HH:MM**, not seconds; the original stored instants still determine whether they overlap. Any still-pending edit of the earlier entry is labeled separately, so Activity's optimistic time is not mistaken for the saved time.
-
-The icon-only **Edit** controls open a minute-based form with only one editable field: the previous entry's End or the stopped entry's Start. The unchanged boundary and date are not displayed as inactive inputs. A changed Start uses `:01.000` and a changed End uses `:00.000`; the unchanged boundary keeps its exact stored timestamp. When the earlier record has not yet been checked on GitHub, the editor opens, but Save still requires a fresh privileged GitHub check and leaves pending work intact on failure. A queued full-form edit that repeats the original task and description is treated as an end-only edit when those fields are unchanged. For the supported Start → Stop → pending previous-end edit queue, recovery checks fresh GitHub data before saving, retains the local start and stop, and refuses unsupported queue shapes or competing remote changes.
-Unlike ordinary Add time, resolving this overlap immediately synchronizes the repaired queue with GitHub after the guarded checks. Save displays an indeterminate progress bar and disables repeated submission while this remote work is in flight. The form closes after the worker confirms the repaired queue has drained; the Activity history refresh continues separately. An error keeps the form open for review and preserves recoverable local work.
-**All queued changes** expands below the two overlap records, including the dependent stop and any other pending edits. Select one to inspect its own queued details; the overlap remains available in the list.
-
-The same record actions as List also offer icon-only **Delete** with an explicit confirmation. Deleting the pending entry removes its queued Start and Stop together, including their tracked time; a fresh remote check must find neither a matching timer nor a completed record, and the independent earlier edit stays queued. Deleting the earlier GitHub record first queues a guarded remote deletion; only after GitHub confirms it are its dependent queued edit removed and the pending timer retried. If that edit changed during deletion, its newer version remains visible as a separate conflict while the timer can still sync. Failed checks and remote conflicts retain recoverable work for review instead of silently discarding it. Keep extension data until Activity confirms the result.
-
-When the start is the last queued change and the timer is still running, **Start after previous entry** checks GitHub and aligns it to the exact end of the one completed entry already running at its start, preserving the timer ID and time since that end; the overlapping seconds are excluded. If a later change is queued, there is another completed interval or remote timer, a read is unavailable, or GitHub changes meanwhile, the queued data remains for review rather than being silently rewritten. Recheck can adopt a timer already running remotely. **Discard queued start** is destructive: it removes the local timer and its unsaved tracked time, only after an online GitHub check confirms that timer is not running there. The dialog does not offer discard while later local changes depend on that start.
+If GitHub cannot be reached or a repository cannot be read, search may show partial results. An already-entered valid URL remains usable.
 
 ## Add many entries at once
 
-The expandable **Bulk time adding** section on Activity is separate from the single-entry **Add time** button. It accepts one dated URL task per line with an optional description and a duration. Example lines remain visible above the editor as you type.
+On **Activity**, expand **Bulk time adding**. Enter one dated task URL per line, with its duration and optional description. The examples above the editor show the accepted format.
 
-![Bulk time adding below the Activity timeline: two lines, each with a date, a task URL, a description and a duration, under the example lines](images/bulk-time-adding.png)
+![Bulk time adding with example lines and an editor](images/bulk-time-adding.png)
 
-A valid batch is accepted **atomically into local IndexedDB** and its entries appear in Activity immediately; GitHub receives the entire batch through the same shared queue after 15 seconds of inactivity. The shared planner normally appends intervals after existing cached time; when that does not fit, it looks for an earlier continuous free interval on the requested day. The delayed GitHub commit validates the complete repository history, including intervals that cross in from older monthly files and a concurrently started active timer, and may adjust the exact start times for ordinary bulk imports if older intervals were not in the local cache. Stable IDs are retained, and every affected monthly file and the task index are committed atomically.
+Clockoli finds a continuous free slot for each entry. It normally places new time after existing work on that day, then looks for an earlier free slot if necessary.
 
-If the batch cannot fit or overlaps another device's work, it stays locally stored and an actionable error offers retry or a verified discard, never a partial remote import. A failed request writes nothing remotely and keeps the draft available for correction. On success or failure, a dismissible notification stays visible in the viewport even when the page is scrolled. Editing a new draft clears the previous notification; a failed submission preserves the entered text.
+The entire batch is accepted into local storage together and appears in Activity immediately. GitHub syncs it later. If there is not enough space, Clockoli keeps the draft and shows an error rather than partially adding the batch.
 
 ## Edit a completed entry
 
-**Edit time** opens the same task/date/time/optional-description form used by **Add time**, prefilled with the selected completed record, without a duplicate task-title field. It is available from Activity List and from **Edit** in Activity's Timeline or Calendar details.
+Select **Edit** on a Timeline or Calendar entry, or edit its row in Activity List.
 
-![The Edit time form for a completed entry: the task, separate Start and End date and time fields, the calculated duration and an optional description](images/edit-entry.png)
+![Editing a time entry](images/edit-entry.png)
 
-- Editing the same task preserves its title; selecting another task uses its title, while a newly pasted URL has no title.
-- Regular task search excludes imported non-URL identities. An existing imported task can still be retained when editing its own entry; the specialized GitHub entry editor can resolve a verified imported replacement from the same time repository, and Clockoli checks that identity before queuing and synchronizing. Imported identities cannot silently move an entry between repositories.
-- Start date/time and End date/time are shown separately. The End date initially reflects the existing record (including overnight entries). Changing the End date explicitly allows choosing a different day; the 24-hour limit still applies when changing a completed interval.
-- Editing Start date or time moves End by the same amount, preserving the interval's exact duration (including seconds and overnight dates). Editing End time or its date alone keeps Start unchanged.
-- An unchanged range preserves the original timestamps, including seconds.
-- Existing zero-duration or longer-than-24-hour records remain editable without changing their times; an interval changed to exceed 24 hours is rejected rather than shortened.
-- Cancel does not mutate the record.
-- Escape closes the form on the first press, including when the Task search field is focused; it does not save the draft or close Activity.
+The form lets you change the task, Start, End, and description.
 
-You can also drag and resize entries in Timeline and Calendar; see [Move and resize entries](activity.md#move-and-resize-entries).
+- Changing **Start** moves End by the same amount, preserving the duration.
+- Changing **End** keeps Start unchanged.
+- Changing nothing preserves the original timestamps, including seconds.
+- An entry crossing midnight can keep different Start and End dates.
+- Existing zero-duration and longer-than-24-hour entries can be edited without changing their times; a newly changed interval cannot exceed 24 hours.
+- **Cancel** or **Escape** closes the form without saving.
 
-## Correct times inline
+Clockoli preserves the original title when the task is unchanged. Choosing another task uses its title; a newly pasted URL has no title.
 
-Each completed row in Activity List has one compact `HH : MM - HH : MM` range. The four hour/minute values stay on one line; their accessible Start and Stop labels remain available to assistive technology. The underlying Start and Stop fields preserve each timestamp's stored timezone offset.
+### Correct times inline
 
-- Type an hour or minute directly in the always-visible Start/Stop inputs. Changing Start moves Stop by the same amount and preserves the duration; changing Stop alone leaves Start fixed.
-- Wheel and trackpad gestures never mutate time values or trap page scrolling, and there are no `−`/`+` step controls.
-- A direct correction remains a local draft until **Save time** is selected; **Cancel** discards it.
-- All relevant row controls are disabled while a mutation is in flight.
-- Validation or network errors keep the draft available for correction or retry.
+In Activity **List**, edit the Start or End hour and minute, then select **Save time**. **Cancel** discards the draft. Scrolling does not change time values.
 
-### Adjacent entries move together
+If you move Start into the previous interval, Clockoli may move the previous entry's End to the same time. Moving End into the next interval may similarly move that entry's Start. These linked corrections are checked and saved together.
 
-If the edited Start moves before the previous interval's Stop, the previous Stop moves to the new Start. If the edited Stop moves after the next interval's Start, the next Start moves to the new Stop. All touched records are preflighted and saved together. Cross-month changes use one atomic Git commit.
-
-Strict intersections that still remain are highlighted as **Overlaps another entry**. Entries that only touch at one endpoint are not overlaps.
-
-### Edit the URL, title, or description
-
-Selecting the displayed URL, title, or description expands those fields in the same inline draft as Start and Stop. Press Enter or select **Save time** to save:
-
-- task URL;
-- optional title, up to 300 characters;
-- Start and Stop date/time;
-- description, up to 2,000 characters.
-
-Only one draft is active at a time. Starting another edit cancels the previous unsaved draft. A linked adjacent-boundary group remains available while the Activity URL/title filter changes. Changing the URL clears an unchanged old title so metadata from one task is not silently carried to another.
+You can expand a row to edit its task URL, optional title (up to 300 characters), or description (up to 2,000 characters). Only one inline draft is active at a time.
 
 ## Delete an entry
 
-**Delete** requires confirmation and uses the loaded file version and original record content to avoid deleting the wrong entry after another edit. The local view updates immediately. Git history retains the previous file version unless a repository administrator rewrites history.
+Select **Delete** and confirm. The entry disappears from the local view. Its earlier version remains in Git history unless a repository administrator rewrites that history.
 
 ## Edit a running timer's start
 
-The **Edit** action on a running timer in Timeline or Calendar opens **Edit timer start**. Only its Start time and Date can be changed in this form; End, task, and description are not editable there. A running timer is not capped at 24 hours by this edit. An unchanged time retains its original seconds.
+To change only the running timer's start time, select **Started** in the running tracker. Enter `1000` for `10:00`, for example, then press Enter or select the checkmark.
 
-Moving the start or date checks completed records, including locally queued changes and older intervals that cross a month boundary, before accepting the edit. An overlap or unreadable history leaves the timer unchanged and keeps the form open. At synchronization, remote intervals are checked again and the active file is written with guards against concurrent monthly-file changes; a race remains an actionable conflict rather than silently overwriting time.
-
-For a quick time-only change, use the inline **Start** in the running-status strip; see [Change the running start](tracking.md#change-the-running-start).
+To change its date, open the running entry in Timeline or Calendar and select **Edit**. Its task, description, and End are not changed in that form. The 24-hour creation limit does not apply to editing an already running timer.
 
 ## Overlap checks
 
-Changing a completed entry's time checks the destination against completed records across weeks and monthly files, pending local edits, and the current running timer on GitHub as well as any locally pending timer before accepting the edit. Overlapping intervals are rejected immediately; the original entry stays in place. Endpoints that only touch are allowed. If the destination or timer cannot be checked, the edit is not queued. Changes made concurrently in GitHub remain subject to the repository's conflict checks during synchronization.
+Entries that share actual time overlap; entries that only touch at one boundary do not.
+
+Clockoli checks known local entries, pending changes, and the running timer before accepting new time. Edits also validate relevant GitHub history before they are saved. Because another browser may write concurrently or older records may not yet be cached, a locally accepted addition can still cause an actionable conflict during background sync.
+
+Never clear extension data to resolve an overlap. Open **Review sync issues** and follow the offered action. See [Troubleshooting](troubleshooting.md#synchronization-and-conflicts) or [Advanced sync recovery](sync-recovery.md) for unusual queued Start/Stop conflicts.
 
 ## Merge duplicate tasks
 
-When the same work was tracked under two identities, such as an imported Clockify task and its GitHub issue URL, use **Merge tasks** in Settings. See [Merge tasks](settings.md#merge-tasks).
-
-## Quick description editing in Calendar and Timeline
-
-Hover a time entry in Activity's Calendar or Timeline to open its compact details card. The description field is always available, even when empty (with the **Add description...** placeholder). Enter saves, Shift+Enter inserts a newline, Escape cancels an unsaved edit, and leaving the field saves it. The details card stays open while the description is being edited.
-
-**Track again** is the main action; **Edit** and **Delete** are separate visible icon buttons with tooltips.
+If an imported Clockify task and a GitHub issue refer to the same work, use **Settings → Merge tasks** to replace the old identity. See [Merge tasks](settings.md#merge-tasks).
